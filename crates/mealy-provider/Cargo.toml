@@ -1,0 +1,13 @@
+[package]
+name = "mealy-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+mealy-core = { path = "../mealy-core" }
+serde.workspace = true
+serde_json.workspace = true

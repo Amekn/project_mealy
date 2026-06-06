@@ -1,0 +1,12 @@
+[package]
+name = "mealy-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+mealy-core = { path = "../mealy-core" }
+mealy-events = { path = "../mealy-events" }

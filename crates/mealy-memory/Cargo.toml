@@ -1,0 +1,12 @@
+[package]
+name = "mealy-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+mealy-core = { path = "../mealy-core" }
+mealy-events = { path = "../mealy-events" }
+serde.workspace = true

@@ -1,0 +1,8 @@
+/target/
+/web/node_modules/
+/web/dist/
+/web/.vite/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+[package]
+name = "mealy-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+mealy-core = { path = "../mealy-core" }
+mealy-events = { path = "../mealy-events" }
+mealy-policy = { path = "../mealy-policy" }
+mealy-task = { path = "../mealy-task" }
+serde.workspace = true

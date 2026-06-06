@@ -1,0 +1,14 @@
+[package]
+name = "mealy-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+mealy-core = { path = "../mealy-core" }
+mealy-provider = { path = "../mealy-provider" }
+mealy-tools = { path = "../mealy-tools" }
+serde.workspace = true

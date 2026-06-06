@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/mealyd",
+    "apps/mealyctl",
+    "apps/mealy-tui",
+    "crates/mealy-agent",
+    "crates/mealy-api",
+    "crates/mealy-artifacts",
+    "crates/mealy-context",
+    "crates/mealy-core",
+    "crates/mealy-events",
+    "crates/mealy-memory",
+    "crates/mealy-platform",
+    "crates/mealy-plugin",
+    "crates/mealy-policy",
+    "crates/mealy-provider",
+    "crates/mealy-server",
+    "crates/mealy-store",
+    "crates/mealy-task",
+    "crates/mealy-testkit",
+    "crates/mealy-tools",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+authors = ["Mealy contributors"]
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros", "serde"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
