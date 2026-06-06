@@ -17,7 +17,7 @@ The first target is a single-user personal daemon with strong local security. Th
 - Provide a persistent local agent runtime that survives process restarts and machine reboots.
 - Own the full agentic loop: receive input, understand intent, plan, execute, observe, validate, and respond.
 - Support multiple Mealy-native agents with isolated workspaces, memory partitions, permissions, and roles.
-- Support channels such as TUI, web UI, Discord, Slack, local CLI, and API clients as thin clients over one durable runtime.
+- Support channels such as TUI, web UI, Discord, local CLI, and API clients as thin clients over one durable runtime.
 - Support built-in and plugin-provided tools, skills, memory sources, channels, and LLM providers.
 - Mediate every side effect through policy, approvals, logging, and durable events.
 - Make task progress transparent through a shared task timeline visible from every channel.
