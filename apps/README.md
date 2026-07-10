@@ -1,7 +1,6 @@
-# Rust Apps
+# Applications
 
-- `mealyd`: the local daemon and source of truth.
-- `mealyctl`: local administration CLI.
-- `mealy-tui`: optional terminal UI client.
+Applications are composition roots. They may select concrete adapters and process lifecycle, but business rules belong in `mealy-application` and `mealy-domain`.
 
-Applications should compose crates from `crates/`. Durable state and side effects stay behind the store, tool, and policy layers.
+- `mealyd`: trusted long-running daemon.
+- `mealyctl`: local API client; it must not open the daemon database directly.

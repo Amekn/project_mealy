@@ -1,14 +1,16 @@
 [package]
 name = "mealy-testkit"
+description = "Deterministic test support for Mealy scenarios"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
-publish = false
+license-file.workspace = true
+repository.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-mealy-core = { path = "../mealy-core" }
-mealy-provider = { path = "../mealy-provider" }
-mealy-store = { path = "../mealy-store" }
-serde_json.workspace = true
+mealy-application.workspace = true
+mealy-domain.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "mealy-application"
+description = "Mealy use cases, recovery planning, and infrastructure ports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]
+mealy-domain.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

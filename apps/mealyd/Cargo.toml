@@ -1,16 +1,16 @@
 [package]
 name = "mealyd"
+description = "Trusted Mealy daemon composition root"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
-publish = false
+license-file.workspace = true
+repository.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-axum.workspace = true
-clap.workspace = true
-mealy-server = { path = "../../crates/mealy-server" }
-tokio.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
+mealy-api.workspace = true
+mealy-application.workspace = true
+mealy-infrastructure.workspace = true
+
+[lints]
+workspace = true

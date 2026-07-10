@@ -1,5 +1,3 @@
 # Scenario Tests
 
-Scenario tests should cover realistic workflows such as task creation, approval flow, recovery, provider fallback, and conflict handling.
-
-These tests should exercise the daemon through public APIs instead of reaching into internal crate state.
+Scenario tests start `mealyd`, use the same authenticated API as clients, and inject deterministic crashes at documented boundaries. A scenario must state the requirement IDs it proves and inspect durable outcomes after restart.

@@ -1,14 +1,15 @@
 [package]
 name = "mealy-api"
+description = "Authenticated HTTP and timeline adapter for Mealy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
-publish = false
+license-file.workspace = true
+repository.workspace = true
 
 [dependencies]
-mealy-core = { path = "../mealy-core" }
-mealy-events = { path = "../mealy-events" }
-mealy-policy = { path = "../mealy-policy" }
-mealy-task = { path = "../mealy-task" }
-serde.workspace = true
+mealy-application.workspace = true
+mealy-protocol.workspace = true
+
+[lints]
+workspace = true

@@ -1,8 +1,13 @@
 /target/
-/web/node_modules/
-/web/dist/
-/web/.vite/
+/.cargo-cache/
+/.mealy/
 *.log
+*.db
+*.db-shm
+*.db-wal
 *.tmp
+.env
+.env.*
+!.env.example
 .DS_Store
 Thumbs.db

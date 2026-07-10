@@ -1,0 +1,21 @@
+[package]
+name = "mealy-infrastructure"
+description = "SQLite, artifact, process, provider, and OS adapters for Mealy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]
+mealy-application.workspace = true
+mealy-domain.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+mealy-testkit.workspace = true
+
+[lints]
+workspace = true

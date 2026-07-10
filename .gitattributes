@@ -1,0 +1,9 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.md text eol=lf
+*.rs text eol=lf
+*.sql text eol=lf
+*.toml text eol=lf
+Cargo.lock text eol=lf

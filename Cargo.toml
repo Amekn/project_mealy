@@ -3,43 +3,43 @@ resolver = "3"
 members = [
     "apps/mealyd",
     "apps/mealyctl",
-    "apps/mealy-tui",
-    "crates/mealy-agent",
+    "crates/mealy-domain",
+    "crates/mealy-application",
+    "crates/mealy-infrastructure",
+    "crates/mealy-protocol",
     "crates/mealy-api",
-    "crates/mealy-artifacts",
-    "crates/mealy-context",
-    "crates/mealy-core",
-    "crates/mealy-events",
-    "crates/mealy-memory",
-    "crates/mealy-platform",
-    "crates/mealy-plugin",
-    "crates/mealy-policy",
-    "crates/mealy-provider",
-    "crates/mealy-server",
-    "crates/mealy-store",
-    "crates/mealy-task",
     "crates/mealy-testkit",
-    "crates/mealy-tools",
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
-authors = ["Mealy contributors"]
+rust-version = "1.88"
+license-file = "LICENSE"
+repository = "https://github.com/Amekn/project_mealy"
 
 [workspace.dependencies]
-anyhow = "1"
-async-trait = "0.1"
-axum = "0.8"
-clap = { version = "4", features = ["derive", "env"] }
-dirs = "6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-time = { version = "0.3", features = ["formatting", "macros", "serde"] }
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["serde", "v4"] }
+mealy-api = { path = "crates/mealy-api" }
+mealy-application = { path = "crates/mealy-application" }
+mealy-domain = { path = "crates/mealy-domain" }
+mealy-infrastructure = { path = "crates/mealy-infrastructure" }
+mealy-protocol = { path = "crates/mealy-protocol" }
+mealy-testkit = { path = "crates/mealy-testkit" }
+proptest = "1.7.0"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.18"
+uuid = { version = "1.23.3", features = ["serde", "v7"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

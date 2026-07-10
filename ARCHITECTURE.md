@@ -1,2057 +1,741 @@
-# Mealy Architecture V0.0.1
+# Mealy Architecture
 
-Status: draft for review
+- Version: 0.1.0
+- Status: proposed implementation baseline
+- Requirements: [`REQUIREMENTS.md`](REQUIREMENTS.md)
+- Research: [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md)
 
-This document describes a proposed architecture for Mealy, a self-contained agentic framework for a reliable personal AI assistant. It is intended to be refined alongside `REQUIREMENTS.md` before implementation planning begins.
+## 1. Executive design
 
-## 1. Product Position
+Mealy is a **modular monolith with isolated workers**:
 
-Mealy is a local-first agent runtime. It is not a wrapper around existing agent products, and it must not depend on external agent runtimes such as Codex, Claude Code, OpenClaw, Hermes, OpenCode, NanoClaw, or similar systems for its core behavior.
+- one Rust daemon, `mealyd`, is the trusted control plane and composition root;
+- one SQLite database is the transactional authority for canonical state, transition history, leases, inboxes, and outboxes;
+- immutable large content lives in a content-addressed artifact store;
+- agent reasoning orchestration lives in application modules, not in channels or providers;
+- shell, filesystem mutation, browser control, and third-party extensions execute outside the daemon process;
+- local clients and channel adapters use one versioned command/query/event API;
+- recovery resumes from explicit durable boundaries and never guesses that an unknown effect failed.
 
-External LLM providers are allowed. External services, APIs, channels, and plugins are allowed. The boundary is that Mealy owns the agent loop, durable state, task lifecycle, context management, memory, tool execution, policy, orchestration, validation, and recovery.
+This is deliberately not microservices, not pure event sourcing, and not an in-process plugin platform. The architecture keeps the first personal-daemon release operable while preserving the boundaries that are expensive to retrofit later.
 
-The first target is a single-user personal daemon with strong local security. The design should still preserve identity, permission, namespace, and channel boundaries so a multi-user deployment can be added later without replacing the core model.
+## 2. What the references changed
 
-## 2. Primary Goals
+The previous architecture had several sound instincts—daemon ownership, thin channels, SQLite, explicit policy, context manifests, independent validation—but its append-only event ledger was asked to be the answer to too many problems. The reference systems sharpened the design:
 
-- Provide a persistent local agent runtime that survives process restarts and machine reboots.
-- Own the full agentic loop: receive input, understand intent, plan, execute, observe, validate, and respond.
-- Support multiple Mealy-native agents with isolated workspaces, memory partitions, permissions, and roles.
-- Support channels such as TUI, web UI, Discord, local CLI, and API clients as thin clients over one durable runtime.
-- Support built-in and plugin-provided tools, skills, memory sources, channels, and LLM providers.
-- Mediate every side effect through policy, approvals, logging, and durable events.
-- Make task progress transparent through a shared task timeline visible from every channel.
-- Provide independent validation with fresh context before final answers for substantial tasks.
-- Provide replay, recovery, auditing, and debugging through an append-only event ledger.
-- Keep provider APIs replaceable through internal provider interfaces.
+| Evidence | Adopted decision |
+|---|---|
+| Codex uses explicit thread/turn/item primitives, generated protocol schemas, bounded server queues, platform sandboxes, and fresh Guardian review sessions. | Use explicit domain IDs, versioned DTOs, bounded ingress, OS enforcement, and isolated risk-based validation. |
+| OpenClaw has a successful single gateway and channel model, but its events are not replayed, queues are in-process, plugins are trusted in-process, and sandboxing is off by default. | Keep one daemon and thin channels; move input queues to SQLite, make events resumable, isolate extensions, and make restricted execution the normal path. |
+| Hermes centralizes providers/tools and uses SQLite/FTS, but large orchestration modules and JSON mirrors create coupling and recovery complexity; its security policy correctly distinguishes OS boundaries from heuristics. | Use coarse architectural modules, one canonical store, small ports, and explicit OS boundaries. Avoid mirror files as a second authority. |
+| OpenCode's Effect services, durable aggregate sequencing, context epochs, input promotion, and atomic projectors are strong; its ongoing dual-write/event migration demonstrates the cost of pure event sourcing. | Adopt aggregate sequences, context epochs, and atomic state+journal commits, but keep normalized canonical tables rather than requiring full reconstruction from all historical events. |
+| Vercel AI SDK cleanly separates UI/model/provider messages, validates tools, bounds loops, and re-validates approvals; it intentionally leaves durability and memory ownership to applications. | Use message layers and schema validation at adapters; Mealy supplies the missing durable host semantics. |
+| Eve proves durable step checkpoints and parked approvals, but interrupted steps re-run, message FIFO is delegated to channels, and durability depends on a workflow world. | Checkpoint at safe boundaries, persist parked work, own the FIFO in core, and implement scheduling locally. |
+| Pi's small agent core and JSONL session tree are understandable; its durability design correctly refuses unsafe tool replay, but the fully durable harness remains a design rather than implemented recovery. | Keep the loop small, make recovery semantics part of tool contracts, and test them before calling the runtime durable. |
+| The Claude Code mirror shows strong transcript-before-execution persistence, queued writes, explicit tool risk metadata, coordinator/worker isolation, and fresh verification. It is an unlicensed third-party mirror of proprietary source. | Use only independently described architectural lessons; do not copy code, identifiers, or implementation text from that mirror. |
 
-## 3. Non-Goals
+Detailed evidence and commit pins are in the research report.
 
-- Mealy will not embed or depend on external agent runtimes as core execution engines.
-- Mealy will not let channels own workflow state or orchestration logic.
-- Mealy will not let agents directly mutate files, memory, services, credentials, or network state.
-- Mealy will not treat LLM memory or retrieved memories as inherently trusted.
-- Mealy will not require a multi-user server deployment for the first version.
-- Mealy will not require cloud services for local-first operation.
+## 3. Architectural invariants
 
-## 4. Architectural Invariants
+1. A channel acknowledgement follows, never precedes, the durable inbox commit.
+2. Only application use cases may transition canonical task/run/effect state.
+3. Each accepted transition writes canonical state, a journal event, and outbox entries in one SQLite transaction.
+4. Journal events are immutable history; canonical tables are the efficient current-state authority. Neither is an eventually consistent shadow of the other.
+5. Every worker commit is fenced by the current lease token.
+6. A model is an untrusted decision proposer. A policy decision is made by deterministic code.
+7. The daemon never runs model-proposed shell or arbitrary extension code in its own process.
+8. An approval binds an exact effect intent; it is invalid if the intent changes.
+9. Unknown non-idempotent effects stop for reconciliation.
+10. Context and compaction are derived, inspectable records; source history remains canonical.
+11. Third-party extension manifests are readable without loading their code.
+12. Debug replay consumes recorded results and cannot produce external effects.
 
-These are the rules that should stay true even as implementation details change.
+## 4. System context
 
-1. Mealy owns durable state.
-2. Every side effect passes through the tool and policy layer.
-3. Long-running work is event-driven and recoverable.
-4. Channels are clients, not runtimes.
-5. Agents are Mealy-native runtime instances, not external agent products.
-6. Agents are isolated by default.
-7. LLM providers are replaceable inference backends.
-8. Context assembly is inspectable and reproducible within storage and privacy limits.
-9. Memory records carry provenance, namespace, sensitivity, confidence, and retention metadata.
-10. Validation uses fresh context and structured evidence.
-11. Recovery is idempotent.
-12. Schemas are versioned.
+```mermaid
+flowchart LR
+  User["Owner"] --> Clients["CLI / TUI / Web"]
+  Platforms["Discord / future channels"] --> ChannelAdapters["Channel adapters"]
+  Clients --> API["Versioned local API"]
+  ChannelAdapters --> API
 
-The central rule is:
+  subgraph Daemon["mealyd — trusted control plane"]
+    API --> App["Application use cases"]
+    App --> Scheduler["Durable scheduler"]
+    App --> Policy["Policy and approvals"]
+    App --> Context["Context and memory"]
+    App --> Providers["Provider broker"]
+    App --> Store["Transactional store"]
+  end
 
-```text
-No channel, agent, plugin, tool, or provider may mutate durable state or the outside world except through Mealy's evented policy layer.
+  Store --> SQLite[("SQLite")]
+  Store --> Artifacts[("Content-addressed artifacts")]
+  Providers --> Models["Local / remote model providers"]
+  Scheduler --> Executor["Sandbox executor process"]
+  Scheduler --> ExtensionHost["Extension host process"]
+  Executor --> OS["Filesystem / commands / browser"]
+  ExtensionHost --> Services["External services"]
 ```
 
-## 5. System Overview
+### 4.1 Runtime trust zones
 
-At runtime, Mealy is centered on a daemon process, `mealyd`.
+| Zone | Contents | Secret access | Arbitrary code | Failure effect |
+|---|---|---:|---:|---|
+| Trusted control plane | daemon, store, policy, provider broker, secret broker | scoped broker access | first-party compiled code only | daemon restart and recovery |
+| Restricted executor | shell/file/browser worker under OS policy | invocation-scoped handles only | model-proposed commands | kill worker; classify active effect |
+| Extension host | one or more third-party extension processes | declared scoped handles only | installed extension code | disable affected extension; daemon remains healthy |
+| External | model providers, APIs, channels | credentials sent only by broker | outside Mealy | retry, reconcile, or degrade by policy |
 
-```text
-                  +----------------------+
-                  |      User            |
-                  +----------+-----------+
-                             |
-          +------------------+------------------+
-          |                  |                  |
-      +---v---+          +---v---+          +---v---+
-      |  TUI  |          | Web UI|          |Discord|
-      +---+---+          +---+---+          +---+---+
-          |                  |                  |
-          +------------------+------------------+
-                             |
-                     +-------v--------+
-                     |  Mealy API     |
-                     |  auth, tasks,  |
-                     |  timeline      |
-                     +-------+--------+
-                             |
-                     +-------v--------+
-                     |    mealyd      |
-                     | local daemon   |
-                     +-------+--------+
-                             |
-     +-----------------------+-----------------------+
-     |                       |                       |
-+----v-----+          +------v------+         +------v------+
-| Agent    |          | Tool Broker |         | Context     |
-| Runtime  |          | and Policy  |         | Compiler    |
-+----+-----+          +------+------+         +------+------+
-     |                       |                       |
-     |                       |                       |
-+----v-----+          +------v------+         +------v------+
-| Provider |          | Plugins and |         | Memory      |
-| Router   |          | Built-ins   |         | Manager     |
-+----+-----+          +------+------+         +------+------+
-     |                       |                       |
-     +-----------------------+-----------------------+
-                             |
-              +--------------v--------------+
-              | Durable Storage             |
-              | event ledger, projections,  |
-              | artifacts, memory, config   |
-              +-----------------------------+
+The initial implementation may use trusted built-in channel and provider adapters in the daemon. No third-party code is promoted into that zone.
+
+## 5. Code architecture
+
+The dependency direction is coarse on purpose. Too many crates would turn a personal daemon into a distributed system made of Cargo packages.
+
+```mermaid
+flowchart TB
+  mealyd["apps/mealyd"] --> api["mealy-api"]
+  mealyd --> infra["mealy-infrastructure"]
+  mealyd --> app["mealy-application"]
+  mealyctl["apps/mealyctl"] --> protocol["mealy-protocol"]
+  api --> protocol
+  api --> app
+  infra --> app
+  app --> domain["mealy-domain"]
+  protocol --> domain
+  testkit["mealy-testkit"] --> protocol
+  testkit --> domain
 ```
 
-The daemon exposes stable APIs to channels and local clients. Internally it coordinates task state, scheduling, agent runs, policy decisions, context bundles, memory, tool execution, artifacts, and provider calls.
+### 5.1 Crate responsibilities
 
-## 6. Runtime Topology
+#### `mealy-domain`
 
-### 6.1 Processes
+Pure domain types and state machines. It has no database, network, OS, async runtime, provider SDK, or web framework dependencies.
 
-Initial process layout:
+- typed IDs and time/value objects;
+- session, task, run, attempt, approval, effect, memory, and validation states;
+- transition validation and invariant errors;
+- capability, risk, and effect classifications;
+- version-neutral event facts used by the application layer.
 
-- `mealyd`: the local daemon and source of truth.
-- `mealyctl`: administrative CLI for local inspection and control.
-- `mealy-tui`: optional terminal UI client.
-- `mealy-web`: optional local web UI client or web UI service.
-- Channel workers: optional long-running connectors for Discord, Slack, or other remote channels.
-- Plugin workers: optional isolated plugin processes for higher-risk or long-running integrations.
+#### `mealy-application`
 
-The first implementation can place many components in one binary or one service. The architecture should still preserve internal boundaries so components can move to separate processes later.
+Use cases and ports. It coordinates transactions but does not know SQLite or HTTP details.
 
-### 6.2 Local Service Model
+- command handlers and query handlers;
+- durable scheduler, leases, and recovery classifier;
+- agent loop and delegation;
+- policy orchestration and approval binding;
+- context compilation and memory lifecycle;
+- validation orchestration;
+- port traits for transactions, providers, executors, artifacts, secrets, clocks, IDs, and extension hosts.
 
-On Linux, `mealyd` should run as a user-level systemd service by default:
-
-```text
-systemd --user
-  mealyd.service
-    listens on local socket / HTTP loopback
-    stores data under user-owned state directories
-    starts after network if networked plugins are enabled
-```
-
-The daemon should support:
-
-- clean startup and shutdown
-- health check endpoint
-- readiness endpoint
-- graceful task suspension on shutdown
-- recovery scan on startup
-- migration check before serving traffic
-- bounded concurrency during recovery
-
-### 6.3 Storage Locations
-
-Suggested default locations:
+Application modules are internal boundaries, not separate services:
 
 ```text
-~/.local/share/mealy/
-  state/
-    mealy.db
-    event-ledger/
-    projections/
-  artifacts/
-    tasks/
-    contexts/
-    tool-output/
-    validation/
-  memory/
-    vector/
-    diary/
-    records/
-  plugins/
-    installed/
-    cache/
-
-~/.config/mealy/
-  config.toml
-  agents/
-  policies/
-  providers/
-  channels/
-  plugins/
-
-~/.cache/mealy/
-  provider-cache/
-  embeddings/
-  temp/
+identity  sessions  tasks  scheduler  agents  providers
+tools     policy    context memory     validation channels
 ```
 
-These paths are suggestions. The important rule is to separate config, durable state, artifacts, memory, and cache.
+Cross-module writes occur through use cases, never by reaching into another module's repository tables.
 
-## 7. Core Modules
+#### `mealy-infrastructure`
 
-### 7.1 API Layer
+Concrete adapters.
 
-Responsibilities:
+- SQLite repositories, transactions, migrations, lease claims, and outbox;
+- filesystem content-addressed artifacts;
+- process supervisor and sandbox backends;
+- built-in provider clients;
+- OS keyring/secret broker;
+- extension RPC host client;
+- telemetry exporters and system service integration.
 
-- Authenticate channel and client requests.
-- Authorize actions against principal permissions.
-- Create sessions, tasks, workflows, interrupts, approvals, and user messages.
-- Stream task timelines and agent output.
-- Expose administrative inspection.
-- Hide internal storage layout from clients.
+#### `mealy-protocol`
 
-Suggested API surfaces:
+Stable transport-facing DTOs and event envelopes. Domain types are not serialized directly. This permits protocol compatibility to evolve separately from internal refactoring.
 
-- local CLI API
-- local HTTP API
-- WebSocket or server-sent events for timelines
-- plugin API for registered extensions
-- internal service API for daemon modules
+#### `mealy-api`
 
-The API should be stable before multiple channel clients are added. Channels should use the same API rather than reaching into daemon internals.
+Authentication, authorization entry, bounded request handling, command/query routes, timeline streaming, health, readiness, and OpenAPI generation.
 
-### 7.2 Identity and Access Manager
+#### Applications
 
-Responsibilities:
+- `mealyd`: composition root, config, lifecycle, supervision, recovery, API listener.
+- `mealyctl`: local administrative and scripting client. The first interactive surface.
 
-- Track principals, channel identities, agent identities, service identities, and future users.
-- Map channel-specific identities to Mealy principals.
-- Enforce authentication and authorization.
-- Create scoped access tokens or local credentials.
-- Support single-user defaults while keeping multi-user shape.
+#### `mealy-testkit`
 
-Core identity types:
+Deterministic clock and ID generators, fake providers, fake executors, crash injection, scenario driver, and fixture builders. Production crates must not depend on it.
+
+## 6. Domain model
+
+### 6.1 Ownership hierarchy
 
 ```text
 Principal
-  A human or service identity known to Mealy.
-
-ChannelIdentity
-  A channel-specific identity such as a Discord user ID, web login,
-  local CLI token, or future SSO identity.
-
-AgentIdentity
-  A Mealy-native internal agent identity with role, namespace, and policy scope.
-
-ServiceIdentity
-  A plugin or integration identity used for service access.
-
-PermissionScope
-  A named scope describing what an identity may do.
+└── Session (ordered durable inbox)
+    ├── Turn (one promoted input)
+    │   └── Task (user-visible objective; may outlive a turn)
+    │       ├── Run (one agent role)
+    │       │   ├── Attempt (model/tool/validation attempt)
+    │       │   └── Child Run edges
+    │       ├── Effect Intent → Approval → Effect Outcome
+    │       ├── Context Manifests
+    │       ├── Artifact References
+    │       └── Validation Runs
+    └── Inbox entries not yet promoted
 ```
 
-Single-user mode can ship with one owner principal, but the database should still store ownership and namespace fields explicitly.
+A task may be created from a turn or by a schedule. A session is conversational ordering, not an authorization boundary. A run is execution lineage, not a user-visible chat thread.
 
-### 7.3 Task Runtime
+### 6.2 Task state machine
 
-Responsibilities:
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> running: lease acquired
+  running --> waiting: approval / user input / backoff
+  waiting --> queued: condition satisfied
+  running --> paused: owner pause
+  paused --> queued: resume
+  running --> succeeded: criteria and validation pass
+  running --> failed: terminal error
+  queued --> cancelled
+  running --> cancelling
+  waiting --> cancelled
+  paused --> cancelled
+  cancelling --> cancelled: workers drained
+  cancelling --> failed: forced stop leaves terminal failure
+```
 
-- Own task, session, workflow, and run lifecycles.
-- Maintain state machines.
-- Append events for all lifecycle changes.
-- Coordinate interrupts, cancellation, pause/resume, recovery, and validation.
-- Expose timeline projections.
+State changes carry a monotonic `revision`. Commands use expected revisions where races matter.
 
-Important domain objects:
+### 6.3 Run and attempt distinction
+
+A run represents the logical execution by one agent role. Attempts represent retryable operations. Retrying a provider call creates a new attempt under the same run. Restarting a failed implementation from a clean context may create a new sibling run. This makes cost, failure, and validation lineage explicit rather than overwriting one status row.
+
+### 6.4 Effect state machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> proposed
+  proposed --> denied: policy deny
+  proposed --> awaiting_approval: policy asks
+  proposed --> authorized: policy allow
+  awaiting_approval --> authorized: valid approval
+  awaiting_approval --> denied: deny / expiry
+  authorized --> dispatching: effect lease acquired
+  dispatching --> succeeded: confirmed outcome
+  dispatching --> failed: confirmed no success
+  dispatching --> outcome_unknown: worker/transport lost ambiguity
+  outcome_unknown --> succeeded: reconciliation confirms
+  outcome_unknown --> failed: reconciliation confirms no effect
+  outcome_unknown --> compensated: compensation confirmed
+```
+
+`outcome_unknown` is a first-class safety state. The scheduler never turns it into `authorized` by timeout alone.
+
+## 7. Persistence architecture
+
+### 7.1 Why transactional journaling, not pure event sourcing
+
+Mealy needs history, resumable streams, causation, and forensic replay. It does not need every future version to rebuild all state from every event schema ever emitted. The store therefore has two co-authoritative products committed together:
+
+1. normalized canonical tables for current state and scheduling;
+2. an immutable transition journal for history, streaming, audit, and debug simulation.
+
+Derived read models may be rebuilt. Canonical state is changed by migrations, not reconstructed by replaying unbounded historical business logic. This avoids both the dual-source problem seen in mirror-file designs and the migration burden exposed by a pure event transition.
+
+### 7.2 Transaction pattern
+
+Every mutating use case follows one shape:
 
 ```text
-Session
-  A conversation or channel interaction context.
-
-Task
-  A unit of work with explicit user intent, state, events, artifacts,
-  agents, tool calls, approvals, and validation.
-
-Workflow
-  A long-running or multi-task process.
-
-AgentRun
-  One execution attempt by one internal agent on a task or subtask.
-
-ToolCall
-  One requested side effect or observation through a tool.
-
-Approval
-  A policy decision requiring user or rule-based authorization.
-
-Artifact
-  Durable output from an agent, tool, provider, or validation pass.
-
-ValidationRun
-  Independent review of task outputs against success criteria.
+BEGIN IMMEDIATE
+  authenticate/authorize preconditions already resolved
+  load canonical rows and verify expected revisions/fencing token
+  apply domain transition
+  write canonical rows
+  append versioned journal event with aggregate sequence
+  append zero or more outbox records
+COMMIT
+publish in-process wakeup hint
 ```
 
-### 7.4 Scheduler
+The wakeup is only a latency optimization. Polling the database is sufficient after a missed notification or restart.
 
-Responsibilities:
+### 7.3 Core tables
 
-- Schedule agent runs, tool calls, validation runs, memory jobs, and recovery work.
-- Enforce concurrency limits.
-- Apply priority rules.
-- Avoid resource starvation.
-- Manage task queues.
-- Support cancellation and preemption.
+The initial schema is organized by responsibility:
 
-The scheduler should understand:
+| Area | Canonical tables |
+|---|---|
+| Identity | `principals`, `channel_bindings`, `auth_credentials`, `revocations` |
+| Conversation | `sessions`, `session_inbox`, `turns`, `messages` |
+| Work | `tasks`, `runs`, `run_edges`, `attempts`, `work_leases`, `resource_claims` |
+| Effects | `tool_calls`, `effect_intents`, `approvals`, `effect_outcomes` |
+| Context | `context_epochs`, `context_manifests`, `context_items`, `compactions` |
+| Memory | `memories`, `memory_sources`, `memory_revisions`, FTS tables |
+| Evidence | `artifacts`, `artifact_links`, `validations`, `validation_evidence` |
+| Operations | `journal_events`, `aggregate_sequences`, `outbox`, `config_versions`, `migration_history` |
 
-- task priority
-- channel priority
-- user-defined budgets
-- provider rate limits
-- tool risk class
-- workspace locks
-- memory locks
-- recovery mode
-- system resource limits
+Foreign keys are enabled. SQLite uses WAL mode, a busy timeout, and explicit durability settings selected by profile. Schema constraints enforce unique aggregate sequence, inbox dedupe keys, active lease ownership, and stable effect idempotency keys.
 
-### 7.5 Agent Runtime
-
-Responsibilities:
-
-- Run Mealy-native agents.
-- Maintain agent profiles and role policies.
-- Request context bundles from the context compiler.
-- Call LLM providers through the provider router.
-- Interpret model output into structured runtime actions.
-- Request tool calls through the tool broker.
-- Emit events for progress, decisions, outputs, errors, and completion.
-
-Agents are not separate products. They are configured runtime instances.
-
-Agent profile fields:
+### 7.4 Journal envelope
 
 ```text
-agent_id
-name
-role
-description
-instruction_sources
-memory_namespace
-workspace_namespace
-policy_profile
-provider_policy
-context_policy
-tool_capabilities
-validation_requirements
-max_parallel_children
-budget_policy
+event_id             UUIDv7
+aggregate_kind       session | task | run | effect | memory | ...
+aggregate_id         stable domain ID
+aggregate_sequence   contiguous per aggregate
+event_type           namespaced semantic type
+event_version        positive integer
+occurred_at           UTC timestamp from the transaction clock
+actor_principal_id   nullable only for system recovery events
+correlation_id       task or request lineage
+causation_id         command/event that caused this event
+policy_version       when security-relevant
+sensitivity          classification
+payload              bounded JSON
 ```
 
-Example built-in agent roles:
+Payloads are small. Large request/response bodies, logs, patches, and media become artifacts.
 
-- coordinator: turns user intent into task plan and delegates work.
-- executor: performs task steps through tools.
-- researcher: gathers and summarizes information.
-- code_worker: edits and tests local code.
-- service_operator: interacts with configured local or remote services.
-- memory_curator: evaluates memory writes and cleanup.
-- validator: independently checks final task output.
-- summarizer: compacts sessions, tasks, and long contexts.
-- recovery_agent: assists with interrupted tasks and restart decisions.
+### 7.5 Artifact commit protocol
 
-The initial implementation does not need every role. The runtime should make these roles first-class enough that they can be added without changing the core loop.
+1. Stream bytes to a private temporary file while hashing and enforcing size.
+2. Flush and atomically rename to `artifacts/<algorithm>/<digest>`.
+3. In a database transaction, insert metadata and link it to the owning object.
+4. A garbage collector removes unreferenced, aged content; it never removes referenced content.
 
-### 7.6 Context Compiler
+Content encryption at rest is an adapter concern, but the digest is over the plaintext logical content and sensitive metadata is access-controlled.
 
-Responsibilities:
+## 8. Durable inbox, scheduler, and recovery
 
-- Assemble model context for each agent run.
-- Apply role-specific context policy.
-- Include task state, relevant events, user messages, workspace memory, retrieved memory, artifacts, files, and instructions.
-- Enforce context budgets.
-- Produce inspectable context bundles.
-- Support compaction and summarization.
-- Record provenance for each context item.
+### 8.1 Input admission
 
-The context compiler should produce a durable context bundle:
+Each adapter derives a stable delivery dedupe key from the channel event ID. Admission inserts the inbox row, journal event, and acknowledgement outbox record atomically. Duplicate delivery returns the original admission result.
+
+The session driver promotes inbox records according to one of three explicit modes:
+
+- `queue`: FIFO, one turn after the current turn;
+- `steer_at_boundary`: attach to the current run at the next model/tool boundary without cancelling an active effect;
+- `interrupt_then_queue`: request cancellation, then promote after the active run reaches a terminal or forced-stop boundary.
+
+No accepted message lives only in RAM.
+
+### 8.2 Lease claim
+
+A worker claims work with `(lease_id, owner_id, fencing_token, expires_at)`. Renewals update only the matching lease. Every result commit verifies the fencing token against the canonical row. An expired worker may continue computing, but it cannot alter Mealy after another worker claims the work.
+
+### 8.3 Resource claims
+
+Tools and agents declare normalized conflict keys, for example:
 
 ```text
-ContextBundle
-  context_bundle_id
-  task_id
-  agent_run_id
-  schema_version
-  token_budget
-  provider_context_limit
-  items[]
-  excluded_items[]
-  assembly_policy
-  created_at
+workspace-write:C:/repo
+service-mutate:github:owner/repo
+memory-write:principal/project
+device-exclusive:browser-profile/default
 ```
 
-Each item should include:
+The scheduler obtains claims in lexical order to avoid deadlock. Read claims may share; write/exclusive claims may not. Policy may require stricter serialization than the tool declares.
+
+### 8.4 Startup recovery
+
+Recovery runs before readiness:
+
+1. Open SQLite and validate migration state.
+2. Verify artifact root and quarantine incomplete temporary files.
+3. Expire stale leases and increment fencing tokens.
+4. Classify non-terminal attempts and effects.
+5. Requeue safe model attempts and pure/idempotent operations.
+6. Mark ambiguous non-idempotent effects `outcome_unknown`.
+7. Restore waiting approvals and user-input requests.
+8. Resume durable outbox delivery.
+9. Publish a recovery summary and become ready.
+
+Classification is deterministic code covered by table-driven tests. It is not delegated to a model.
+
+### 8.5 Recovery matrix
+
+| Interrupted boundary | Default recovery |
+|---|---|
+| Before provider request dispatch | retry attempt |
+| Provider request sent, no normalized response recorded | retry only under provider/cost policy; preserve prior attempt |
+| Normalized model response recorded | continue from recorded response |
+| Pure/read-only tool not confirmed | bounded retry |
+| Idempotent effect with stable downstream key | retry with same key |
+| Non-idempotent effect after dispatch | `outcome_unknown`; reconcile |
+| Approval waiting | restore waiting state |
+| Compaction not committed | recompute derived artifact |
+| Artifact committed but link transaction missing | GC later unless reconciliation links it |
+| Outbox delivery unknown | retry using delivery dedupe key |
+
+## 9. Agent runtime
+
+### 9.1 Loop
+
+```mermaid
+flowchart TD
+  Promote["Promote durable input"] --> Compile["Compile context manifest"]
+  Compile --> Model["Create model attempt"]
+  Model --> Normalize["Normalize and validate response"]
+  Normalize --> Decide{"Response kind"}
+  Decide -->|final| Validate["Validation policy"]
+  Decide -->|tools| Intents["Create tool/effect intents"]
+  Intents --> Policy["Policy + approvals"]
+  Policy --> Execute["Sandbox/extension execution"]
+  Execute --> Observe["Persist ordered results"]
+  Observe --> Budget{"Continue within budgets?"}
+  Budget -->|yes| Compile
+  Budget -->|no| Fail["Bounded terminal outcome"]
+  Validate --> Complete["Complete task and outbox reply"]
+```
+
+The loop is an application state machine. Provider SDK callbacks and UI streams adapt into it; they do not own it.
+
+### 9.2 Message layers
+
+Following the successful separation in Vercel AI SDK and Codex:
+
+1. **Domain message**: provider-neutral, durable user/assistant/tool/event facts.
+2. **Context item**: authorized, transformed material selected for one attempt.
+3. **Provider message**: normalized provider contract.
+4. **Wire payload**: provider-specific request/stream type.
+5. **Presentation event**: channel-safe timeline representation.
+
+Conversions are one-way at explicit adapters. Raw provider payloads may be retained as sensitive artifacts for debugging but never become the domain model.
+
+### 9.3 Model attempts
+
+Each request records provider/model, normalized parameter set, context manifest ID, tool schema digests, policy/routing decision, timeout, and budget reservation before dispatch. Completion records usage, finish reason, response artifact, normalized result, and provider request ID.
+
+Streaming deltas are best-effort presentation data. The terminal normalized response is the durable boundary.
+
+### 9.4 Delegation
+
+Delegation creates a child run with:
+
+- a self-contained work order and success criteria;
+- explicit parent/root lineage;
+- a new context manifest and fresh context window;
+- an independently computed capability intersection;
+- separate budgets and resource claims;
+- a structured result contract.
+
+The parent remains responsible for synthesis. It cannot claim child output as validated merely because the child completed.
+
+## 10. Tools, policy, and execution
+
+### 10.1 Tool descriptor
+
+Every tool publishes metadata before it can be selected:
 
 ```text
-ContextItem
-  item_id
-  item_type
-  source_type
-  source_id
-  namespace
-  sensitivity
-  confidence
-  token_estimate
-  inclusion_reason
-  content_hash
-  content_ref
+id, version, input_schema, output_schema
+effect_class, risk_class, required_capabilities
+timeout, maximum_output, concurrency_mode
+conflict_key_template
+idempotency: pure | idempotent | keyed | non_idempotent
+recovery: retry | reconcile | compensate | never_retry
+executor: builtin | sandbox | extension:<id> | provider
 ```
 
-The bundle can store large content by reference to artifacts rather than duplicating everything into the database.
+The schema digest is included in the context manifest and effect intent.
 
-### 7.7 Memory Manager
+### 10.2 Policy decision
 
-Responsibilities:
-
-- Store and retrieve memory records.
-- Separate memory by principal, agent, workspace, project, channel, and sensitivity.
-- Support semantic retrieval through embeddings.
-- Support syntax/search retrieval over session logs, daily diaries, and records.
-- Govern proposed memory writes.
-- Support memory inspection, deletion, retention, and reindexing.
-
-Memory tiers:
+The policy engine receives a typed request, not an arbitrary shell string alone:
 
 ```text
-Workspace memory
-  Project-local instructions and facts such as AGENTS.md, SOUL.md,
-  project notes, repo-specific preferences, and channel configuration.
-
-Task/session memory
-  Recent conversation state, task events, summaries, decisions,
-  artifacts, and unresolved follow-ups.
-
-Long-term semantic memory
-  Embedding-indexed facts and preferences for retrieval by meaning.
-
-Long-term lexical memory
-  Searchable records from previous sessions, daily diaries, logs,
-  notes, and imported text sources.
-
-Operational memory
-  System health patterns, provider failures, plugin status,
-  repeated task outcomes, and recovery notes.
+principal + channel binding
+task/run/agent role and risk
+tool descriptor and normalized arguments
+target capability and resource claims
+workspace roots and sandbox profile
+secret references and network destinations
+current policy bundle version
 ```
 
-Memory records should include:
+It returns `deny`, `allow`, or `require_approval`, plus obligations such as a narrower sandbox, argument rewrite, redaction, maximum duration, or validator requirement.
+
+Policy rules are deterministic data interpreted by first-party code in v1. A policy language may be added later, but it must not make authorization depend on an LLM.
+
+### 10.3 Approval binding
+
+The approval subject hash covers:
 
 ```text
-memory_id
-namespace
-owner_principal_id
-agent_id
-source_event_id
-source_artifact_id
-content
-summary
-tags
-sensitivity
-confidence
-retention_policy
-created_at
-updated_at
-expires_at
-embedding_refs
-search_index_refs
-review_state
+effect_id | tool_id@version | canonical_arguments_digest
+capability_scope | target_resources | policy_version | expiry
 ```
 
-Memory write policy should distinguish:
+Approval replies are authenticated commands. They never arrive as untrusted conversational text. Channels may render native buttons, but those buttons call the same approval API.
 
-- automatic low-risk operational summaries
-- proposed user preference memories
-- sensitive memories requiring approval
-- memories derived from private files
-- memories imported from external services
-- memories that should never leave local storage
+### 10.4 Executor protocol
 
-### 7.8 Tool Broker
+The daemon launches a worker with a one-use capability token and a descriptor containing:
 
-Responsibilities:
+- effect and attempt IDs;
+- fencing token;
+- executable/tool identity digest;
+- sandbox profile and mounted roots;
+- resource/time/output limits;
+- scoped secret handles;
+- idempotency key;
+- normalized arguments.
 
-- Register tools and tool capabilities.
-- Validate tool arguments.
-- Check policy before execution.
-- Create approvals when needed.
-- Execute built-in and plugin-provided tools.
-- Capture tool outputs.
-- Store artifacts.
-- Append tool events.
-- Enforce idempotency.
+The worker emits structured start, progress, and terminal frames. Loss of the worker after dispatch is interpreted according to the tool recovery descriptor, not assumed failure.
 
-The tool broker is the only path to side effects.
+### 10.5 Platform sandbox adapters
 
-Tool categories:
+- Linux: prefer namespaces/bubblewrap or an equivalent backend with explicit filesystem and network policy.
+- macOS: use Seatbelt or a container/VM adapter with documented limits.
+- Windows: use restricted tokens/AppContainer/job objects or an external VM/container backend; unsupported filesystem carve-outs fail closed.
 
-- observation tools: read files, inspect directories, query status
-- mutation tools: write files, modify config, apply patches
-- command tools: run shell commands, systemctl commands, package commands
-- network tools: HTTP requests, API calls, web fetches
-- service tools: GitHub, Nextcloud, Obsidian, local daemons
-- memory tools: propose, write, edit, delete, and retrieve memories
-- channel tools: send messages, update progress, ask for approval
-- artifact tools: create, read, diff, render, or export artifacts
+The architecture exposes capability semantics, not one platform's flags. `doctor` reports which profiles the current host can enforce.
 
-Each tool call should have an idempotency key. For dangerous side effects, replay should observe that the action has already completed rather than executing it again.
+## 11. Context and memory
 
-### 7.9 Policy Engine
+### 11.1 Context compiler
 
-Responsibilities:
-
-- Decide whether requested actions are allowed, denied, or require approval.
-- Enforce security profiles.
-- Enforce principal, channel, agent, plugin, workspace, and memory scopes.
-- Apply rate, cost, and budget limits.
-- Emit policy decision events.
-
-Policy inputs:
+The compiler is a deterministic pipeline:
 
 ```text
-requesting_identity
-task_id
-agent_run_id
-channel_id
-tool_name
-tool_capability
-arguments
-risk_class
-workspace
-target_resource
-secret_refs
-network_destination
-current_security_profile
-user_rules
+candidate discovery
+→ authorization and namespace filtering
+→ sensitivity/provider-residency filtering
+→ relevance and recency scoring
+→ typed mandatory-item insertion
+→ budget allocation
+→ compaction/truncation transforms
+→ ordered context manifest
+→ provider message projection
 ```
 
-Policy outcomes:
+Mandatory typed items include active goal, unresolved constraints, current effect/approval state, latest user input, agent profile, and policy obligations. These are not left to semantic retrieval.
+
+### 11.2 Context epochs
+
+A session context epoch pins the baseline instructions, agent profile, workspace identity, and relevant configuration digest. Changes reconcile into a new epoch at a turn boundary. An in-flight request never observes half of a configuration change, following the context-snapshot lesson from OpenCode and prompt-stability lesson from Hermes.
+
+### 11.3 Compaction
+
+Compaction creates:
+
+- a structured carry-forward record for decisions, constraints, unresolved work, effect outcomes, and citations;
+- a human-readable summary;
+- a source event range and content digests;
+- prompt/model/config provenance;
+- a quality/validation result when required.
+
+The original history remains available. Subsequent contexts cite the compaction artifact and can expand selected source evidence.
+
+### 11.4 Memory model
+
+Memory is not the transcript. A memory proposal is extracted from cited source items, filtered by policy, and promoted to active state by configured rules. Versioned correction supersedes rather than silently edits history.
+
+V1 uses SQLite structured filters and FTS5. Embeddings are an optional adapter added only after lexical/provenance behavior is correct. This keeps degraded mode useful and avoids making a vector index authoritative.
+
+## 12. Providers
+
+Provider ports describe capabilities rather than forcing all vendors into the lowest common denominator. The common contract covers model listing, normalized request/response, streaming, tool calling, structured output, usage, cancellation, and error classification. Namespaced capability metadata preserves vendor features without infecting the core.
+
+Routing is a policy decision with an explanation. Fallback creates a new attempt and re-runs context residency checks. A local-to-remote fallback is never implicit.
+
+The provider broker owns credentials, rate limits, concurrency, and cost reservations. Agent workers and extension hosts receive no ambient provider API keys.
+
+## 13. Extension architecture
+
+### 13.1 Manifest plane
+
+Discovery reads a data-only manifest containing identity, digest/signature, compatibility, capability contracts, schemas, requested permissions, network destinations, secret references, migrations, and health behavior. Configuration UIs and policy review can operate without importing extension code.
+
+### 13.2 Runtime plane
+
+Third-party extensions execute in a supervised process. The daemon speaks a versioned framed RPC protocol over local IPC. The host:
+
+- grants only manifest-approved capabilities;
+- sends opaque secret handles or brokered requests, not the full environment;
+- validates every request and response schema;
+- applies time, memory, output, and restart limits;
+- attributes all actions to the extension identity;
+- can revoke or kill the extension without stopping the daemon.
+
+An extension cannot open arbitrary daemon HTTP routes. It may register a channel endpoint descriptor that the trusted API layer serves after applying route authentication and bounds.
+
+### 13.3 Extension types
+
+- provider adapter;
+- channel adapter;
+- tool service;
+- memory source;
+- artifact renderer;
+- notification sink.
+
+Skills remain declarative resources. If a skill ships code, that code is a declared extension/tool and gets a separate permission review.
+
+## 14. API and channel model
+
+### 14.1 Initial transport
+
+The first daemon exposes versioned HTTP/JSON plus server-sent events on loopback. It uses a randomly generated local bearer credential stored with OS-user-only permissions, strict Origin handling for browser access, bounded bodies, and no unauthenticated mode. Unix socket or named-pipe transport can be added without changing protocol DTOs.
+
+Remote listening is disabled by default and is not a release-one requirement.
+
+### 14.2 Command/query split
+
+- Commands mutate state and return the committed revision/event cursor.
+- Queries read authorized current state.
+- Timeline streams resume after a journal cursor and emit a gap/error if retention prevents continuity.
+
+Key command groups:
 
 ```text
-allow
-deny
-require_approval
-require_stronger_profile
-require_user_interrupt
-require_validation_first
+sessions.create, sessions.submit, sessions.steer
+tasks.pause, tasks.resume, tasks.cancel
+approvals.resolve
+effects.reconcile
+memory.propose, memory.accept, memory.correct, memory.delete
+admin.reload, admin.backup, admin.recover
 ```
 
-Suggested built-in security profiles:
+DTOs carry an API version and idempotency key where applicable. Generated OpenAPI is an artifact checked in CI, not the source of domain truth.
 
-- `read_only`: can inspect allowed files and task history, no mutations.
-- `workspace_write`: can mutate files inside approved workspaces.
-- `networked`: can make approved network calls.
-- `service_user`: can use approved service credentials with scoped actions.
-- `service_admin`: can mutate service configuration.
-- `full_trust`: local owner mode for explicitly approved high-risk operations.
+### 14.3 Presentation events
 
-Profiles should be composable rather than one giant privilege flag.
+The API projects durable journal facts into stable user-facing events. High-frequency provider deltas may be delivered live but are marked ephemeral. A final message, tool result summary, error, approval, and lifecycle transition always has a durable cursor.
 
-### 7.10 Provider Router
+## 15. Validation and evaluations
 
-Responsibilities:
+Validation is a policy-driven run, not an unconditional extra model call.
 
-- Provide a common interface over LLM providers.
-- Route requests to configured providers.
-- Apply privacy, cost, latency, capability, and context constraints.
-- Track provider health, rate limits, and failures.
-- Support fallback rules.
-- Normalize provider responses into internal result types.
+- Low risk: deterministic checks may be sufficient.
+- Medium risk: a fresh read-only validator run is required unless policy records a waiver.
+- High risk: deterministic evidence plus independent review is required before success; effect authorization remains a separate policy concern.
 
-Provider interface:
+Validator context is assembled independently from the request, criteria, final artifacts, tool evidence, and timeline facts. It excludes producer scratch context and does not inherit write capabilities.
+
+Scenario evaluation uses the public API with a fake provider and real SQLite/process boundaries. LLM-as-judge scores may be tracked, but deterministic gates decide CI unless a rubric explicitly requires a judge.
+
+## 16. Operations
+
+### 16.1 Daemon lifecycle
 
 ```text
-Provider
-  provider_id
-  capabilities
-  models
-  health
-  estimate_cost(request)
-  complete(request)
-  stream(request)
-  embed(request)
+bootstrap logging
+→ load config and secret references
+→ open/backup-check/migrate SQLite
+→ verify artifact store
+→ run recovery
+→ start extension/provider health
+→ bind API
+→ ready
 ```
 
-Provider routing criteria:
+Shutdown stops admission, drains within a deadline, revokes worker leases, records interrupted work, flushes outbox state, checkpoints SQLite, and exits. A second signal forces worker termination and records the forced path on next recovery.
 
-- requested modality
-- context length
-- tool-call support
-- structured output support
-- local-only requirement
-- privacy level
-- expected cost
-- expected latency
-- reliability
-- current health
-- user preference
-- task criticality
+### 16.2 Health
 
-Provider-specific APIs must not leak into the agent runtime.
+- Liveness: process event loop and database connection respond.
+- Readiness: migrations and recovery complete; API can admit work.
+- Degraded: optional provider, extension, index, or channel unavailable while core remains safe.
 
-### 7.11 Plugin Host
+### 16.3 Backup and migration
 
-Responsibilities:
+Backup uses SQLite's online backup API or a safe checkpointed copy and includes an artifact manifest. Restore is verified into a separate directory before replacement. A corrupt database is moved with WAL/SHM sidecars to a timestamped forensic backup before any fresh start.
 
-- Install, configure, load, start, stop, and update plugins.
-- Validate plugin manifests.
-- Expose plugin tools, channels, memory sources, providers, and skills.
-- Isolate plugins according to risk class.
-- Track plugin health.
-- Apply migrations for plugin state.
+Every migration has forward tests from supported historical snapshots. Destructive canonical-data changes require an explicit export/transform/import plan and cannot hide behind a schema migration.
 
-Plugin manifest fields:
+## 17. Repository layout
 
 ```text
-plugin_id
-name
-version
-schema_version
-description
-entrypoint
-permissions
-tools
-channels
-memory_sources
-providers
-skills
-config_schema
-event_types
-health_checks
-storage_needs
-network_access
-secret_refs
-compatibility
+project_mealy/
+├── apps/
+│   ├── mealyd/                 daemon composition root
+│   └── mealyctl/               local admin/client CLI
+├── crates/
+│   ├── mealy-domain/           pure domain state machines
+│   ├── mealy-application/      use cases and ports
+│   ├── mealy-infrastructure/   SQLite, OS, provider, process adapters
+│   ├── mealy-protocol/         versioned transport DTOs
+│   ├── mealy-api/              authenticated HTTP/SSE adapter
+│   └── mealy-testkit/          deterministic test support
+├── docs/
+│   ├── decisions/              accepted ADRs
+│   └── research/               reference evidence and gap matrix
+├── schemas/                    reviewed protocol/manifest schema fixtures
+├── tests/
+│   ├── integration/            cross-crate adapter tests
+│   └── scenarios/              public-API recovery and security scenarios
+├── ARCHITECTURE.md
+└── REQUIREMENTS.md
 ```
 
-Plugin isolation levels:
+Each directory has a README that states ownership, allowed dependencies, and completion criteria. Empty future-feature directories are not created merely to advertise ambition.
 
-- in-process trusted first-party plugin
-- child process plugin
-- containerized plugin
-- disabled plugin metadata only
+## 18. Requirement-to-component traceability
 
-The first version can prioritize first-party plugins, but the manifest model should exist early.
+| Requirements | Primary owner | Key evidence |
+|---|---|---|
+| DUR-001..002, TASK-010..017, CHAN-013 | application sessions/tasks + SQLite adapter | inbox, atomic transition, and lifecycle scenario tests |
+| AUTH-001, AUTH-010..013, CHAN-010..012, API-001 | identity/policy + API/channel adapters | authorization, revocation, shared-timeline, and outbox tests |
+| SCHED-010..015 | application scheduler + infrastructure lease store | stale-fence and queue-backpressure tests |
+| AGENT-010..016, PROV-010..014 | agent module + provider broker | fake-provider loop and fallback scenarios |
+| TOOL-010..018 | tool/effect module + executor | effect crash matrix and approval-binding tests |
+| SEC-001..017, AUTH-010..013 | policy/identity + API + sandbox adapter | threat-model and boundary tests |
+| CTX-001, CTX-010..015 | context module | manifest snapshot and compaction provenance tests |
+| MEM-001, MEM-010..015 | memory module + FTS adapter | lifecycle, namespace, deletion tests |
+| EXT-001, EXT-010..016 | extension manifest/host adapters | hostile extension and crash isolation tests |
+| REC-001..017 | store + recovery + artifacts | crash-point scenario suite and backup restore tests |
+| OBS-010..013, ART-010..011 | journal/outbox/artifacts/API | cursor resume, gap, atomic artifact tests |
+| VAL-010..016 | validation + testkit | independent-context and rubric scenarios |
+| CFG-010..012, DATA-010..013 | daemon config/admin | migration, backup, export, rollback tests |
+| OPS-001, NFR-REL-001..004, NFR-PERF-001..004 | scheduler + recovery + API + bounded adapters | recovery scale, latency, cursor, crash, and resource tests |
+| NFR-PORT-001..002, NFR-OPS-001..002 | composition root + platform adapters + admin CLI | cross-platform CI, doctor, safe-mode, drain, and restore tests |
+| NFR-QUAL-001..004 | all components + testkit | unit, property, integration, scenario, and security suites |
 
-### 7.12 Skill Engine
+The full verification matrix is maintained in [`docs/TESTING.md`](docs/TESTING.md).
 
-Responsibilities:
+## 19. Rejected alternatives
 
-- Represent reusable workflows and procedural knowledge.
-- Match skills to task intent.
-- Inject skill instructions into context through the context compiler.
-- Declare required tools, permissions, memory sources, and validation rules.
-- Version skills.
-- Allow first-party and plugin-provided skills.
+### Pure event sourcing
 
-Skill manifest fields:
+Rejected for the initial system. It makes every historical event version executable migration input forever and complicates operational queries. Mealy retains an immutable transition journal without requiring it to reconstruct all canonical tables.
 
-```text
-skill_id
-name
-version
-description
-trigger_rules
-instructions_ref
-required_tools
-required_permissions
-context_policy
-validation_policy
-memory_policy
-```
+### JSONL transcripts as runtime state
 
-Skills are not arbitrary prompt blobs. They are runtime resources with metadata and policy.
+Rejected as the authority for scheduling, approvals, and effects. JSONL is excellent for portable export and branching conversation history, as Codex and Pi show, but cross-object atomic transitions and indexed recovery belong in SQLite.
 
-### 7.13 Artifact Store
+### Hosted workflow engine
 
-Responsibilities:
+Rejected as a core dependency. Eve demonstrates the value of durable steps, but Mealy's self-contained constraint requires local leases and checkpoints. A hosted scheduler could later be an adapter only if semantics remain unchanged.
 
-- Store generated files, patches, command outputs, screenshots, reports, logs, context snapshots, validation evidence, and final deliverables.
-- Provide content-addressed storage where useful.
-- Link artifacts to events, tasks, runs, and validation.
-- Support retention policies.
-- Support export and backup.
+### In-process third-party plugins
 
-Artifact metadata:
+Rejected. OpenClaw, Hermes, OpenCode, and Pi all treat loaded extensions as fully trusted code. That is acceptable for explicit first-party/full-trust use, not as Mealy's default plugin promise.
 
-```text
-artifact_id
-task_id
-agent_run_id
-event_id
-artifact_type
-content_hash
-content_ref
-mime_type
-size
-sensitivity
-created_at
-retention_policy
-```
+### One crate per feature
 
-Artifacts should be referenced from events rather than embedded in event bodies when large.
+Rejected initially. Strong module boundaries and dependency tests are cheaper than dozens of crates. Split a module only when it needs a different process, compatibility contract, compile profile, or ownership cadence.
 
-### 7.14 Event Ledger
+### Automatic retry of every interrupted step
 
-Responsibilities:
+Rejected. A process crash does not prove an external call failed. Recovery depends on the tool's idempotency and reconciliation contract.
 
-- Store append-only events for all meaningful state changes.
-- Provide a complete audit trail.
-- Support recovery.
-- Support replay/debug mode.
-- Feed projections for fast UI queries.
-- Provide causal links between events.
+## 20. Known risks and deliberate constraints
 
-Events are immutable. If state changes, append a new event.
+- Cross-platform sandbox parity is difficult. Capability profiles must fail closed rather than imply false equivalence.
+- SQLite is a single-node choice. It is correct for the product scope and intentionally defers distributed execution.
+- Durable model-response recording can contain sensitive data. Retention, encryption adapters, and redaction need early implementation.
+- Out-of-process extensions add RPC and packaging work. That cost buys a boundary the references consistently lack.
+- Independent validation adds latency and cost. Risk policy and deterministic evidence keep it proportional.
+- Local browser UI authentication requires careful Origin and token handling. It is scheduled after CLI-based proof of the core.
 
-Event envelope:
+## 21. Implementation rule
 
-```text
-event_id
-schema_version
-event_type
-occurred_at
-recorded_at
-principal_id
-agent_id
-channel_id
-session_id
-task_id
-workflow_id
-agent_run_id
-causation_id
-correlation_id
-idempotency_key
-visibility
-sensitivity
-body
-```
-
-Core event families:
-
-```text
-session.*
-task.*
-workflow.*
-agent_run.*
-message.*
-context.*
-tool.*
-approval.*
-artifact.*
-memory.*
-provider.*
-validation.*
-policy.*
-plugin.*
-channel.*
-system.*
-recovery.*
-```
-
-Example events:
-
-```text
-task.created
-task.started
-task.paused
-task.interrupted
-task.resumed
-task.cancelled
-task.completed
-task.failed
-
-agent_run.started
-agent_run.output_delta
-agent_run.action_proposed
-agent_run.completed
-agent_run.failed
-
-tool.requested
-tool.policy_checked
-tool.approval_required
-tool.approved
-tool.started
-tool.output_recorded
-tool.completed
-tool.failed
-
-context.requested
-context.compiled
-context.compacted
-
-validation.requested
-validation.started
-validation.completed
-validation.failed
-
-recovery.scan_started
-recovery.task_found
-recovery.task_resumed
-recovery.task_needs_user
-```
-
-### 7.15 Projection Store
-
-Responsibilities:
-
-- Maintain query-optimized views derived from the event ledger.
-- Provide fast task lists, timelines, health views, approval inboxes, and current states.
-- Rebuild from the event ledger when schema changes or corruption is detected.
-
-Projection examples:
-
-- current task state
-- session timeline
-- active agent runs
-- pending approvals
-- artifact index
-- memory index metadata
-- provider health
-- plugin health
-- channel connection status
-- recovery queue
-
-Projections are disposable. The ledger is authoritative.
-
-### 7.16 Recovery Manager
-
-Responsibilities:
-
-- Detect incomplete work after startup.
-- Classify interrupted tasks.
-- Resume safe work.
-- Request user approval for ambiguous or dangerous recovery.
-- Avoid duplicate side effects.
-- Restore scheduler state.
-- Rebuild projections if necessary.
-
-Recovery classification:
-
-```text
-completed
-safe_to_resume
-needs_context_rebuild
-needs_user_decision
-blocked_on_approval
-blocked_on_tool_state
-blocked_on_missing_plugin
-failed_nonrecoverable
-```
-
-Recovery should not blindly continue all tasks. It should use task state, event history, idempotency keys, and policy to decide the safe next step.
-
-### 7.17 Observability and Health
-
-Responsibilities:
-
-- Track daemon health.
-- Track provider health and rate limit state.
-- Track plugin health.
-- Track queue depth and stuck tasks.
-- Track storage use and migration status.
-- Track memory index health.
-- Track task failures and validation failures.
-- Expose local admin views.
-
-Suggested health states:
-
-```text
-healthy
-degraded
-recovering
-blocked
-maintenance_required
-failed
-```
-
-Mealy should expose enough operational state that the owner can answer:
-
-- What is running?
-- What is queued?
-- What is blocked?
-- What is waiting for me?
-- What failed recently?
-- What changed on disk or in services?
-- What credentials were used?
-- What memory was written?
-
-## 8. Domain State Machines
-
-### 8.1 Task State
-
-```text
-created
-  -> queued
-  -> planning
-  -> running
-  -> waiting_for_approval
-  -> waiting_for_user
-  -> validating
-  -> completed
-
-running
-  -> interrupted
-  -> paused
-  -> cancelling
-  -> failed
-
-interrupted
-  -> running
-  -> waiting_for_user
-  -> cancelled
-
-paused
-  -> queued
-  -> cancelled
-
-cancelling
-  -> cancelled
-
-validating
-  -> needs_revision
-  -> completed
-  -> failed
-
-needs_revision
-  -> running
-  -> waiting_for_user
-```
-
-Task state should be derived from events. The current state projection can be stored for fast access, but it must be rebuildable.
-
-### 8.2 Agent Run State
-
-```text
-created
-  -> context_compiling
-  -> provider_running
-  -> tool_wait
-  -> observing
-  -> completed
-
-provider_running
-  -> interrupted
-  -> failed
-  -> cancelled
-
-tool_wait
-  -> provider_running
-  -> failed
-  -> cancelled
-```
-
-An agent run is an attempt. A task may contain multiple agent runs.
-
-### 8.3 Tool Call State
-
-```text
-requested
-  -> policy_checking
-  -> approval_required
-  -> approved
-  -> running
-  -> completed
-
-policy_checking
-  -> denied
-  -> approved
-  -> approval_required
-
-approval_required
-  -> approved
-  -> denied
-  -> expired
-
-running
-  -> completed
-  -> failed
-  -> cancelled
-```
-
-Tool calls that perform side effects must store enough state to support idempotent recovery.
-
-### 8.4 Validation State
-
-```text
-requested
-  -> context_compiling
-  -> running
-  -> passed
-
-running
-  -> failed
-  -> inconclusive
-  -> needs_revision
-```
-
-Validation is part of the task lifecycle, not a separate optional report.
-
-## 9. Agentic Loop
-
-The standard Mealy task loop:
-
-1. Channel sends user input to the API.
-2. API authenticates the channel identity and maps it to a principal.
-3. Task runtime appends `message.received` and creates or updates a task.
-4. Scheduler selects the next work item.
-5. Coordinator agent receives a context bundle.
-6. Coordinator produces a plan or direct action.
-7. Agent runtime converts model output into structured actions.
-8. Tool requests go to the tool broker.
-9. Policy engine allows, denies, or requests approval.
-10. Tool broker executes approved tools and stores outputs as events and artifacts.
-11. Agent observes structured tool results.
-12. Loop repeats until the task reaches a proposed final result.
-13. Validation agent receives fresh context and structured evidence.
-14. Validator passes, fails, or requests revision.
-15. If passed, task runtime publishes final answer and artifacts.
-16. All channels can display the same timeline and final state.
-
-The loop should support streaming progress while preserving durable checkpoints.
-
-## 10. Multi-Agent Orchestration
-
-Mealy should support internal agent delegation without treating delegated agents as unmanaged subprocesses.
-
-### 10.1 Delegation Model
-
-The coordinator can create subtasks or child agent runs. Delegation requires:
-
-- explicit task or subtask scope
-- context injection policy
-- expected output format
-- tool permissions
-- workspace ownership
-- memory namespace
-- budget
-- validation requirement
-
-### 10.2 Parallel Work
-
-Parallel agents are useful for independent research, verification, or disjoint implementation work. Parallelism is dangerous when agents can mutate the same resources.
-
-Parallel work must use:
-
-- workspace locks
-- file ownership declarations
-- service mutation locks
-- memory write review
-- artifact-based handoff
-- merge or conflict detection
-- cancellation propagation
-
-### 10.3 Agent Isolation
-
-Each internal agent should have:
-
-- agent identity
-- role
-- policy profile
-- workspace namespace
-- memory namespace
-- context policy
-- provider policy
-- budget policy
-
-Sharing is explicit. Isolation is the default.
-
-## 11. Channels
-
-Channels should be thin clients over the Mealy API.
-
-### 11.1 Channel Responsibilities
-
-Channels may:
-
-- authenticate channel users
-- send user messages
-- render task timelines
-- display approvals
-- stream agent progress
-- show artifacts
-- send interrupts
-- receive notifications
-
-Channels must not:
-
-- own task state
-- execute tools directly
-- bypass policy
-- write memory directly
-- manage agent sessions directly
-- decide durable workflow state
-
-### 11.2 Channel Types
-
-Initial channel candidates:
-
-- `mealyctl`: administrative CLI.
-- TUI: local terminal client for active work.
-- Web UI: local browser interface for task timelines, approvals, memory, and health.
-- Discord: remote messaging channel with strict identity mapping.
-- Slack: future plugin channel.
-- Local API: scripted access for personal automation.
-
-### 11.3 Channel Security
-
-Each channel needs:
-
-- channel ID
-- channel type
-- authentication method
-- allowed principals
-- allowed operations
-- network exposure setting
-- audit visibility
-- rate limits
-- message retention policy
-
-Remote channels should default to narrower permissions than local channels.
-
-## 12. Security Architecture
-
-Security is a core architecture layer, not a plugin.
-
-### 12.1 Trust Boundaries
-
-Trust boundaries:
-
-- user to channel
-- channel to API
-- API to daemon internals
-- agent runtime to provider
-- agent runtime to tool broker
-- tool broker to local system
-- plugin host to plugin
-- provider router to external provider
-- memory manager to retrieved memory
-
-Every boundary should have explicit data contracts and logging.
-
-### 12.2 Policy Enforcement Points
-
-Policy should be enforced at:
-
-- API request entry
-- task creation
-- agent run creation
-- context assembly
-- tool request
-- provider request
-- memory read
-- memory write
-- artifact read
-- plugin load
-- channel send
-- recovery resume
-
-### 12.3 Secrets
-
-Secrets should be stored outside prompts and ordinary memory.
-
-Secret rules:
-
-- Agents receive secret references, not raw secrets, unless explicitly allowed.
-- Tools resolve secret references at execution time.
-- Secret use is recorded as metadata without leaking secret values.
-- Secret scopes are tied to principals, plugins, tools, and services.
-- Secret rotation and revocation should be possible.
-
-### 12.4 Risk Classes
-
-Actions should be classified by risk:
-
-- harmless read
-- sensitive read
-- local write
-- destructive local write
-- network read
-- network write
-- service mutation
-- credential access
-- privileged command
-- irreversible operation
-
-Policy can use risk class to require approval or stronger profiles.
-
-## 13. Context Architecture
-
-### 13.1 Context Sources
-
-Potential sources:
-
-- current user message
-- session history
-- task event summary
-- recent task timeline
-- active plan
-- artifacts
-- tool outputs
-- workspace files
-- workspace memory
-- long-term semantic memories
-- long-term lexical memories
-- daily diary
-- channel metadata
-- plugin-provided context
-- system policy summaries
-- agent role instructions
-- skill instructions
-
-### 13.2 Context Selection
-
-Context selection should consider:
-
-- relevance
-- recency
-- source authority
-- namespace
-- sensitivity
-- confidence
-- token cost
-- provider context limit
-- task phase
-- agent role
-- validation requirements
-
-### 13.3 Context Compaction
-
-Compaction should:
-
-- preserve decisions, constraints, tool results, and unresolved issues
-- avoid summarizing away safety-critical facts
-- link compacted summaries to source events
-- record compaction prompts, outputs, and metadata as artifacts
-- allow validator agents to inspect compacted summaries and source evidence
-
-### 13.4 Context Inspection
-
-Users should be able to inspect:
-
-- what was included
-- what was excluded
-- why it was included or excluded
-- source references
-- sensitivity labels
-- token estimates
-- compaction history
-
-This matters for debugging wrong answers and preventing memory contamination.
-
-## 14. Memory Architecture
-
-### 14.1 Namespaces
-
-Suggested namespace dimensions:
-
-- principal
-- workspace
-- project
-- agent
-- channel
-- plugin
-- sensitivity
-- retention policy
-
-Namespaces let single-user Mealy behave safely today and support multi-user later.
-
-### 14.2 Memory Lifecycle
-
-```text
-proposed
-  -> accepted
-  -> indexed
-  -> retrieved
-  -> revised
-  -> expired
-  -> deleted
-```
-
-Sensitive or user-preference memory should generally pass through a review step.
-
-### 14.3 Memory Retrieval
-
-Retrieval should combine:
-
-- semantic vector search
-- lexical search
-- structured filters
-- recency ranking
-- namespace filtering
-- sensitivity filtering
-- confidence filtering
-
-Retrieval output should include provenance and scores. The context compiler decides final inclusion.
-
-### 14.4 Memory Correction
-
-Users should be able to:
-
-- inspect memory
-- delete memory
-- mark memory stale
-- correct memory
-- prevent memory from being used for certain task types
-- export memory
-- rebuild indexes
-
-## 15. Plugin Architecture
-
-Plugins extend Mealy, but they do not own Mealy.
-
-### 15.1 Plugin Types
-
-Plugin capabilities:
-
-- tool provider
-- channel provider
-- memory source
-- LLM provider
-- skill provider
-- artifact renderer
-- notification provider
-- admin panel provider
-
-### 15.2 Plugin Permissions
-
-Plugin permissions should be explicit and reviewable:
-
-```text
-filesystem.read
-filesystem.write
-network.request
-command.run
-secret.read
-memory.read
-memory.write
-channel.send
-task.read
-task.write
-artifact.read
-artifact.write
-provider.call
-```
-
-### 15.3 Plugin Execution
-
-Execution options:
-
-- trusted in-process first-party plugin
-- supervised child process
-- containerized plugin
-- remote plugin endpoint
-
-The architecture should support child-process plugins early, even if the first version implements only first-party plugins.
-
-## 16. API Concepts
-
-The exact API format can be decided later. This section records the conceptual operations that must exist.
-
-### 16.1 Task API
-
-```text
-create_session
-create_task
-send_message
-interrupt_task
-pause_task
-resume_task
-cancel_task
-list_tasks
-get_task
-stream_task_timeline
-get_task_artifacts
-request_validation
-```
-
-### 16.2 Approval API
-
-```text
-list_pending_approvals
-get_approval
-approve_action
-deny_action
-approve_once
-approve_with_rule
-expire_approval
-```
-
-### 16.3 Memory API
-
-```text
-search_memory
-get_memory
-propose_memory
-accept_memory
-reject_memory
-edit_memory
-delete_memory
-reindex_memory
-```
-
-### 16.4 Admin API
-
-```text
-health
-readiness
-list_agents
-list_providers
-list_plugins
-list_channels
-list_running_tasks
-list_queues
-list_locks
-list_recent_failures
-run_recovery_scan
-backup_state
-export_data
-```
-
-## 17. Persistence Model
-
-The storage technology can evolve. The logical model should remain stable.
-
-### 17.1 Suggested Initial Storage
-
-For a single-user local daemon:
-
-- SQLite for relational state, projections, config metadata, event index, and queue state.
-- Filesystem content-addressed storage for large artifacts.
-- Local vector store for embeddings.
-- Full-text search index for lexical memory and logs.
-
-SQLite is a strong default for a local daemon because it is durable, inspectable, easy to back up, and simple to operate.
-
-### 17.2 Ledger and Projections
-
-The event ledger is authoritative. Projections are query optimizations.
-
-```text
-events table
-  immutable event envelopes and compact bodies
-
-projection tables
-  current task state
-  timeline entries
-  pending approvals
-  active runs
-  health snapshots
-  artifact index
-  memory metadata
-```
-
-Projections should be rebuildable from events.
-
-### 17.3 Migrations
-
-Migrations must handle:
-
-- database schema
-- event schema versions
-- projection schema
-- plugin manifest schema
-- memory record schema
-- config schema
-- artifact metadata schema
-
-The daemon should refuse to start normally if required migrations fail.
-
-## 18. Validation Architecture
-
-Validation should be a first-class part of task completion.
-
-### 18.1 Validator Inputs
-
-Validator receives:
-
-- original user request
-- explicit success criteria
-- final answer draft
-- relevant artifacts
-- relevant tool outputs
-- task timeline summary
-- constraints
-- known risks
-- validation rubric
-
-Validator should not receive:
-
-- producer agent hidden reasoning
-- irrelevant raw context
-- unfiltered memory from the producer agent
-
-### 18.2 Validation Outcomes
-
-```text
-passed
-needs_revision
-failed
-inconclusive
-waived_by_user
-```
-
-For low-risk tasks, validation can be lightweight. For high-risk or side-effecting tasks, validation should be stricter.
-
-### 18.3 Validation Rubrics
-
-Rubrics should be task-specific:
-
-- coding: tests, diffs, scope, regressions, style, security
-- research: source quality, recency, citation coverage, uncertainty
-- service operation: intended service changed, no unintended mutation, rollback path
-- file operation: correct files touched, no unrelated edits, backup if needed
-- memory write: source, accuracy, sensitivity, retention
-
-## 19. Recovery and Replay
-
-### 19.1 Startup Recovery
-
-On startup:
-
-1. Open database.
-2. Acquire daemon lock.
-3. Check migrations.
-4. Rebuild or verify projections.
-5. Scan incomplete tasks.
-6. Classify each incomplete task.
-7. Requeue safe tasks.
-8. Mark ambiguous tasks as waiting for user.
-9. Resume channel workers.
-10. Publish recovery summary.
-
-### 19.2 Idempotency
-
-Side-effecting tool calls need:
-
-- stable tool call ID
-- idempotency key
-- precondition record
-- execution start event
-- execution result event
-- artifact references
-- recovery behavior
-
-Replay mode should never execute side effects unless explicitly configured. It should use recorded outputs by default.
-
-### 19.3 Debug Replay
-
-Replay can be used to answer:
-
-- why did the agent do this?
-- what context was included?
-- which tool output led to the decision?
-- which policy allowed the action?
-- did recovery duplicate anything?
-- did validation miss anything?
-
-## 20. Operational UX
-
-A reliable personal daemon needs good operational UX.
-
-### 20.1 Owner Views
-
-The owner should be able to see:
-
-- current active tasks
-- queued tasks
-- paused tasks
-- stuck tasks
-- pending approvals
-- recent tool calls
-- recent memory writes
-- provider health
-- plugin health
-- channel status
-- storage usage
-- recovery status
-
-### 20.2 Approval Inbox
-
-Approvals should be visible from every channel where the owner has permission.
-
-Approval records should show:
-
-- requested action
-- requesting agent
-- task
-- risk class
-- target resource
-- arguments summary
-- expected effect
-- policy reason
-- allow once / deny / create rule options
-
-### 20.3 Task Timeline
-
-Timeline entries should be concise but expandable:
-
-- user message
-- agent planning
-- context compiled
-- tool requested
-- approval required
-- tool completed
-- artifact created
-- validation started
-- validation result
-- final answer
-
-The timeline is the shared user-facing representation of task state.
-
-## 21. First-Party Built-Ins
-
-Suggested first-party built-ins:
-
-### 21.1 Tools
-
-- file read
-- file write through patch or structured write
-- directory listing
-- search
-- shell command execution
-- HTTP request
-- local service status
-- artifact creation
-- memory search
-- memory proposal
-- approval request
-
-### 21.2 Skills
-
-- codebase exploration
-- code editing
-- test running
-- GitHub workflow
-- Obsidian workflow
-- Nextcloud workflow
-- service debugging
-- research synthesis
-- memory curation
-- validation
-
-### 21.3 Agents
-
-- coordinator
-- executor
-- validator
-- summarizer
-- memory curator
-- recovery assistant
-
-The first implementation can start with fewer built-ins, but these categories should shape interfaces.
-
-## 22. Configuration Architecture
-
-Configuration should be explicit, versioned, inspectable, and separable from durable runtime state.
-
-### 22.1 Configuration Categories
-
-Suggested config categories:
-
-- daemon settings
-- API settings
-- channel settings
-- principal and identity mappings
-- agent profiles
-- provider profiles
-- policy profiles
-- tool settings
-- plugin settings
-- memory settings
-- storage settings
-- observability settings
-- backup settings
-
-### 22.2 Configuration Sources
-
-Potential sources:
-
-- static files under `~/.config/mealy/`
-- environment variables for deployment-specific overrides
-- local admin API for runtime changes
-- channel-specific setup flows
-- plugin manifests and plugin config files
-
-The daemon should record effective configuration at startup as a system event, excluding secret values.
-
-### 22.3 Configuration Schema
-
-Every config file should carry:
-
-```text
-schema_version
-config_type
-config_id
-owner_principal_id
-created_at
-updated_at
-body
-```
-
-Provider and plugin config should distinguish public settings from secret references.
-
-### 22.4 Configuration Changes
-
-Configuration changes should:
-
-- validate against schema
-- record who made the change
-- record before/after metadata where safe
-- trigger affected components to reload
-- require approval for high-risk changes
-- be reversible where practical
-
-Examples of high-risk changes:
-
-- enabling network access
-- granting plugin filesystem write access
-- changing a provider to a remote model for private tasks
-- granting service-admin permissions
-- disabling validation for high-risk tasks
-
-## 23. Budgets and Limits
-
-Budgets prevent runaway tasks and make agent behavior predictable.
-
-### 23.1 Budget Dimensions
-
-Mealy should support limits for:
-
-- wall-clock time
-- LLM tokens
-- provider cost
-- tool call count
-- network call count
-- parallel agent count
-- memory retrieval count
-- artifact storage size
-- command runtime
-- retry count
-
-### 23.2 Budget Scope
-
-Budgets can apply to:
-
-- principal
-- channel
-- session
-- task
-- workflow
-- agent profile
-- provider
-- tool
-- plugin
-
-### 23.3 Budget Policy
-
-When a budget is reached, policy can:
-
-- stop the task
-- pause and ask the user
-- degrade to a cheaper provider
-- reduce context size
-- disable parallelism
-- skip optional validation
-- request explicit approval to continue
-
-Budget exhaustion should be visible in the task timeline.
-
-## 24. Data Retention, Backup, and Export
-
-Mealy will accumulate sensitive local state. Retention and export need to be part of the architecture early.
-
-### 24.1 Retention Classes
-
-Suggested retention classes:
-
-- ephemeral: safe to delete after task completion
-- short_term: keep for recent task continuity
-- long_term: keep until user deletes or retention expires
-- audit: keep for security and recovery
-- sensitive: keep with stricter access and shorter default retention
-- pinned: keep until explicitly unpinned
-
-### 24.2 Backup
-
-Backups should include:
-
-- config
-- event ledger
-- projections or rebuild instructions
-- artifacts
-- memory records
-- memory indexes or reindex instructions
-- plugin manifests
-- provider and channel metadata
-
-Backups should not include raw secrets unless the user explicitly chooses encrypted secret backup.
-
-### 24.3 Export
-
-Export should support:
-
-- full local archive
-- task bundle
-- memory bundle
-- artifact bundle
-- audit bundle
-- human-readable report
-
-Task bundle export is especially useful for debugging because it can include events, context bundle metadata, artifacts, tool outputs, validation evidence, and final result.
-
-## 25. Failure Modes
-
-The architecture should make common failures visible and recoverable.
-
-### 25.1 Expected Failure Types
-
-Expected failures:
-
-- provider unavailable
-- provider rate limited
-- malformed provider response
-- context too large
-- tool denied by policy
-- tool failed
-- approval expired
-- plugin crashed
-- channel disconnected
-- daemon restarted
-- migration failed
-- projection corruption
-- artifact missing
-- memory index stale
-- validation failed
-- recovery ambiguity
-
-### 25.2 Failure Handling Rules
-
-General rules:
-
-- Failures become events.
-- User-visible failures appear in the task timeline.
-- Retriable failures use bounded retries.
-- Side-effecting operations are not retried unless idempotency is known.
-- Provider failures can trigger fallback if policy allows.
-- Plugin failures should degrade only affected capabilities.
-- Projection failures should trigger rebuild from the event ledger.
-- Ambiguous recovery should stop and ask the user.
-
-### 25.3 Degraded Mode
-
-Mealy should be able to run in degraded mode when optional systems are unavailable.
-
-Examples:
-
-- vector memory unavailable: continue with lexical and recent task context
-- remote provider unavailable: fall back to local provider if configured
-- Discord channel unavailable: keep local CLI/API usable
-- plugin failed: disable plugin tools and continue core daemon
-- projection stale: rebuild and temporarily serve slower direct ledger queries
-
-## 26. Testing and Verification Strategy
-
-Testing should match the architecture boundaries.
-
-### 26.1 Unit Tests
-
-Unit tests should cover:
-
-- state machine transitions
-- policy decisions
-- config validation
-- provider request normalization
-- tool argument validation
-- context item ranking
-- memory record lifecycle
-- event envelope validation
-- migration functions
-
-### 26.2 Integration Tests
-
-Integration tests should cover:
-
-- task creation through API
-- event append and projection update
-- timeline streaming
-- tool request through policy and broker
-- approval flow
-- artifact creation
-- provider call with mocked provider
-- memory proposal and retrieval
-- validation pass/fail
-- daemon restart and recovery
-
-### 26.3 Scenario Tests
-
-Scenario tests should cover realistic workflows:
-
-- read-only research task
-- code edit task with file ownership and validation
-- task interrupted by user and resumed
-- daemon restarted during tool execution
-- provider fails and fallback is used
-- plugin denied by policy
-- memory write requires review
-- parallel agents attempt conflicting writes
-
-### 26.4 Replay Tests
-
-Replay tests should verify:
-
-- event logs can rebuild projections
-- context bundles can be reconstructed or explained
-- recorded tool outputs are used instead of re-executing side effects
-- idempotency keys prevent duplicate mutation
-- recovery classification is stable
-
-### 26.5 Security Tests
-
-Security tests should verify:
-
-- channels cannot bypass policy
-- agents cannot directly execute tools
-- plugins cannot access undeclared capabilities
-- secrets are not inserted into prompts by default
-- remote channels get narrower defaults than local channels
-- memory namespace boundaries are enforced
-- artifact access checks are enforced
-
-## 27. Suggested Development Phases
-
-This is not an implementation plan, but it records a plausible architecture path.
-
-### Phase 0: Architecture and Data Model
-
-- Finalize requirements.
-- Finalize module boundaries.
-- Define event envelope.
-- Define core task/session/run/tool/approval/artifact schemas.
-- Define policy decision model.
-- Define provider interface.
-
-### Phase 1: Minimal Local Daemon
-
-- `mealyd` local daemon.
-- SQLite state.
-- event ledger.
-- task creation.
-- local CLI channel.
-- basic timeline stream.
-- one provider integration.
-- simple coordinator/executor loop.
-- read-only and workspace-write policy profiles.
-
-### Phase 2: Tool and Policy Runtime
-
-- tool broker.
-- file and shell tools.
-- approval inbox.
-- artifact store.
-- idempotency for side effects.
-- task interruption.
-- basic recovery after restart.
-
-### Phase 3: Context and Memory
-
-- context compiler.
-- workspace memory.
-- task summaries.
-- memory proposal/review.
-- lexical search.
-- semantic memory.
-- context inspector.
-
-### Phase 4: Multi-Agent and Validation
-
-- agent profiles.
-- child agent runs.
-- scheduler concurrency.
-- independent validation.
-- validation rubrics.
-- workspace locks.
-- conflict handling.
-
-### Phase 5: Channels and Plugins
-
-- web UI.
-- Discord channel.
-- plugin manifests.
-- first-party plugins.
-- plugin health.
-- secrets manager.
-
-### Phase 6: Hardening
-
-- backup/export/import.
-- migrations.
-- replay/debug mode.
-- health dashboard.
-- stricter plugin isolation.
-- multi-user readiness review.
-
-## 28. Open Design Questions
-
-These should be resolved before implementation planning.
-
-1. Primary implementation language and runtime.
-2. Whether `mealyd` should expose HTTP on loopback, Unix socket RPC, or both.
-3. Initial storage stack: SQLite only, or SQLite plus separate vector/search stores from day one.
-4. Exact event schema and whether event bodies are JSON, typed records, or hybrid.
-5. How strict validation should be for small conversational tasks.
-6. Whether memory writes are automatic, approval-based, or policy-dependent.
-7. How much plugin isolation is required for v1.
-8. Which LLM provider should be the first reference implementation.
-9. Whether the first UI should be CLI, TUI, or local web.
-10. Which built-in tools are safe enough for the first vertical slice.
-
-## 29. Recommended First Vertical Slice
-
-The first vertical slice should prove the architecture without building every feature.
-
-Recommended slice:
-
-```text
-mealyctl
-  -> mealyd API
-  -> create task
-  -> append event
-  -> compile simple context
-  -> call one LLM provider
-  -> request one safe tool
-  -> apply policy
-  -> store artifact
-  -> run lightweight validation
-  -> complete task
-  -> show timeline
-  -> restart daemon
-  -> recover visible task state
-```
-
-This proves:
-
-- daemon model
-- API boundary
-- task lifecycle
-- event ledger
-- projection
-- provider interface
-- tool broker
-- policy check
-- artifact storage
-- basic validation
-- recovery foundation
-
-It intentionally does not start with plugins, Discord, vector memory, or parallel agents. Those features depend on the same foundations and become safer once the core runtime is real.
-
-## 30. Summary
-
-Mealy should be built as a local agent operating system:
-
-- a daemon owns state
-- channels are clients
-- agents are native runtime instances
-- tools are mediated side-effect gateways
-- policy is central
-- context is compiled and inspectable
-- memory is governed
-- validation is independent
-- events make recovery and replay possible
-
-The architecture should stay simple enough for a personal daemon, but rigorous enough that future multi-user support, plugins, remote channels, and complex multi-agent workflows do not require redesigning the foundation.
+The first vertical slice in `REQUIREMENTS.md` is the architecture proof. Features that bypass its durable inbox, lease fencing, effect state machine, context manifest, or recovery path are not acceptable shortcuts; they would prove a different system.
