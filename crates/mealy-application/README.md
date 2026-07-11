@@ -4,10 +4,8 @@ Application use cases and ports. This crate coordinates domain transitions but d
 
 Modules should align to use cases (`admit_input`, `claim_work`, `dispatch_effect`) rather than becoming generic manager/service buckets.
 
-Current proof:
-
-- injectable clock and typed ID generation ports;
-- authenticated session ownership context;
-- bounded session creation and durable, idempotent input-admission use cases;
-- a storage port that requires canonical session/inbox state, journal facts, and acknowledgements to
-  commit atomically.
+The implemented ports/use cases cover authenticated bounded admission and backpressure, promotion
+and steering, fenced scheduling and concurrency policy, provider routing/attempts, typed tools,
+effects and approvals, context/compaction, memory, validation/delegation, extensions/channels,
+timeline/outbox/recovery, artifacts, and operational lifecycle evidence. Storage ports require
+canonical state, journal facts, and required outbound notifications to commit atomically.

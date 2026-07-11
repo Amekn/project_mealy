@@ -1,5 +1,8 @@
 # mealy-api
 
-Authenticated command/query/timeline adapter. It validates transport input, resolves a principal, calls application use cases, and projects safe DTOs. It contains no agent loop or direct database access.
+Authenticated bounded HTTP/SSE command, query, timeline, signed-ingress, and administration
+adapter. It validates transport input, resolves a principal and active channel binding, calls the
+backend/application boundary, projects safe versioned DTOs, propagates request IDs, limits command
+and subscriber concurrency, and exposes resumable gap-aware event streams.
 
-The HTTP server is intentionally not implemented in the architecture-baseline commit.
+It contains no agent loop, policy transition logic, provider dispatch, or direct database access.

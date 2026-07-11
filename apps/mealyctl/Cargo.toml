@@ -8,7 +8,17 @@ license-file.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64.workspace = true
+clap.workspace = true
+eventsource-stream.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
 mealy-protocol.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

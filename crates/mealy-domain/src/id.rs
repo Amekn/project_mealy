@@ -100,20 +100,60 @@ define_id!(
     ArtifactId
 );
 define_id!(
+    /// Identifies a versioned baseline context snapshot for a session.
+    ContextEpochId
+);
+define_id!(
+    /// Identifies one candidate or included item in a context manifest.
+    ContextItemId
+);
+define_id!(
     /// Identifies the exact material assembled for one model request.
     ContextManifestId
+);
+define_id!(
+    /// Identifies one durable provider-neutral conversation message.
+    MessageId
 );
 define_id!(
     /// Identifies a governed long-term memory.
     MemoryId
 );
 define_id!(
+    /// Identifies one immutable revision of a governed long-term memory.
+    MemoryRevisionId
+);
+define_id!(
+    /// Identifies one derived, cited session compaction.
+    CompactionId
+);
+define_id!(
+    /// Identifies one installed extension across manifest revisions.
+    ExtensionId
+);
+define_id!(
+    /// Identifies one explicit owner-approved extension authority grant.
+    ExtensionGrantId
+);
+define_id!(
+    /// Identifies one bounded out-of-process extension invocation.
+    ExtensionInvocationId
+);
+define_id!(
     /// Identifies an independent validation record.
     ValidationId
 );
 define_id!(
+    /// Identifies one explicit parent-to-child delegation contract.
+    DelegationId
+);
+define_id!(
     /// Identifies a durable worker lease.
     LeaseId
+);
+define_id!(
+    /// Identifies a scheduler worker process or runtime instance.
+    WorkerId
 );
 define_id!(
     /// Identifies an immutable journal event.

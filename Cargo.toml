@@ -14,11 +14,21 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.96"
 license-file = "LICENSE"
 repository = "https://github.com/Amekn/project_mealy"
 
 [workspace.dependencies]
+async-stream = "0.3.6"
+argon2 = "0.5.3"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "tracing"] }
+base64 = "0.22.1"
+chacha20poly1305 = "0.10.1"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+eventsource-stream = "0.2.3"
+futures-util = "0.3.32"
+getrandom = "0.4.3"
+hmac = "0.13.0"
 mealy-api = { path = "crates/mealy-api" }
 mealy-application = { path = "crates/mealy-application" }
 mealy-domain = { path = "crates/mealy-domain" }
@@ -26,11 +36,20 @@ mealy-infrastructure = { path = "crates/mealy-infrastructure" }
 mealy-protocol = { path = "crates/mealy-protocol" }
 mealy-testkit = { path = "crates/mealy-testkit" }
 proptest = "1.7.0"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "rustls", "stream"] }
+rusqlite = { version = "0.40.1", features = ["backup", "bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.11.0"
 thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5.3", features = ["limit", "load-shed", "util"] }
+tower-http = { version = "0.7.0", features = ["cors", "limit", "request-id", "sensitive-headers", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+subtle = "2.6.1"
 uuid = { version = "1.23.3", features = ["serde", "v7"] }
+zeroize = "1.8.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

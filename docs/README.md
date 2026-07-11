@@ -8,8 +8,10 @@ Start with these documents in order:
 4. [`DOMAIN_MODEL.md`](DOMAIN_MODEL.md) — IDs, lifecycles, and transition rules.
 5. [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — vertical delivery phases and exit gates.
 6. [`TESTING.md`](TESTING.md) — verification strategy and crash matrix.
-7. [`decisions/`](decisions/) — accepted architectural choices.
-8. [`research/`](research/) — pinned evidence from the eight reference systems.
+7. [`OPERATIONS.md`](OPERATIONS.md) — install, diagnostics, backup, retention, and recovery.
+8. [`REQUIREMENTS_COVERAGE.md`](REQUIREMENTS_COVERAGE.md) — release evidence for normative groups.
+9. [`decisions/`](decisions/) — accepted architectural choices.
+10. [`research/`](research/) — pinned evidence from the eight reference systems.
 
 Requirements are authoritative for product intent. Accepted ADRs are authoritative for cross-cutting implementation decisions. Architecture describes the current synthesis and must be updated when an ADR supersedes it.
 

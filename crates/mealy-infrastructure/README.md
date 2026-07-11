@@ -1,8 +1,12 @@
 # mealy-infrastructure
 
-Concrete adapters for application ports. The SQLite adapter now provides the Phase 0 schema,
-file-backed WAL/foreign-key/durability configuration, atomic task transitions, and the first Phase 1
-session/input-admission transaction. Exact duplicate deliveries return their original receipt;
-changed retries, forged ownership, and late transaction failures fail without partial writes.
+Concrete adapters for application ports. The SQLite adapter owns migrations 1–11, WAL/foreign-key
+durability, every canonical transaction, journal/timeline/outbox projections, fencing/recovery,
+memory/FTS, validation/delegation, extension/channel evidence, and operational inspection. File
+adapters provide content-addressed artifacts, encrypted complete backups, complete/scoped exports,
+forensics, secret brokerage, and safe GC. Process adapters provide Bubblewrap tool and extension
+workers with exact executable/runtime identity.
 
-Future modules will hold artifacts, process supervision, sandbox backends, provider clients, secret brokers, and extension RPC. Business transition rules do not belong here.
+Exact duplicates return original receipts; ownership, capacity, stale fences, changed retries,
+unsafe paths, and late transaction failures fail without partial canonical writes. Business
+transition rules do not belong here.

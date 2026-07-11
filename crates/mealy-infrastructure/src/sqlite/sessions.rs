@@ -72,6 +72,10 @@ impl SessionStore for SqliteStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
 
+        if !active_identity(&transaction, commit.ownership)? {
+            return Err(SessionStoreError::Unauthorized);
+        }
+
         let session = load_session(&transaction, commit.session_id)?;
 
         if session.principal_id != commit.ownership.principal_id().to_string()
@@ -91,10 +95,24 @@ impl SessionStore for SqliteStore {
                 .map(InputAdmissionOutcome::Duplicate);
         }
 
+        let pending_inputs = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM session_inbox WHERE session_id = ?1 AND state = 'pending'",
+                [commit.session_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sqlite_error)?;
+        let maximum_pending_inputs = i64::try_from(commit.maximum_pending_inputs)
+            .map_err(|_| invariant("session pending-input limit exceeds SQLite"))?;
+        if maximum_pending_inputs == 0 || pending_inputs >= maximum_pending_inputs {
+            return Err(SessionStoreError::Backpressure);
+        }
+
         let inbox_sequence =
             insert_inbox_and_advance(&transaction, &commit, &session, accepted_at_ms)?;
         append_input_journal(&transaction, &commit, inbox_sequence, accepted_at_ms)?;
         append_acknowledgement(&transaction, &commit, inbox_sequence, accepted_at_ms)?;
+        let timeline_cursor = admission_cursor(&transaction, &commit.event_id.to_string())?;
 
         transaction.commit().map_err(map_sqlite_error)?;
         Ok(InputAdmissionOutcome::Accepted(InputAdmissionReceipt {
@@ -106,8 +124,31 @@ impl SessionStore for SqliteStore {
             outbox_id: commit.outbox_id,
             correlation_id: commit.correlation_id,
             accepted_at: system_time_from_epoch_milliseconds(accepted_at_ms)?,
+            timeline_cursor,
         }))
     }
+}
+
+fn active_identity(
+    transaction: &Transaction<'_>,
+    ownership: mealy_application::OwnershipContext,
+) -> Result<bool, SessionStoreError> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(\
+                SELECT 1 FROM principal_registry principal \
+                JOIN channel_binding_registry binding \
+                  ON binding.principal_id = principal.principal_id \
+                WHERE principal.principal_id = ?1 AND principal.status = 'active' \
+                  AND binding.binding_id = ?2 AND binding.status = 'active'\
+             )",
+            params![
+                ownership.principal_id().to_string(),
+                ownership.channel_binding_id().to_string(),
+            ],
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite_error)
 }
 
 struct SessionRow {
@@ -126,6 +167,7 @@ struct StoredAdmission {
     outbox_id: String,
     correlation_id: String,
     accepted_at_ms: i64,
+    timeline_cursor: i64,
 }
 
 fn load_session(
@@ -293,6 +335,7 @@ impl StoredAdmission {
             outbox_id: parse_id(&self.outbox_id, "outbox ID")?,
             correlation_id: parse_id(&self.correlation_id, "correlation ID")?,
             accepted_at: system_time_from_epoch_milliseconds(self.accepted_at_ms)?,
+            timeline_cursor: positive_u64(self.timeline_cursor, "admission timeline cursor")?,
         })
     }
 }
@@ -304,9 +347,12 @@ fn load_admission(
 ) -> Result<Option<StoredAdmission>, SessionStoreError> {
     transaction
         .query_row(
-            "SELECT inbox_entry_id, sequence, delivery_mode, content, admission_event_id, \
-                    acknowledgement_outbox_id, correlation_id, accepted_at_ms \
-             FROM session_inbox WHERE session_id = ?1 AND dedupe_key = ?2",
+            "SELECT i.inbox_entry_id, i.sequence, i.delivery_mode, i.content, \
+                    i.admission_event_id, i.acknowledgement_outbox_id, i.correlation_id, \
+                    i.accepted_at_ms, te.cursor \
+             FROM session_inbox i \
+             JOIN timeline_event te ON te.event_id = i.admission_event_id \
+             WHERE i.session_id = ?1 AND i.dedupe_key = ?2",
             params![session_id.to_string(), dedupe_key],
             |row| {
                 Ok(StoredAdmission {
@@ -318,11 +364,28 @@ fn load_admission(
                     outbox_id: row.get(5)?,
                     correlation_id: row.get(6)?,
                     accepted_at_ms: row.get(7)?,
+                    timeline_cursor: row.get(8)?,
                 })
             },
         )
         .optional()
         .map_err(map_sqlite_error)
+}
+
+fn admission_cursor(
+    transaction: &Transaction<'_>,
+    event_id: &str,
+) -> Result<u64, SessionStoreError> {
+    let cursor = transaction
+        .query_row(
+            "SELECT cursor FROM timeline_event WHERE event_id = ?1",
+            [event_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .ok_or_else(|| invariant("accepted input is missing its timeline cursor"))?;
+    positive_u64(cursor, "admission timeline cursor")
 }
 
 fn next_journal_sequence(
@@ -451,6 +514,7 @@ mod tests {
             delivery_mode: DeliveryMode::Queue,
             dedupe_key: dedupe_key.to_owned(),
             content: content.to_owned(),
+            maximum_pending_inputs: 1_024,
             event_id: EventId::new(),
             outbox_id: OutboxId::new(),
             correlation_id: CorrelationId::new(),
@@ -519,6 +583,37 @@ mod tests {
             ))
             .expect_err("same key cannot bind changed content");
         assert_eq!(error, SessionStoreError::IdempotencyConflict);
+        assert_eq!(store.journal_count().expect("journal count"), 2);
+        assert_eq!(store.outbox_count().expect("outbox count"), 1);
+    }
+
+    #[test]
+    fn pending_queue_limit_rejects_new_work_but_preserves_exact_idempotency() {
+        let mut store = SqliteStore::open_in_memory(NOW_MS).expect("open store");
+        let session_id = SessionId::new();
+        let ownership = owner();
+        store
+            .create_session(create_commit(session_id, ownership))
+            .expect("create session");
+        let mut first = admission_commit(session_id, ownership, "delivery-1", "first");
+        first.maximum_pending_inputs = 1;
+        let receipt = store
+            .admit_input(first.clone())
+            .expect("first input fits queue");
+        assert!(!receipt.is_duplicate());
+
+        let duplicate = store
+            .admit_input(first)
+            .expect("exact duplicate remains idempotent at capacity");
+        assert!(duplicate.is_duplicate());
+        assert_eq!(duplicate.receipt(), receipt.receipt());
+
+        let mut second = admission_commit(session_id, ownership, "delivery-2", "second");
+        second.maximum_pending_inputs = 1;
+        assert_eq!(
+            store.admit_input(second),
+            Err(SessionStoreError::Backpressure)
+        );
         assert_eq!(store.journal_count().expect("journal count"), 2);
         assert_eq!(store.outbox_count().expect("outbox count"), 1);
     }

@@ -66,6 +66,8 @@ pub struct InputAdmissionCommit {
     pub dedupe_key: String,
     /// Bounded input content.
     pub content: String,
+    /// Maximum pending inbox records permitted after this admission.
+    pub maximum_pending_inputs: u64,
     /// Immutable `input.accepted` journal-event identifier.
     pub event_id: EventId,
     /// Durable acknowledgement-delivery identifier.
@@ -95,6 +97,8 @@ pub struct InputAdmissionReceipt {
     pub correlation_id: CorrelationId,
     /// Original acceptance time.
     pub accepted_at: SystemTime,
+    /// Durable cursor assigned to the original `input.accepted` event.
+    pub timeline_cursor: u64,
 }
 
 /// Result of idempotent input admission.
@@ -134,6 +138,9 @@ pub enum SessionStoreError {
     /// The same idempotency key was reused with different immutable input.
     #[error("input idempotency key conflicts with the original delivery")]
     IdempotencyConflict,
+    /// The session's durable pending-inbox limit is already reached.
+    #[error("session input queue is at its configured capacity")]
+    Backpressure,
     /// A concurrent revision or uniqueness check rejected the commit.
     #[error("session commit conflicted with concurrent state")]
     Conflict,
@@ -165,39 +172,51 @@ pub trait SessionStore {
     ) -> Result<InputAdmissionOutcome, SessionStoreError>;
 }
 
-/// Byte limits enforced before input reaches persistence.
+/// Byte and durable-queue limits enforced at input admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InputAdmissionLimits {
-    maximum_dedupe_key_bytes: usize,
-    maximum_content_bytes: usize,
+    dedupe_key_bytes: usize,
+    content_bytes: usize,
+    pending_inputs: u64,
 }
 
 impl InputAdmissionLimits {
-    /// Creates explicit ingress byte limits.
+    /// Creates explicit ingress byte and queue limits.
     #[must_use]
-    pub const fn new(maximum_dedupe_key_bytes: usize, maximum_content_bytes: usize) -> Self {
+    pub const fn new(
+        maximum_dedupe_key_bytes: usize,
+        maximum_content_bytes: usize,
+        maximum_pending_inputs: u64,
+    ) -> Self {
         Self {
-            maximum_dedupe_key_bytes,
-            maximum_content_bytes,
+            dedupe_key_bytes: maximum_dedupe_key_bytes,
+            content_bytes: maximum_content_bytes,
+            pending_inputs: maximum_pending_inputs,
         }
     }
 
     /// Returns the maximum accepted UTF-8 byte length of a deduplication key.
     #[must_use]
     pub const fn maximum_dedupe_key_bytes(self) -> usize {
-        self.maximum_dedupe_key_bytes
+        self.dedupe_key_bytes
     }
 
     /// Returns the maximum accepted UTF-8 byte length of input content.
     #[must_use]
     pub const fn maximum_content_bytes(self) -> usize {
-        self.maximum_content_bytes
+        self.content_bytes
+    }
+
+    /// Returns the maximum durable pending inputs allowed in one session.
+    #[must_use]
+    pub const fn maximum_pending_inputs(self) -> u64 {
+        self.pending_inputs
     }
 }
 
 impl Default for InputAdmissionLimits {
     fn default() -> Self {
-        Self::new(256, 1024 * 1024)
+        Self::new(256, 1024 * 1024, 1_024)
     }
 }
 
@@ -241,6 +260,9 @@ pub enum SessionUseCaseError {
         /// Configured maximum byte length.
         maximum: usize,
     },
+    /// A zero queue capacity cannot admit work predictably.
+    #[error("input queue capacity must be positive")]
+    InvalidQueueCapacity,
     /// Atomic persistence rejected the command.
     #[error(transparent)]
     Store(#[from] SessionStoreError),
@@ -301,6 +323,9 @@ pub fn admit_input(
             maximum: limits.maximum_content_bytes(),
         });
     }
+    if limits.maximum_pending_inputs() == 0 {
+        return Err(SessionUseCaseError::InvalidQueueCapacity);
+    }
 
     store
         .admit_input(InputAdmissionCommit {
@@ -310,6 +335,7 @@ pub fn admit_input(
             delivery_mode: command.delivery_mode,
             dedupe_key: command.dedupe_key,
             content: command.content,
+            maximum_pending_inputs: limits.maximum_pending_inputs(),
             event_id: ids.generate_event_id(),
             outbox_id: ids.generate_outbox_id(),
             correlation_id: ids.generate_correlation_id(),
@@ -327,8 +353,11 @@ mod tests {
     };
     use crate::{Clock, IdGenerator};
     use mealy_domain::{
-        ChannelBindingId, CorrelationId, DeliveryMode, EventId, InboxEntryId, OutboxId,
-        PrincipalId, SessionId,
+        ApprovalId, ArtifactId, AttemptId, ChannelBindingId, CompactionId, ContextEpochId,
+        ContextItemId, ContextManifestId, CorrelationId, DelegationId, DeliveryMode, EffectId,
+        EventId, ExtensionGrantId, ExtensionId, ExtensionInvocationId, InboxEntryId, LeaseId,
+        MemoryId, MemoryRevisionId, MessageId, OutboxId, PrincipalId, RunId, SessionId, TaskId,
+        ToolCallId, TurnId, ValidationId, WorkerId,
     };
     use std::time::SystemTime;
 
@@ -343,26 +372,76 @@ mod tests {
     }
 
     struct FixedIds {
+        channel_binding: ChannelBindingId,
         session: SessionId,
         inbox_entry: InboxEntryId,
         event: EventId,
         outbox: OutboxId,
         correlation: CorrelationId,
+        turn: TurnId,
+        task: TaskId,
+        run: RunId,
+        lease: LeaseId,
+        worker: WorkerId,
+        attempt: AttemptId,
+        tool_call: ToolCallId,
+        artifact: ArtifactId,
+        context_epoch: ContextEpochId,
+        context_manifest: ContextManifestId,
+        context_item: ContextItemId,
+        message: MessageId,
+        effect: EffectId,
+        approval: ApprovalId,
+        validation: ValidationId,
+        delegation: DelegationId,
+        memory: MemoryId,
+        memory_revision: MemoryRevisionId,
+        compaction: CompactionId,
+        extension: ExtensionId,
+        extension_grant: ExtensionGrantId,
+        extension_invocation: ExtensionInvocationId,
     }
 
     impl FixedIds {
         fn new() -> Self {
             Self {
+                channel_binding: ChannelBindingId::new(),
                 session: SessionId::new(),
                 inbox_entry: InboxEntryId::new(),
                 event: EventId::new(),
                 outbox: OutboxId::new(),
                 correlation: CorrelationId::new(),
+                turn: TurnId::new(),
+                task: TaskId::new(),
+                run: RunId::new(),
+                lease: LeaseId::new(),
+                worker: WorkerId::new(),
+                attempt: AttemptId::new(),
+                tool_call: ToolCallId::new(),
+                artifact: ArtifactId::new(),
+                context_epoch: ContextEpochId::new(),
+                context_manifest: ContextManifestId::new(),
+                context_item: ContextItemId::new(),
+                message: MessageId::new(),
+                effect: EffectId::new(),
+                approval: ApprovalId::new(),
+                validation: ValidationId::new(),
+                delegation: DelegationId::new(),
+                memory: MemoryId::new(),
+                memory_revision: MemoryRevisionId::new(),
+                compaction: CompactionId::new(),
+                extension: ExtensionId::new(),
+                extension_grant: ExtensionGrantId::new(),
+                extension_invocation: ExtensionInvocationId::new(),
             }
         }
     }
 
     impl IdGenerator for FixedIds {
+        fn generate_channel_binding_id(&self) -> ChannelBindingId {
+            self.channel_binding
+        }
+
         fn generate_session_id(&self) -> SessionId {
             self.session
         }
@@ -381,6 +460,94 @@ mod tests {
 
         fn generate_correlation_id(&self) -> CorrelationId {
             self.correlation
+        }
+
+        fn generate_turn_id(&self) -> TurnId {
+            self.turn
+        }
+
+        fn generate_task_id(&self) -> TaskId {
+            self.task
+        }
+
+        fn generate_run_id(&self) -> RunId {
+            self.run
+        }
+
+        fn generate_lease_id(&self) -> LeaseId {
+            self.lease
+        }
+
+        fn generate_worker_id(&self) -> WorkerId {
+            self.worker
+        }
+
+        fn generate_attempt_id(&self) -> AttemptId {
+            self.attempt
+        }
+
+        fn generate_tool_call_id(&self) -> ToolCallId {
+            self.tool_call
+        }
+
+        fn generate_artifact_id(&self) -> ArtifactId {
+            self.artifact
+        }
+
+        fn generate_context_epoch_id(&self) -> ContextEpochId {
+            self.context_epoch
+        }
+
+        fn generate_context_manifest_id(&self) -> ContextManifestId {
+            self.context_manifest
+        }
+
+        fn generate_context_item_id(&self) -> ContextItemId {
+            self.context_item
+        }
+
+        fn generate_message_id(&self) -> MessageId {
+            self.message
+        }
+
+        fn generate_effect_id(&self) -> EffectId {
+            self.effect
+        }
+
+        fn generate_approval_id(&self) -> ApprovalId {
+            self.approval
+        }
+
+        fn generate_validation_id(&self) -> ValidationId {
+            self.validation
+        }
+
+        fn generate_delegation_id(&self) -> DelegationId {
+            self.delegation
+        }
+
+        fn generate_memory_id(&self) -> MemoryId {
+            self.memory
+        }
+
+        fn generate_memory_revision_id(&self) -> MemoryRevisionId {
+            self.memory_revision
+        }
+
+        fn generate_compaction_id(&self) -> CompactionId {
+            self.compaction
+        }
+
+        fn generate_extension_id(&self) -> ExtensionId {
+            self.extension
+        }
+
+        fn generate_extension_grant_id(&self) -> ExtensionGrantId {
+            self.extension_grant
+        }
+
+        fn generate_extension_invocation_id(&self) -> ExtensionInvocationId {
+            self.extension_invocation
         }
     }
 
@@ -412,6 +579,7 @@ mod tests {
                 outbox_id: commit.outbox_id,
                 correlation_id: commit.correlation_id,
                 accepted_at: commit.accepted_at,
+                timeline_cursor: 1,
             };
             self.admission = Some(commit);
             Ok(InputAdmissionOutcome::Accepted(receipt))
@@ -451,7 +619,7 @@ mod tests {
             &mut store,
             &FixedClock,
             &FixedIds::new(),
-            InputAdmissionLimits::new(64, 3),
+            InputAdmissionLimits::new(64, 3, 2),
             command,
         )
         .expect_err("oversized content must fail");
