@@ -105,7 +105,7 @@ cleanup() {
       systemctl --user reset-failed mealy.service >/dev/null 2>&1
   fi
   if [[ -n $service_pid && -e /proc/$service_pid/exe \
-    && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == "$mealyd" \
+    && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == /usr/bin/bwrap \
     && -r /proc/$service_pid/cgroup \
     && $(<"/proc/$service_pid/cgroup") == *mealy.service* ]]; then
     kill "$service_pid" 2>/dev/null
@@ -161,15 +161,14 @@ jq -e \
   ' <<<"$service" >/dev/null
 
 grep -Fqx 'NoNewPrivileges=true' "$unit"
-grep -Fqx 'ProtectHome=read-only' "$unit"
-grep -Fqx 'ProtectProc=invisible' "$unit"
-grep -Fqx 'ProcSubset=pid' "$unit"
-grep -Fqx 'ProtectSystem=strict' "$unit"
-grep -Fqx "ReadWritePaths=\"$home\"" "$unit"
+grep -Fq 'ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc' "$unit"
+grep -Fq -- '--cap-drop ALL --hostname mealy-daemon --ro-bind / /' "$unit"
+grep -Fq -- '--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp' "$unit"
+grep -Fq -- "--bind \"$home\" \"$home\"" "$unit"
 if grep -Eq \
-  '^(ProtectHostname|ProtectKernelLogs|ProtectKernelTunables|RestrictSUIDSGID)=' \
+  '^(PrivateDevices|PrivateTmp|ProtectClock|ProtectControlGroups|ProtectHome|ProtectHostname|ProtectKernelLogs|ProtectKernelModules|ProtectKernelTunables|ProtectProc|ProtectSystem|ProcSubset|ReadWritePaths|RestrictSUIDSGID)=' \
   "$unit"; then
-  echo "generated unit contains a nested-sandbox-incompatible restriction" >&2
+  echo "generated unit delegates a user-namespace restriction to systemd" >&2
   exit 65
 fi
 
@@ -180,6 +179,10 @@ systemctl_user enable --now mealy.service >/dev/null
 service_pid=$(systemctl_user show mealy.service --property=MainPID --value)
 if [[ ! $service_pid =~ ^[1-9][0-9]*$ ]]; then
   echo "generated service did not publish a valid main PID" >&2
+  exit 70
+fi
+if [[ $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) != /usr/bin/bwrap ]]; then
+  echo "generated service main PID is not the trusted outer Bubblewrap process" >&2
   exit 70
 fi
 for _ in $(seq 1 400); do

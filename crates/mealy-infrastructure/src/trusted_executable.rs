@@ -7,7 +7,7 @@ use std::path::Path;
 /// Outside a Linux user service, the complete path chain must be root-owned and not writable by
 /// group or other. Linux systemd user units expose non-owner installed files, including root-owned
 /// system files, through the kernel overflow UID. That representation is accepted only under an
-/// exact single-identity namespace and a completely read-only path chain. This is a single-owner
+/// exact one-entry user/group mapping and a completely read-only path chain. This is a single-owner
 /// boundary: a separate hostile local account with write access to such an underlying file is not
 /// contained by the read-only view. The executable must already be canonical; callers still pin
 /// and re-check its content digest.
@@ -98,14 +98,9 @@ fn single_identity_mapping(mapping: &str) -> Option<u32> {
     let mut lines = mapping.lines().filter(|line| !line.trim().is_empty());
     let mut fields = lines.next()?.split_whitespace();
     let inside = fields.next()?.parse::<u32>().ok()?;
-    let outside = fields.next()?.parse::<u32>().ok()?;
+    let _outside = fields.next()?.parse::<u32>().ok()?;
     let length = fields.next()?.parse::<u64>().ok()?;
-    if fields.next().is_some()
-        || lines.next().is_some()
-        || inside == 0
-        || inside != outside
-        || length != 1
-    {
+    if fields.next().is_some() || lines.next().is_some() || inside == 0 || length != 1 {
         return None;
     }
     Some(inside)
@@ -169,7 +164,8 @@ mod tests {
     #[test]
     fn single_identity_namespace_evidence_is_exact_and_bounded() {
         assert_eq!(single_identity_mapping(" 1000 1000 1\n"), Some(1000));
-        assert_eq!(single_identity_mapping(" 1000 1001 1\n"), None);
+        assert_eq!(single_identity_mapping(" 1000 1001 1\n"), Some(1000));
+        assert_eq!(single_identity_mapping(" 1000 0 1\n"), Some(1000));
         assert_eq!(single_identity_mapping(" 0 1000 1\n"), None);
         assert_eq!(single_identity_mapping(" 1000 1000 2\n"), None);
         assert_eq!(
@@ -185,6 +181,10 @@ mod tests {
         assert_eq!(effective_identity(status, "Groups:"), None);
         assert_eq!(
             namespace_overflow_owner("1000 1000 1", "100 100 1", status, 65534),
+            Some(65534)
+        );
+        assert_eq!(
+            namespace_overflow_owner("1000 0 1", "100 0 1", status, 65534),
             Some(65534)
         );
         assert_eq!(

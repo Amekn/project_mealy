@@ -164,6 +164,15 @@ partial runtime can satisfy a release gate.
 
 ## Generated systemd service boundary
 
+The PID-1-container evidence below records an earlier systemd-native form of the boundary. A later
+GitHub-hosted Ubuntu 24.04 user manager retained the host's default AppArmor restriction on
+unprivileged user namespaces and rejected those directives before `mealyd` could start with
+`218/CAPABILITIES`. The release candidate now invokes trusted `/usr/bin/bwrap` directly from the
+rootless unit: the host tree is read-only, only the validated home and writable workspaces are
+rebound writable, `/proc`, `/dev`, `/tmp`, and `/var/tmp` are private, capabilities are dropped,
+and nested per-tool Bubblewrap remains enabled. The GitHub systemd mutation job is the authoritative
+regression for that default-hardened Ubuntu host shape.
+
 An Ubuntu 24.04 PID-1 container with a real systemd user manager reproduced four independent outer
 unit incompatibilities. Overflow-UID ownership initially hid trusted installed helpers; three
 namespace protections blocked Bubblewrap's nested hostname or `/proc`; and

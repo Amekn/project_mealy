@@ -123,16 +123,16 @@ derives its write exceptions only from the same validated writable workspace set
 ### Service namespace hides or discards the configured state
 
 Controls: Linux service generation holds the stopped-home lock, canonicalizes every path, and
-rejects a home or workspace beneath host `/tmp` or `/var/tmp`, which `PrivateTmp=true` replaces in
-the unit namespace. It also rejects a home on `tmpfs` or `ramfs`, applies `UMask=0077`, and lists
-only the home plus current writable workspaces in `ReadWritePaths`. A custom unit path must retain
-the exact `mealy.service` name and is linked explicitly. The intentional status-2 forced-drain exit
-is restart-inhibited, preventing supervision from reopening admission after an operator drain.
-Device, clock, kernel-module, process, control-group, socket-family, syscall-ABI, and realtime
-restrictions reduce ambient daemon authority while retaining the nested hostname/proc operations,
-secure `openat2(O_CREAT)` path, JIT, and network families required by governed capabilities.
-`NoNewPrivileges`, the private umask, Bubblewrap capability dropping, read-only outer views, and
-per-request mounts provide the applicable SUID/SGID and filesystem boundaries.
+rejects a home or workspace beneath host `/tmp` or `/var/tmp`, which the outer Bubblewrap namespace
+replaces. It also rejects a home on `tmpfs` or `ramfs`, applies `UMask=0077`, and gives the outer
+Bubblewrap process writable binds only for the home plus current writable workspaces. A custom unit
+path must retain the exact `mealy.service` name and is linked explicitly. The intentional status-2
+forced-drain exit is restart-inhibited, preventing supervision from reopening admission after an
+operator drain. The outer namespace supplies a minimal device tree, private process and temporary
+filesystems, read-only host view, capability drop, and separate user/PID/UTS/IPC namespaces while
+sharing the network needed by configured providers and channels. Rootless-compatible systemd
+socket-family, syscall-ABI, realtime, resource, and `NoNewPrivileges` controls remain in force.
+Per-request nested Bubblewrap mounts retain the narrower governed tool boundary.
 
 ### Malicious or changed skill package widens authority
 

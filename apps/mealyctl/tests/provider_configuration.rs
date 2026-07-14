@@ -1400,9 +1400,11 @@ fn config_workspace_grant_and_revoke_are_explicit_canonical_and_reversible() {
                 .any(|path| path.as_str() == Some(workspace_text.as_str()))
         );
         let unit = fs::read_to_string(service_path).expect("service unit");
+        let canonical_workspace = workspace.path().canonicalize().expect("workspace path");
         assert!(unit.contains(&format!(
-            "ReadWritePaths=\"{}\"",
-            workspace.path().canonicalize().expect("workspace path").display()
+            "--bind \"{}\" \"{}\"",
+            canonical_workspace.display(),
+            canonical_workspace.display()
         )));
     }
 

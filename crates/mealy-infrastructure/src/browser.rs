@@ -673,9 +673,9 @@ impl BrowserReadTool {
         }
         let envelope = serde_json::from_slice::<BrowserWorkerResponse>(&output)
             .map_err(|_| BrowserHostError::InvalidProtocol)?;
-        match (envelope.result, envelope.error) {
-            (Some(result), None) => Ok(result),
-            (None, Some(error)) => Err(error.into_host_error()),
+        match (envelope.result, envelope.error, envelope.error_stage) {
+            (Some(result), None, None) => Ok(result),
+            (None, Some(error), Some(stage)) => Err(error.into_host_error(stage)),
             _ => Err(BrowserHostError::InvalidProtocol),
         }
     }
@@ -818,6 +818,9 @@ fn map_browser_read_error(error: &BrowserHostError) -> ReadToolError {
         BrowserHostError::InvalidProtocol => {
             ReadToolError::Unavailable("isolated browser protocol validation failed".to_owned())
         }
+        BrowserHostError::InvalidProtocolAt(stage) => ReadToolError::Unavailable(format!(
+            "isolated browser protocol validation failed at {stage}"
+        )),
         BrowserHostError::InvalidDownloadProtocol => ReadToolError::Unavailable(
             "isolated browser download protocol validation failed".to_owned(),
         ),
@@ -845,6 +848,76 @@ struct BrowserWorkerResponse {
     result: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<BrowserWorkerFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error_stage: Option<BrowserWorkerStage>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BrowserWorkerStage {
+    Request,
+    Configuration,
+    Initialization,
+    InitialNavigation,
+    InitialWait,
+    LinkAccessibilityTree,
+    LinkElementLookup,
+    LinkDestination,
+    LinkNavigation,
+    LinkWait,
+    ElementActivation,
+    ElementFill,
+    Download,
+    DocumentIdentity,
+    AccessibilityTree,
+    AccessibilityNormalization,
+    Screenshot,
+    ResultEncoding,
+}
+
+impl BrowserWorkerStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Configuration => "configuration",
+            Self::Initialization => "initialization",
+            Self::InitialNavigation => "initial_navigation",
+            Self::InitialWait => "initial_wait",
+            Self::LinkAccessibilityTree => "link_accessibility_tree",
+            Self::LinkElementLookup => "link_element_lookup",
+            Self::LinkDestination => "link_destination",
+            Self::LinkNavigation => "link_navigation",
+            Self::LinkWait => "link_wait",
+            Self::ElementActivation => "element_activation",
+            Self::ElementFill => "element_fill",
+            Self::Download => "download",
+            Self::DocumentIdentity => "document_identity",
+            Self::AccessibilityTree => "accessibility_tree",
+            Self::AccessibilityNormalization => "accessibility_normalization",
+            Self::Screenshot => "screenshot",
+            Self::ResultEncoding => "result_encoding",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct BrowserWorkerExecutionError {
+    source: BrowserHostError,
+    stage: BrowserWorkerStage,
+}
+
+fn worker_error(
+    stage: BrowserWorkerStage,
+    source: BrowserHostError,
+) -> BrowserWorkerExecutionError {
+    BrowserWorkerExecutionError { source, stage }
+}
+
+fn at_browser_stage<T>(
+    stage: BrowserWorkerStage,
+    result: Result<T, BrowserHostError>,
+) -> Result<T, BrowserWorkerExecutionError> {
+    result.map_err(|error| worker_error(stage, error))
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -873,7 +946,9 @@ impl BrowserWorkerFailure {
             BrowserHostError::UnsupportedHost => Self::UnsupportedHost,
             BrowserHostError::IdentityMismatch => Self::IdentityMismatch,
             BrowserHostError::DestinationDenied => Self::DestinationDenied,
-            BrowserHostError::InvalidProtocol => Self::InvalidProtocol,
+            BrowserHostError::InvalidProtocol | BrowserHostError::InvalidProtocolAt(_) => {
+                Self::InvalidProtocol
+            }
             BrowserHostError::InvalidDownloadProtocol => Self::InvalidDownloadProtocol,
             BrowserHostError::TimedOut => Self::TimedOut,
             BrowserHostError::BrowserStartTimedOut => Self::BrowserStartTimedOut,
@@ -886,13 +961,13 @@ impl BrowserWorkerFailure {
         }
     }
 
-    fn into_host_error(self) -> BrowserHostError {
+    fn into_host_error(self, stage: BrowserWorkerStage) -> BrowserHostError {
         match self {
             Self::InvalidConfiguration => BrowserHostError::InvalidConfiguration,
             Self::UnsupportedHost => BrowserHostError::UnsupportedHost,
             Self::IdentityMismatch => BrowserHostError::IdentityMismatch,
             Self::DestinationDenied => BrowserHostError::DestinationDenied,
-            Self::InvalidProtocol => BrowserHostError::InvalidProtocol,
+            Self::InvalidProtocol => BrowserHostError::InvalidProtocolAt(stage.as_str().to_owned()),
             Self::InvalidDownloadProtocol => BrowserHostError::InvalidDownloadProtocol,
             Self::TimedOut => BrowserHostError::TimedOut,
             Self::BrowserStartTimedOut => BrowserHostError::BrowserStartTimedOut,
@@ -924,6 +999,9 @@ pub enum BrowserHostError {
     /// Worker/CDP framing or normalized output is invalid.
     #[error("browser protocol response is invalid")]
     InvalidProtocol,
+    /// Worker protocol validation failed at one fixed internal boundary stage.
+    #[error("browser protocol response is invalid at {0}")]
+    InvalidProtocolAt(String),
     /// Download-specific CDP framing or normalized evidence is invalid.
     #[error("browser download protocol response is invalid")]
     InvalidDownloadProtocol,
@@ -1042,8 +1120,8 @@ impl BrowserProxy {
                             BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS,
                             BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL,
                         ) else {
-                            let _ = stream.shutdown(Shutdown::Both);
                             thread_stop.store(true, Ordering::Release);
+                            let _ = stream.shutdown(Shutdown::Both);
                             break;
                         };
                         let connection_stop = Arc::clone(&thread_stop);
@@ -1421,22 +1499,33 @@ pub fn browser_worker_main() -> std::process::ExitCode {
         io::stdin()
             .take(u64::try_from(BROWSER_MAXIMUM_WORKER_INPUT_BYTES + 1).unwrap_or(u64::MAX))
             .read_to_end(&mut input)
-            .map_err(|_| BrowserHostError::ProcessFailed)?;
+            .map_err(|_| {
+                worker_error(BrowserWorkerStage::Request, BrowserHostError::ProcessFailed)
+            })?;
         if input.is_empty() || input.len() > BROWSER_MAXIMUM_WORKER_INPUT_BYTES {
-            return Err(BrowserHostError::OutputLimitExceeded);
+            return Err(worker_error(
+                BrowserWorkerStage::Request,
+                BrowserHostError::OutputLimitExceeded,
+            ));
         }
-        let request = serde_json::from_slice::<BrowserWorkerRequest>(&input)
-            .map_err(|_| BrowserHostError::InvalidProtocol)?;
+        let request = serde_json::from_slice::<BrowserWorkerRequest>(&input).map_err(|_| {
+            worker_error(
+                BrowserWorkerStage::Request,
+                BrowserHostError::InvalidProtocol,
+            )
+        })?;
         run_browser_worker(&request)
     })();
     let envelope = match response {
         Ok(result) => BrowserWorkerResponse {
             result: Some(result),
             error: None,
+            error_stage: None,
         },
         Err(error) => BrowserWorkerResponse {
             result: None,
-            error: Some(BrowserWorkerFailure::from_host_error(&error)),
+            error: Some(BrowserWorkerFailure::from_host_error(&error.source)),
+            error_stage: Some(error.stage),
         },
     };
     let Ok(bytes) = serde_json::to_vec(&envelope) else {
@@ -1459,57 +1548,68 @@ pub fn browser_worker_main() -> std::process::ExitCode {
 }
 
 #[cfg(unix)]
-fn run_browser_worker(request: &BrowserWorkerRequest) -> Result<Value, BrowserHostError> {
+fn run_browser_worker(
+    request: &BrowserWorkerRequest,
+) -> Result<Value, BrowserWorkerExecutionError> {
     if request.expected_protocol_version != BROWSER_CDP_PROTOCOL_VERSION
         || request.expected_product.is_empty()
         || request.expected_product.len() > 128
         || request.expected_product.chars().any(char::is_control)
     {
-        return Err(BrowserHostError::InvalidConfiguration);
+        return Err(worker_error(
+            BrowserWorkerStage::Configuration,
+            BrowserHostError::InvalidConfiguration,
+        ));
     }
-    let (relay, mut browser, mut cdp, session) = initialize_browser_session(request)?;
-    navigate_and_wait(&mut cdp, &session, request.request.url())?;
-    cdp.pump_for(Duration::from_millis(request.request.wait_ms()))?;
-    let followed_link = follow_requested_link(&mut cdp, &session, &request.request)?;
-    let activated_element = activate_requested_element(&mut cdp, &session, &request.request)?;
-    let filled_element = fill_requested_element(&mut cdp, &session, &request.request)?;
-    let download = download_requested_link(&mut cdp, &session, &request.request).map_err(
-        |error| match error {
-            BrowserHostError::InvalidProtocol => BrowserHostError::InvalidDownloadProtocol,
-            other => other,
-        },
+    let (relay, mut browser, mut cdp, session) = at_browser_stage(
+        BrowserWorkerStage::Initialization,
+        initialize_browser_session(request),
     )?;
-    let document = document_identity(&mut cdp, &session)?;
-    let initial_origin = Url::parse(request.request.url())
-        .map_err(|_| BrowserHostError::InvalidConfiguration)?
-        .origin()
-        .ascii_serialization();
-    let final_origin = Url::parse(&document.url)
-        .map_err(|_| BrowserHostError::InvalidProtocol)?
-        .origin()
-        .ascii_serialization();
-    if final_origin != initial_origin {
-        return Err(BrowserHostError::DestinationDenied);
-    }
-    let tree = accessibility_tree(&mut cdp, &session)?;
-    let normalized = normalize_accessibility_tree(
-        &tree,
-        request.request.maximum_text_bytes(),
-        request.request.maximum_elements(),
+    at_browser_stage(
+        BrowserWorkerStage::InitialNavigation,
+        navigate_and_wait(&mut cdp, &session, request.request.url()),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::InitialWait,
+        cdp.pump_for(Duration::from_millis(request.request.wait_ms())),
+    )?;
+    let actions = perform_browser_actions(&mut cdp, &session, &request.request)?;
+    let document = at_browser_stage(
+        BrowserWorkerStage::DocumentIdentity,
+        document_identity(&mut cdp, &session),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::DocumentIdentity,
+        validate_document_origin(request.request.url(), &document.url),
+    )?;
+    let tree = at_browser_stage(
+        BrowserWorkerStage::AccessibilityTree,
+        accessibility_tree(&mut cdp, &session),
+    )?;
+    let normalized = at_browser_stage(
+        BrowserWorkerStage::AccessibilityNormalization,
+        normalize_accessibility_tree(
+            &tree,
+            request.request.maximum_text_bytes(),
+            request.request.maximum_elements(),
+        ),
     )?;
     let screenshot = if request.request.capture_screenshot() {
-        Some(capture_screenshot(&mut cdp, &session)?)
+        Some(at_browser_stage(
+            BrowserWorkerStage::Screenshot,
+            capture_screenshot(&mut cdp, &session),
+        )?)
     } else {
         None
     };
     let result = json!({
-        "activatedElement": activated_element,
+        "activatedElement": actions.activated_element,
         "browserProduct": request.expected_product.as_str(),
-        "download": download,
+        "download": actions.download,
         "elements": normalized.elements,
-        "filledElement": filled_element,
+        "filledElement": actions.filled_element,
         "finalUrl": document.url,
-        "followedLink": followed_link,
+        "followedLink": actions.followed_link,
         "protocolVersion": request.expected_protocol_version.as_str(),
         "screenshot": screenshot,
         "sourceLocator": request.request.url(),
@@ -1518,14 +1618,75 @@ fn run_browser_worker(request: &BrowserWorkerRequest) -> Result<Value, BrowserHo
         "truncatedElements": normalized.truncated_elements,
         "truncatedText": normalized.truncated_text,
     });
-    let encoded = serde_json::to_vec(&result).map_err(|_| BrowserHostError::InvalidProtocol)?;
+    let encoded = serde_json::to_vec(&result).map_err(|_| {
+        worker_error(
+            BrowserWorkerStage::ResultEncoding,
+            BrowserHostError::InvalidProtocol,
+        )
+    })?;
     if encoded.len() > BROWSER_MAXIMUM_WORKER_OUTPUT_BYTES {
-        return Err(BrowserHostError::OutputLimitExceeded);
+        return Err(worker_error(
+            BrowserWorkerStage::ResultEncoding,
+            BrowserHostError::OutputLimitExceeded,
+        ));
     }
     cdp.close_browser();
     browser.shutdown();
     drop(relay);
     Ok(result)
+}
+
+fn validate_document_origin(initial_url: &str, final_url: &str) -> Result<(), BrowserHostError> {
+    let initial_origin = Url::parse(initial_url)
+        .map_err(|_| BrowserHostError::InvalidConfiguration)?
+        .origin()
+        .ascii_serialization();
+    let final_origin = Url::parse(final_url)
+        .map_err(|_| BrowserHostError::InvalidProtocol)?
+        .origin()
+        .ascii_serialization();
+    if final_origin != initial_origin {
+        return Err(BrowserHostError::DestinationDenied);
+    }
+    Ok(())
+}
+
+struct BrowserActionResults {
+    followed_link: Option<Value>,
+    activated_element: Option<Value>,
+    filled_element: Option<Value>,
+    download: Option<Value>,
+}
+
+fn perform_browser_actions(
+    cdp: &mut CdpClient,
+    session: &str,
+    request: &BrowserSnapshotRequest,
+) -> Result<BrowserActionResults, BrowserWorkerExecutionError> {
+    let followed_link = follow_requested_link(cdp, session, request)?;
+    let activated_element = at_browser_stage(
+        BrowserWorkerStage::ElementActivation,
+        activate_requested_element(cdp, session, request),
+    )?;
+    let filled_element = at_browser_stage(
+        BrowserWorkerStage::ElementFill,
+        fill_requested_element(cdp, session, request),
+    )?;
+    let download = at_browser_stage(
+        BrowserWorkerStage::Download,
+        download_requested_link(cdp, session, request).map_err(|error| match error {
+            BrowserHostError::InvalidProtocol | BrowserHostError::InvalidProtocolAt(_) => {
+                BrowserHostError::InvalidDownloadProtocol
+            }
+            other => other,
+        }),
+    )?;
+    Ok(BrowserActionResults {
+        followed_link,
+        activated_element,
+        filled_element,
+        download,
+    })
 }
 
 #[cfg(unix)]
@@ -1625,16 +1786,30 @@ fn follow_requested_link(
     cdp: &mut CdpClient,
     session: &str,
     request: &BrowserSnapshotRequest,
-) -> Result<Option<Value>, BrowserHostError> {
+) -> Result<Option<Value>, BrowserWorkerExecutionError> {
     let Some(target) = request.follow_link() else {
         return Ok(None);
     };
-    let tree = accessibility_tree(cdp, session)?;
-    let backend_node_id =
-        exact_element_backend_node(&tree, "link", target.name(), target.occurrence())?;
-    let destination = exact_link_destination(cdp, session, backend_node_id, request.url())?;
-    navigate_and_wait(cdp, session, destination.as_str())?;
-    cdp.pump_for(Duration::from_millis(request.wait_ms()))?;
+    let tree = at_browser_stage(
+        BrowserWorkerStage::LinkAccessibilityTree,
+        accessibility_tree(cdp, session),
+    )?;
+    let backend_node_id = at_browser_stage(
+        BrowserWorkerStage::LinkElementLookup,
+        exact_element_backend_node(&tree, "link", target.name(), target.occurrence()),
+    )?;
+    let destination = at_browser_stage(
+        BrowserWorkerStage::LinkDestination,
+        exact_link_destination(cdp, session, backend_node_id, request.url()),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::LinkNavigation,
+        navigate_and_wait(cdp, session, destination.as_str()),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::LinkWait,
+        cdp.pump_for(Duration::from_millis(request.wait_ms())),
+    )?;
     Ok(Some(json!({
         "name": target.name(),
         "occurrence": target.occurrence(),
@@ -1963,8 +2138,13 @@ fn activate_form_free_button(
 }
 
 #[cfg(not(unix))]
-fn run_browser_worker(_request: &BrowserWorkerRequest) -> Result<Value, BrowserHostError> {
-    Err(BrowserHostError::UnsupportedHost)
+fn run_browser_worker(
+    _request: &BrowserWorkerRequest,
+) -> Result<Value, BrowserWorkerExecutionError> {
+    Err(worker_error(
+        BrowserWorkerStage::Configuration,
+        BrowserHostError::UnsupportedHost,
+    ))
 }
 
 #[cfg(unix)]
