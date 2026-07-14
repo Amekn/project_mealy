@@ -10059,7 +10059,7 @@ fn publish_workspace_configuration(
         configuration_path: current.display().to_string(),
         replaced_configuration_copy: replaced.display().to_string(),
         restart_required: true,
-        service_reinstall_required: true,
+        service_reinstall_required: false,
     })
 }
 
@@ -11162,27 +11162,14 @@ fn service_definition(
                 "service write paths must include the exact Mealy home".to_owned(),
             ));
         }
-        let mut writable_binds = String::new();
-        for path in read_write_paths {
-            let path = path.display().to_string();
-            validate_service_text(&path)?;
-            write!(
-                &mut writable_binds,
-                " --bind {} {}",
-                systemd_quote(&path),
-                systemd_quote(&path),
-            )
-            .map_err(|_| CliError::InvalidService("service path encoding failed".to_owned()))?;
-        }
         let destination = linux_default_service_destination()?;
         let body = format!(
             "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
-             [Service]\nType=simple\nExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc --die-with-parent --new-session --cap-drop ALL --hostname mealy-daemon --ro-bind / / --proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp{} -- {} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
+             [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
              UMask=0077\nNoNewPrivileges=true\n\
              RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
              SystemCallArchitectures=native\n\
              MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
-            writable_binds,
             systemd_quote(&daemon_text),
             systemd_quote(&home_text),
         );
@@ -11299,12 +11286,11 @@ fn service_read_write_paths(home: &Path) -> Result<Vec<PathBuf>, CliError> {
             || root_metadata.file_type().is_symlink()
             || !root_metadata.is_dir()
             || paths_overlap(&canonical, &home)
-            || cfg!(target_os = "linux") && linux_private_tmp_path(&canonical)
             || !workspace_ids.insert(workspace_id.to_owned())
             || !workspace_roots.insert(canonical.clone())
         {
             return Err(CliError::InvalidService(
-                "workspace root is redirected, unavailable, overlaps private daemon state, or is hidden by systemd PrivateTmp"
+                "workspace root is redirected, unavailable, or overlaps private daemon state"
                     .to_owned(),
             ));
         }
@@ -12484,7 +12470,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn service_unit_whitelists_only_current_writable_workspace_roots() {
+    fn service_unit_preserves_per_tool_sandbox_compatibility() {
         let home = service_test_tempdir("daemon-home-");
         initialize_setup_home(home.path()).expect("initialize home");
         let writable = service_test_tempdir("writable-workspace-");
@@ -12523,16 +12509,14 @@ mod tests {
             &read_write_paths,
         )
         .expect("service definition");
-        assert!(body.contains(&format!(
-            "--bind \"{}\" \"{}\"",
-            canonical_home.display(),
-            canonical_home.display()
-        )));
         assert!(body.contains("RestartPreventExitStatus=2"));
         assert!(body.contains("UMask=0077"));
-        assert!(body.contains("ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid"));
-        assert!(body.contains("--cap-drop ALL --hostname mealy-daemon --ro-bind / /"));
-        assert!(body.contains("--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp"));
+        assert!(body.contains(&format!(
+            "ExecStart=\"/usr/bin/true\" --home \"{}\"",
+            canonical_home.display()
+        )));
+        assert!(!body.contains("ExecStart=/usr/bin/bwrap"));
+        assert!(!body.contains("--bind"));
         assert!(!body.contains("PrivateDevices="));
         assert!(!body.contains("PrivateTmp="));
         assert!(!body.contains("ProtectProc="));
@@ -12546,17 +12530,6 @@ mod tests {
         assert!(!body.contains("RestrictSUIDSGID="));
         assert!(body.contains("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"));
         assert!(body.contains("SystemCallArchitectures=native"));
-        assert!(body.contains(&format!(
-            "--bind \"{}\" \"{}\"",
-            writable.path().canonicalize().expect("writable path").display(),
-            writable.path().canonicalize().expect("writable path").display()
-        )));
-        assert!(!body.contains(&format!(
-            "--bind \"{}\" \"{}\"",
-            read_only.path().canonicalize().expect("read-only path").display(),
-            read_only.path().canonicalize().expect("read-only path").display()
-        )));
-
         config["workspaceRoots"][1]["root"] = json!(canonical_home);
         std::fs::write(
             &config_path,
@@ -12627,6 +12600,9 @@ mod tests {
             .path()
             .canonicalize()
             .expect("canonical descriptor home");
+        #[cfg(unix)]
+        std::fs::set_permissions(&canonical_home, std::fs::Permissions::from_mode(0o700))
+            .expect("private descriptor home permissions");
         let descriptor = canonical_home.join("connection.json");
         std::fs::write(
             &descriptor,

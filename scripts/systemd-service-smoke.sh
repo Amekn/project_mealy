@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Exercise one real approval-gated mutation through the generated Linux user unit.
-# This catches outer systemd restrictions that can leave `doctor` green while
-# blocking the worker's secure file-creation syscall inside nested Bubblewrap.
+# This catches systemd restrictions that can leave `doctor` green while
+# blocking the worker's secure file-creation syscall inside Bubblewrap.
 
 set -euo pipefail
 
@@ -105,7 +105,7 @@ cleanup() {
       systemctl --user reset-failed mealy.service >/dev/null 2>&1
   fi
   if [[ -n $service_pid && -e /proc/$service_pid/exe \
-    && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == /usr/bin/bwrap \
+    && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == "$mealyd" \
     && -r /proc/$service_pid/cgroup \
     && $(<"/proc/$service_pid/cgroup") == *mealy.service* ]]; then
     kill "$service_pid" 2>/dev/null
@@ -124,7 +124,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Initialize a complete default home and prove the same binaries work before
-# adding the outer service namespace. The daemon never receives a credential.
+# adding systemd supervision. The daemon never receives a credential.
 "$mealyd" \
   --home "$home" \
   --promotion-interval-ms 10 \
@@ -161,10 +161,11 @@ jq -e \
   ' <<<"$service" >/dev/null
 
 grep -Fqx 'NoNewPrivileges=true' "$unit"
-grep -Fq 'ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc' "$unit"
-grep -Fq -- '--cap-drop ALL --hostname mealy-daemon --ro-bind / /' "$unit"
-grep -Fq -- '--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp' "$unit"
-grep -Fq -- "--bind \"$home\" \"$home\"" "$unit"
+grep -Fqx "ExecStart=\"$mealyd\" --home \"$home\"" "$unit"
+if grep -Fq 'ExecStart=/usr/bin/bwrap' "$unit"; then
+  echo "generated unit wraps the daemon in Bubblewrap and prevents per-tool Bubblewrap" >&2
+  exit 65
+fi
 if grep -Eq \
   '^(PrivateDevices|PrivateTmp|ProtectClock|ProtectControlGroups|ProtectHome|ProtectHostname|ProtectKernelLogs|ProtectKernelModules|ProtectKernelTunables|ProtectProc|ProtectSystem|ProcSubset|ReadWritePaths|RestrictSUIDSGID)=' \
   "$unit"; then
@@ -181,8 +182,8 @@ if [[ ! $service_pid =~ ^[1-9][0-9]*$ ]]; then
   echo "generated service did not publish a valid main PID" >&2
   exit 70
 fi
-if [[ $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) != /usr/bin/bwrap ]]; then
-  echo "generated service main PID is not the trusted outer Bubblewrap process" >&2
+if [[ $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) != "$mealyd" ]]; then
+  echo "generated service main PID is not the exact configured daemon" >&2
   exit 70
 fi
 for _ in $(seq 1 400); do

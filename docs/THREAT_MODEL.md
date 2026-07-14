@@ -118,21 +118,23 @@ equals the home, is below it, contains it, is redirected, or is unavailable; dae
 every extension enable/invocation repeat the relevant check. Local text attachments bind the
 opened file identity to its canonical path and reject any file below the home before API
 admission. Secret access remains a separate broker/reference boundary. The generated Linux unit
-derives its write exceptions only from the same validated writable workspace set.
+does not convert workspace declarations into daemon-level filesystem authority; each governed
+worker still receives only its request-specific mounts.
 
-### Service namespace hides or discards the configured state
+### Service supervision hides state or breaks governed workers
 
 Controls: Linux service generation holds the stopped-home lock, canonicalizes every path, and
-rejects a home or workspace beneath host `/tmp` or `/var/tmp`, which the outer Bubblewrap namespace
-replaces. It also rejects a home on `tmpfs` or `ramfs`, applies `UMask=0077`, and gives the outer
-Bubblewrap process writable binds only for the home plus current writable workspaces. A custom unit
-path must retain the exact `mealy.service` name and is linked explicitly. The intentional status-2
-forced-drain exit is restart-inhibited, preventing supervision from reopening admission after an
-operator drain. The outer namespace supplies a minimal device tree, private process and temporary
-filesystems, read-only host view, capability drop, and separate user/PID/UTS/IPC namespaces while
-sharing the network needed by configured providers and channels. Rootless-compatible systemd
-socket-family, syscall-ABI, realtime, resource, and `NoNewPrivileges` controls remain in force.
-Per-request nested Bubblewrap mounts retain the narrower governed tool boundary.
+rejects a home beneath host `/tmp` or `/var/tmp` or on `tmpfs`/`ramfs`, and validates the current
+workspace inventory before writing the unit. A custom path must retain the exact `mealy.service`
+name and is linked explicitly. `UMask=0077`, socket-family/syscall-ABI/realtime restrictions, and
+physical-memory/swap/task/file-descriptor cgroup limits apply without asking the user manager to
+create a namespace. The intentional status-2 forced-drain exit is restart-inhibited. The unit
+executes the exact configured daemon directly: Ubuntu's reviewed Bubblewrap AppArmor profile
+removes capabilities from children of an outer Bubblewrap, so wrapping the daemon would prevent
+the required per-request Bubblewrap from constructing its stronger tool boundary. Consequently,
+the unit is not a whole-daemon filesystem sandbox; the trusted daemon retains the owner's ambient
+read access. Model-selected shell, mutation, MCP, extension, and browser work remains outside the
+daemon in fresh fail-closed sandboxes with request-specific mounts and authority.
 
 ### Malicious or changed skill package widens authority
 

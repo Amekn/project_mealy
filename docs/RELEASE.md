@@ -210,10 +210,10 @@ the current user's manager. Even with opt-in, the proof refuses a manager carryi
 failed units before requesting reload. It is a test-maintainer command, not an installation step.
 
 The archive script first proves the exact release installer matches its unique checksum entry, then uses
-only that installer and the installed package binaries. It verifies the installed
-CLI generates a sibling-daemon systemd user unit with the documented filesystem/resource
-hardening, and removes its temporary
-prefix/home when complete. Tag jobs set `MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true`, so the exact
+only that installer and the installed package binaries. It verifies the installed CLI generates a
+sibling-daemon systemd user unit with the documented process/resource hardening and direct daemon
+execution needed to preserve per-tool sandboxing, and removes its temporary prefix/home when
+complete. Tag jobs set `MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true`, so the exact
 installed daemon must also report its required observe and workspace-write sandbox profiles as
 enforceable on both native Linux runners. The script does not substitute for published attestation or a clean supported
 host, but prevents a source-tree-only smoke from masking a broken release payload.
