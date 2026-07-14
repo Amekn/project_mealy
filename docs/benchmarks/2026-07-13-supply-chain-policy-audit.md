@@ -64,9 +64,11 @@ push.
 The first auditor pass found credential persistence, missing concurrency controls, direct matrix
 template expansion in shell, undocumented write/attestation permissions, and secrets outside an
 Environment. Those findings were corrected before this clean result. The pinned auditor is now a
-mandatory CI gate. The 2026-07-14 upstream freshness review also confirmed the pinned Actionlint
-1.7.12, zizmor 1.26.1, cargo-deny 0.20.2, cargo-audit 0.22.2, cargo-auditable 0.7.5,
-cargo-about 0.9.1, and Syft 1.46.0 releases were current.
+mandatory CI gate. A 2026-07-15 upstream freshness review retained Actionlint 1.7.12,
+cargo-deny 0.20.2, cargo-audit 0.22.2, cargo-auditable 0.7.5, cargo-about 0.9.1, and Syft 1.46.0,
+and advanced zizmor from 1.26.1 to the newly published 1.27.0 bug-fix release. The same review
+confirmed Chrome for Testing stable remained 150.0.7871.115 and every SHA-pinned GitHub Action
+still matched its latest upstream release.
 
 ## Rust dependency boundary
 
@@ -472,6 +474,7 @@ cargo audit bin target/release/mealyd
 cargo audit bin target/release/mealyctl
 scripts/systemd-service-smoke.sh target/release/mealyd target/release/mealyctl
 target/actionlint-v1.7.12/actionlint -color
-target/zizmor-1.26.1/bin/zizmor --offline --persona auditor \
+zizmor=$(scripts/fetch-zizmor.sh target/zizmor-1.27.0)
+"$zizmor" --offline --persona auditor \
   --min-severity low --color never .github/workflows
 ```

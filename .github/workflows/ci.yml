@@ -50,8 +50,8 @@ jobs:
             | (cd "$RUNNER_TEMP" && sha256sum --check --strict)
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
-          cargo install --locked zizmor --version 1.26.1
-          zizmor --offline --persona auditor --min-severity low \
+          zizmor=$(scripts/fetch-zizmor.sh "$RUNNER_TEMP/zizmor")
+          "$zizmor" --offline --persona auditor --min-severity low \
             --color never --show-audit-urls always .github/workflows
           cargo_deny=$(scripts/fetch-cargo-deny.sh "$RUNNER_TEMP/cargo-deny")
           "$cargo_deny" check
@@ -93,6 +93,7 @@ jobs:
             scripts/build-release-binaries.sh
             scripts/fetch-browser-runtime.sh
             scripts/fetch-cargo-deny.sh
+            scripts/fetch-zizmor.sh
             scripts/generate-third-party-licenses.sh
             scripts/installed-package-smoke.sh
             scripts/installed-deb-smoke.sh
