@@ -71,8 +71,14 @@ impl Drop for DashboardProcess {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
 async fn dashboard_is_interactive_idempotent_origin_bound_and_never_exposes_daemon_bearer() {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
     let (daemon_origin, requests, commands, daemon) = spawn_mock_daemon().await;
     let home = TempDir::new().expect("temporary Mealy home");
+    #[cfg(unix)]
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
     let descriptor = json!({
         "apiVersion": API_VERSION,
         "baseUrl": daemon_origin,
@@ -88,7 +94,6 @@ async fn dashboard_is_interactive_idempotent_origin_bound_and_never_exposes_daem
     .expect("connection descriptor");
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&descriptor_path, fs::Permissions::from_mode(0o600))
             .expect("private descriptor");
     }
