@@ -612,6 +612,16 @@ conformance lanes. The service lane checks an actual approved mutation because a
 alone cannot prove that the outer syscall policy permits secure file creation. `doctor` explicitly
 denies every profile whose guarantees the current host cannot supply. Live-provider tests are
 opt-in and cannot be the sole evidence for deterministic behavior.
+The strict gate also runs `scripts/test-release-notes.sh`. Its synthetic valid report must render
+byte-identically twice, while tag/version drift, a foreign workflow URL, a short or dirty soak,
+incomplete turns, corrupt SQLite, and residual work must all fail. The tag publisher uses that same
+renderer to bind the exact commit, approved live-provider run, release workflow, daemon digest,
+and checked soak measurements into the immutable release notes.
+`scripts/test-public-license-validator.sh` separately accepts synthetic Apache-2.0, MIT, and dual
+MIT/Apache workspaces while rejecting restrictive terms, `license-file` metadata, an unsupported
+expression, and a member package that does not inherit the workspace license. The tag workflow
+runs the validator on the real checkout, so the current all-rights-reserved project cannot publish
+as a public-use release until the copyright holder explicitly replaces those terms.
 The current tree additionally passed the equivalent GCC cross-check for
 `aarch64-unknown-linux-gnu`; native macOS build/package evidence and ARM64 Linux runtime/package
 evidence remain the CI and tag matrices' responsibility. Windows is outside the release-one support and CI
