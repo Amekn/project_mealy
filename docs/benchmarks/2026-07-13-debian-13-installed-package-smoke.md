@@ -104,3 +104,42 @@ fatal.
 This package necessarily predates this paragraph and the pending 24-hour report. Its exact daemon
 bytes are the ones under soak; the final archive/`.deb` must be reproduced after the report and
 documentation enter the checksummed payload. The dirty-tree, unattested, x86_64 limitations remain.
+
+## 2026-07-15 current auditable candidate pre-report repeat
+
+The corrected browser-verification candidate at clean commit `c483945` was built twice from
+separate Cargo homes and target directories. Both auditable builds were byte-identical:
+
+- `mealyd`: `649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572`
+  with 263 embedded dependencies
+- `mealyctl`: `e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`
+  with 255 embedded dependencies
+
+Pinned Syft 1.46.0 normalized the exact pair to a 465-component/285-edge SBOM at SHA-256
+`c8407a576bd04ad4bbfad70102ade43f373eaa2268bc25f201019ade154ca7cd`. The independently generated
+37,533-byte third-party notice remained SHA-256
+`fafe833afdd0c03c2607d010630f5d138c730216722d7b3e4af14f226f8da561`. Two release archives were
+byte-identical at 18,609,777 bytes and SHA-256
+`ccad0fa0698f4c6aa4035a7b90dd7427dba3564225036bf13c4f7904ed3a0ed5`; two Debian packages were
+byte-identical at 18,679,486 bytes and SHA-256
+`f8261f81fff5e66916fdc86a78fe33f8b84a717c4820bec1269198310bee308f`.
+
+A clean Debian 13 container installed the exact `.deb` with both sandbox profiles required,
+completed durable task `019f62d5-0c2b-71f3-b262-80cbaf38dbfb`, drained, removed the package, and
+preserved its state. Debian 13 Lintian 2.122.0 emitted no error or warning with both tag classes
+fatal. A separate Debian 13 PID-1/systemd 257 container executed the package-owned service through
+the full approved-mutation harness, completing session
+`019f62db-ee20-7632-a9ca-06aa10cf05c3`, task
+`019f62db-ee48-7381-af56-1d6b7b322fc5`, and effect
+`019f62db-eef8-7fd1-97dc-85c467eff1fa`, then leaving no unit, failed user unit, or daemon.
+
+That systemd repeat exposed a test-harness race on systemd 257: immediately after
+`enable --now`, `MainPID` can briefly identify the pre-exec service stub whose `/proc/PID/exe` is
+not yet available. Commit `c797e8e` replaces the single observation with a bounded wait for the
+exact executable and terminal service state. A clean auditable rebuild at that verifier-only
+commit reproduced both hashes above exactly, and all seven protected CI contexts passed in
+[run 29374834884](https://github.com/Amekn/project_mealy/actions/runs/29374834884).
+
+This is still pre-report, unpublished x86_64 evidence. The current 24-hour run uses the exact
+`mealyd` hash above, and its report plus this documentation must enter a fresh reproducible package
+before any release claim.

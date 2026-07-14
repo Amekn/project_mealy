@@ -462,6 +462,40 @@ package-owned binaries through the generated user unit, then approved and verifi
 daemon before the container was removed. These packages necessarily predate this evidence and the
 pending long report, so they validate the package path but are not final release assets.
 
+## Current auditable candidate pre-report reproduction
+
+Two clean builds at commit `c483945`, using distinct Cargo homes and target directories,
+reproduced the exact release binaries:
+
+- `mealyd`: `649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572`
+  with 263 embedded auditable dependencies
+- `mealyctl`: `e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`
+  with 255 embedded auditable dependencies
+
+`cargo audit bin` reported no finding for either exact executable. Pinned Syft 1.46.0 produced a
+reproducible 448,964-byte, 465-component/285-edge normalized CycloneDX document at SHA-256
+`c8407a576bd04ad4bbfad70102ade43f373eaa2268bc25f201019ade154ca7cd`. Independent third-party
+notice generation reproduced a 37,533-byte file at SHA-256
+`fafe833afdd0c03c2607d010630f5d138c730216722d7b3e4af14f226f8da561`.
+
+Two complete 18,609,777-byte archives were byte-identical at SHA-256
+`ccad0fa0698f4c6aa4035a7b90dd7427dba3564225036bf13c4f7904ed3a0ed5`; two complete
+18,679,486-byte Debian packages were byte-identical at SHA-256
+`f8261f81fff5e66916fdc86a78fe33f8b84a717c4820bec1269198310bee308f`. The checksum-driven archive
+installer passed rootlessly on Fedora 44, and the exact `.deb` passed sandbox-required clean
+Ubuntu 24.04 and Debian 13 install/replay/drain/removal checks. Debian 13 Lintian 2.122.0 emitted
+no error or warning with both tag classes fatal.
+
+Commit `c797e8e` changes only the systemd verification harness to tolerate the bounded pre-exec
+`MainPID` transition observed on systemd 257. A clean auditable rebuild at that commit reproduced
+the exact two executable hashes above. Its protected workflow
+[run 29374834884](https://github.com/Amekn/project_mealy/actions/runs/29374834884) passed the strict
+workspace, Linux sandbox, rendered-browser, Ubuntu x86_64/ARM64, and macOS ARM/Intel contexts.
+
+The current long run explicitly executes the exact `mealyd` hash above. This section is still
+pre-report evidence: the report and resulting documentation bytes must be included in two fresh
+byte-identical packages before tag publication.
+
 ## Reproduction
 
 ```sh

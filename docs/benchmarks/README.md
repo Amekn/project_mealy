@@ -103,3 +103,12 @@ SHA-256 `bda5e8c4250612e6882711e70e15fa47e3f7661535160983dff906ffe1f4907e`; it r
 the call and adds 32-concurrent/256-total connection budgets at both proxy layers. The earlier
 832-turn partial run remains diagnostic only, and the full 24-hour clock must restart from the
 replacement extracted package.
+
+Later provider-contract, client-boundary, and fragmented browser-verification findings superseded
+that subject. The current 24-hour subject is the exact auditable `mealyd` SHA-256
+`649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572`, reproduced by two clean
+`c483945` builds. Its empty, disk-backed clock began at 2026-07-15 10:47:53 Pacific/Auckland.
+Verifier-only commit `c797e8e` reproduced the same daemon and CLI bytes and passed all seven
+protected workflow contexts. No duration or turn count from a superseded/interrupted run is
+carried forward. Until this run emits and passes its final report, the checked 30-minute paced
+report remains the newest positive long-form durability observation.
