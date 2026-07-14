@@ -2441,7 +2441,7 @@ struct CdpClient {
     next_id: u64,
     ignored_responses: BTreeSet<u64>,
     messages: usize,
-    load_seen: bool,
+    loaded_loader_ids: BTreeSet<String>,
     download: Option<CdpDownload>,
 }
 
@@ -2466,7 +2466,7 @@ impl CdpClient {
             next_id: 1,
             ignored_responses: BTreeSet::new(),
             messages: 0,
-            load_seen: false,
+            loaded_loader_ids: BTreeSet::new(),
             download: None,
         }
     }
@@ -2585,8 +2585,8 @@ impl CdpClient {
             .and_then(Value::as_str)
             .filter(|method| method.len() <= 256 && !method.chars().any(char::is_control))
             .ok_or(BrowserHostError::InvalidProtocol)?;
-        if method == "Page.loadEventFired" {
-            self.load_seen = true;
+        if method == "Page.lifecycleEvent" {
+            record_completed_page_load(&mut self.loaded_loader_ids, object)?;
         } else if method == "Browser.downloadWillBegin" {
             self.handle_download_will_begin(object)?;
         } else if method == "Browser.downloadProgress" {
@@ -2732,9 +2732,13 @@ impl CdpClient {
         Ok(())
     }
 
-    fn wait_for_load(&mut self, timeout: Duration) -> Result<(), BrowserHostError> {
+    fn wait_for_load(
+        &mut self,
+        loader_id: &str,
+        timeout: Duration,
+    ) -> Result<(), BrowserHostError> {
         let deadline = Instant::now() + timeout;
-        while !self.load_seen {
+        while !self.loaded_loader_ids.remove(loader_id) {
             if Instant::now() >= deadline {
                 return Err(BrowserHostError::PageLoadTimedOut);
             }
@@ -2800,12 +2804,45 @@ fn cdp_nonnegative_integer(value: Option<&Value>) -> Result<u64, BrowserHostErro
         .map_err(|_| BrowserHostError::InvalidProtocol)
 }
 
+fn record_completed_page_load(
+    loaded_loader_ids: &mut BTreeSet<String>,
+    event: &Map<String, Value>,
+) -> Result<(), BrowserHostError> {
+    let params = event
+        .get("params")
+        .and_then(Value::as_object)
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| name.len() <= 128 && !name.chars().any(char::is_control))
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    if name != "load" {
+        return Ok(());
+    }
+    let loader_id = params
+        .get("loaderId")
+        .and_then(Value::as_str)
+        .filter(|loader_id| {
+            !loader_id.is_empty()
+                && loader_id.len() <= 512
+                && !loader_id.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    if loaded_loader_ids.len() >= BROWSER_MAXIMUM_CDP_MESSAGES
+        && !loaded_loader_ids.contains(loader_id)
+    {
+        return Err(BrowserHostError::OutputLimitExceeded);
+    }
+    loaded_loader_ids.insert(loader_id.to_owned());
+    Ok(())
+}
+
 fn navigate_and_wait(
     cdp: &mut CdpClient,
     session: &str,
     url: &str,
 ) -> Result<(), BrowserHostError> {
-    cdp.load_seen = false;
     let navigation = cdp.command(
         "Page.navigate",
         json!({"url": url, "transitionType": "typed"}),
@@ -2814,7 +2851,16 @@ fn navigate_and_wait(
     if navigation.get("errorText").is_some() {
         return Err(BrowserHostError::ProcessFailed);
     }
-    cdp.wait_for_load(Duration::from_secs(10))
+    let loader_id = navigation
+        .get("loaderId")
+        .and_then(Value::as_str)
+        .filter(|loader_id| {
+            !loader_id.is_empty()
+                && loader_id.len() <= 512
+                && !loader_id.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    cdp.wait_for_load(loader_id, Duration::from_secs(10))
 }
 
 fn accessibility_tree(cdp: &mut CdpClient, session: &str) -> Result<Value, BrowserHostError> {
@@ -3200,7 +3246,7 @@ mod tests {
         BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS, BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL,
         BrowserProxy, BrowserVerificationOrigin, NeverCancelled, cdp_nonnegative_integer,
         normalize_accessibility_tree, normalize_untrusted_text, reap_finished_threads,
-        reserve_browser_connection, truncate_utf8_to_bytes,
+        record_completed_page_load, reserve_browser_connection, truncate_utf8_to_bytes,
     };
     use mealy_application::WebAccessConfig;
     use serde_json::json;
@@ -3332,6 +3378,56 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(connections.is_empty());
+    }
+
+    #[test]
+    fn page_load_readiness_is_correlated_to_the_navigation_loader() {
+        let mut loaded = std::collections::BTreeSet::new();
+        let stale = json!({
+            "params": {
+                "frameId": "frame",
+                "loaderId": "about-blank-loader",
+                "name": "load",
+                "timestamp": 1.0
+            }
+        });
+        record_completed_page_load(
+            &mut loaded,
+            stale.as_object().expect("stale lifecycle event"),
+        )
+        .expect("record stale load");
+        assert!(!loaded.remove("requested-navigation-loader"));
+        assert!(loaded.contains("about-blank-loader"));
+
+        let not_ready = json!({
+            "params": {
+                "frameId": "frame",
+                "loaderId": "requested-navigation-loader",
+                "name": "DOMContentLoaded",
+                "timestamp": 2.0
+            }
+        });
+        record_completed_page_load(
+            &mut loaded,
+            not_ready.as_object().expect("non-load lifecycle event"),
+        )
+        .expect("ignore incomplete lifecycle event");
+        assert!(!loaded.remove("requested-navigation-loader"));
+
+        let ready = json!({
+            "params": {
+                "frameId": "frame",
+                "loaderId": "requested-navigation-loader",
+                "name": "load",
+                "timestamp": 3.0
+            }
+        });
+        record_completed_page_load(
+            &mut loaded,
+            ready.as_object().expect("load lifecycle event"),
+        )
+        .expect("record requested load");
+        assert!(loaded.remove("requested-navigation-loader"));
     }
 
     #[test]
