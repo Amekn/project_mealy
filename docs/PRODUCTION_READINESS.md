@@ -56,8 +56,9 @@ seven authoritative workspace, Linux sandbox/browser, Ubuntu x86-64/ARM64, and m
 checks. Immutable releases and private vulnerability reporting are enabled. The
 `live-provider-smoke` Environment is configured with an explicit required owner review, but it does
 not contain a provider credential. The workflow also rejects a release tag whose commit is not on
-`origin/main`; current protected CI and one reviewed real-account smoke must pass before published
-acceptance can run.
+`origin/main`; its x86-64 job additionally queries the exact manual workflow and requires a
+successful owner-reviewed real-account run for the tagged commit. Current protected CI and that
+reviewed smoke must pass before published acceptance can run.
 
 | Area | P0 acceptance | Current evidence | Gap |
 |---|---|---|---|

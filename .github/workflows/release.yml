@@ -62,6 +62,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     permissions:
+      actions: read       # Confirm live-provider acceptance for the exact tagged commit.
       contents: read
       id-token: write      # Mint the short-lived identity used by actions/attest.
       attestations: write  # Publish attestations for this architecture's assets.
@@ -98,6 +99,28 @@ jobs:
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
           test "$(uname -m)" = "$MEALY_HOST_ARCHITECTURE"
+      - name: Require reviewed live-provider acceptance for the exact commit
+        if: ${{ matrix.target == 'linux-x86_64-gnu' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runs=$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/live-smoke.yml/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -f event=workflow_dispatch \
+            -f status=success \
+            -F per_page=100)
+          jq -e --arg sha "$GITHUB_SHA" '
+            [.workflow_runs[] | select(
+              .head_sha == $sha
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .path == ".github/workflows/live-smoke.yml"
+            )] | length >= 1
+          ' <<<"$runs" >/dev/null
       - name: Establish reproducible source epoch
         shell: bash
         run: |
