@@ -59,6 +59,7 @@ const BROWSER_MAXIMUM_PROXY_BYTES: u64 = 16 * 1024 * 1024;
 const BROWSER_MAXIMUM_CDP_MESSAGE_BYTES: usize = 1024 * 1024;
 const BROWSER_MAXIMUM_CDP_MESSAGES: usize = 4096;
 const BROWSER_MAXIMUM_CDP_COMMANDS: u64 = 4096;
+const BROWSER_MAXIMUM_ACCESSIBILITY_FRAMES: usize = 256;
 const BROWSER_MAXIMUM_DOWNLOAD_BYTES: u64 = 512 * 1024;
 const BROWSER_MAXIMUM_CONCURRENT_RELAY_CONNECTIONS: usize = 32;
 const BROWSER_MAXIMUM_RELAY_CONNECTIONS_PER_CALL: usize = 256;
@@ -893,8 +894,21 @@ enum BrowserWorkerStage {
     ElementButtonResolution,
     ElementButtonInvocation,
     ElementWait,
-    ElementFill,
-    Download,
+    FillAccessibilityTree,
+    FillElementLookup,
+    FillElementResolution,
+    FillInvocation,
+    FillPreparation,
+    FillNavigation,
+    FillWait,
+    DownloadAccessibilityTree,
+    DownloadElementLookup,
+    DownloadDestination,
+    DownloadPreparation,
+    DownloadNavigation,
+    DownloadWait,
+    DownloadValidation,
+    DownloadRead,
     DocumentIdentity,
     AccessibilityTree,
     AccessibilityNormalization,
@@ -922,8 +936,21 @@ impl BrowserWorkerStage {
             Self::ElementButtonResolution => "element_button_resolution",
             Self::ElementButtonInvocation => "element_button_invocation",
             Self::ElementWait => "element_wait",
-            Self::ElementFill => "element_fill",
-            Self::Download => "download",
+            Self::FillAccessibilityTree => "fill_accessibility_tree",
+            Self::FillElementLookup => "fill_element_lookup",
+            Self::FillElementResolution => "fill_element_resolution",
+            Self::FillInvocation => "fill_invocation",
+            Self::FillPreparation => "fill_preparation",
+            Self::FillNavigation => "fill_navigation",
+            Self::FillWait => "fill_wait",
+            Self::DownloadAccessibilityTree => "download_accessibility_tree",
+            Self::DownloadElementLookup => "download_element_lookup",
+            Self::DownloadDestination => "download_destination",
+            Self::DownloadPreparation => "download_preparation",
+            Self::DownloadNavigation => "download_navigation",
+            Self::DownloadWait => "download_wait",
+            Self::DownloadValidation => "download_validation",
+            Self::DownloadRead => "download_read",
             Self::DocumentIdentity => "document_identity",
             Self::AccessibilityTree => "accessibility_tree",
             Self::AccessibilityNormalization => "accessibility_normalization",
@@ -1698,19 +1725,8 @@ fn perform_browser_actions(
 ) -> Result<BrowserActionResults, BrowserWorkerExecutionError> {
     let followed_link = follow_requested_link(cdp, session, request)?;
     let activated_element = activate_requested_element(cdp, session, request)?;
-    let filled_element = at_browser_stage(
-        BrowserWorkerStage::ElementFill,
-        fill_requested_element(cdp, session, request),
-    )?;
-    let download = at_browser_stage(
-        BrowserWorkerStage::Download,
-        download_requested_link(cdp, session, request).map_err(|error| match error {
-            BrowserHostError::InvalidProtocol | BrowserHostError::InvalidProtocolAt(_) => {
-                BrowserHostError::InvalidDownloadProtocol
-            }
-            other => other,
-        }),
-    )?;
+    let filled_element = fill_requested_element(cdp, session, request)?;
+    let download = download_requested_link(cdp, session, request)?;
     Ok(BrowserActionResults {
         followed_link,
         activated_element,
@@ -1916,43 +1932,38 @@ fn fill_requested_element(
     cdp: &mut CdpClient,
     session: &str,
     request: &BrowserSnapshotRequest,
-) -> Result<Option<Value>, BrowserHostError> {
+) -> Result<Option<Value>, BrowserWorkerExecutionError> {
     let Some(target) = request.fill_element() else {
         return Ok(None);
     };
-    let tree = accessibility_tree(cdp, session)?;
-    let backend_node_id =
-        exact_element_backend_node(&tree, target.role(), target.name(), target.occurrence())?;
-    let resolved = cdp.command(
-        "DOM.resolveNode",
-        json!({"backendNodeId": backend_node_id}),
-        Some(session),
+    let tree = at_browser_stage(
+        BrowserWorkerStage::FillAccessibilityTree,
+        accessibility_tree(cdp, session),
+    )?;
+    let backend_node_id = at_browser_stage(
+        BrowserWorkerStage::FillElementLookup,
+        exact_element_backend_node(&tree, target.role(), target.name(), target.occurrence()),
+    )?;
+    let resolved = at_browser_stage(
+        BrowserWorkerStage::FillElementResolution,
+        cdp.command(
+            "DOM.resolveNode",
+            json!({"backendNodeId": backend_node_id}),
+            Some(session),
+        ),
     )?;
     let object_id = resolved
         .get("object")
         .and_then(|object| object.get("objectId"))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty() && value.len() <= 512)
-        .ok_or(BrowserHostError::InvalidProtocol)?;
-    let prepared = cdp.command(
-        "Runtime.callFunctionOn",
-        json!({
-            "functionDeclaration": "function (value) { return globalThis.__mealyFillReadOnlyTextControl ? globalThis.__mealyFillReadOnlyTextControl(this, value) : null; }",
-            "objectId": object_id,
-            "arguments": [{"value": target.value()}],
-            "returnByValue": true,
-            "awaitPromise": false,
-            "userGesture": false
-        }),
-        Some(session),
-    )?;
-    let prepared = prepared
-        .get("result")
-        .and_then(|result| result.get("value"))
-        .cloned()
-        .and_then(|value| serde_json::from_value::<PreparedBrowserFill>(value).ok())
-        .filter(valid_prepared_browser_fill)
-        .ok_or(BrowserHostError::DestinationDenied)?;
+        .ok_or_else(|| {
+            worker_error(
+                BrowserWorkerStage::FillElementResolution,
+                BrowserHostError::InvalidProtocol,
+            )
+        })?;
+    let prepared = invoke_browser_fill(cdp, session, object_id, target.value())?;
     let role_matches = match target.role() {
         "searchbox" => prepared.kind == "input" && prepared.r#type == "search",
         "textbox" => {
@@ -1961,17 +1972,30 @@ fn fill_requested_element(
         _ => false,
     };
     if !role_matches {
-        return Err(BrowserHostError::DestinationDenied);
+        return Err(worker_error(
+            BrowserWorkerStage::FillPreparation,
+            BrowserHostError::DestinationDenied,
+        ));
     }
     let submitted_url = if target.submit_get_form() {
-        let form = prepared
-            .form
-            .as_ref()
-            .ok_or(BrowserHostError::DestinationDenied)?;
-        let destination =
-            exact_get_form_destination(request.url(), &prepared.name, target.value(), form)?;
-        navigate_and_wait(cdp, session, destination.as_str())?;
-        cdp.pump_for(Duration::from_millis(request.wait_ms()))?;
+        let form = prepared.form.as_ref().ok_or_else(|| {
+            worker_error(
+                BrowserWorkerStage::FillPreparation,
+                BrowserHostError::DestinationDenied,
+            )
+        })?;
+        let destination = at_browser_stage(
+            BrowserWorkerStage::FillPreparation,
+            exact_get_form_destination(request.url(), &prepared.name, target.value(), form),
+        )?;
+        at_browser_stage(
+            BrowserWorkerStage::FillNavigation,
+            navigate_and_wait(cdp, session, destination.as_str()),
+        )?;
+        at_browser_stage(
+            BrowserWorkerStage::FillWait,
+            cdp.pump_for(Duration::from_millis(request.wait_ms())),
+        )?;
         Some(destination.to_string())
     } else {
         None
@@ -1987,45 +2011,109 @@ fn fill_requested_element(
     })))
 }
 
+fn invoke_browser_fill(
+    cdp: &mut CdpClient,
+    session: &str,
+    object_id: &str,
+    value: &str,
+) -> Result<PreparedBrowserFill, BrowserWorkerExecutionError> {
+    let prepared = at_browser_stage(
+        BrowserWorkerStage::FillInvocation,
+        cdp.command(
+            "Runtime.callFunctionOn",
+            json!({
+                "functionDeclaration": "function (value) { return globalThis.__mealyFillReadOnlyTextControl ? globalThis.__mealyFillReadOnlyTextControl(this, value) : null; }",
+                "objectId": object_id,
+                "arguments": [{"value": value}],
+                "returnByValue": true,
+                "awaitPromise": false,
+                "userGesture": false
+            }),
+            Some(session),
+        ),
+    )?;
+    prepared
+        .get("result")
+        .and_then(|result| result.get("value"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<PreparedBrowserFill>(value).ok())
+        .filter(valid_prepared_browser_fill)
+        .ok_or_else(|| {
+            worker_error(
+                BrowserWorkerStage::FillPreparation,
+                BrowserHostError::DestinationDenied,
+            )
+        })
+}
+
 fn download_requested_link(
     cdp: &mut CdpClient,
     session: &str,
     request: &BrowserSnapshotRequest,
-) -> Result<Option<Value>, BrowserHostError> {
+) -> Result<Option<Value>, BrowserWorkerExecutionError> {
     let Some(target) = request.download_link() else {
         return Ok(None);
     };
-    let tree = accessibility_tree(cdp, session)?;
-    let backend_node_id =
-        exact_element_backend_node(&tree, "link", target.name(), target.occurrence())?;
-    let destination = exact_link_destination(cdp, session, backend_node_id, request.url())?;
-    fs::create_dir(BROWSER_SANDBOX_DOWNLOADS).map_err(io_error)?;
-    cdp.command(
-        "Browser.setDownloadBehavior",
-        json!({
-            "behavior": "allowAndName",
-            "downloadPath": BROWSER_SANDBOX_DOWNLOADS,
-            "eventsEnabled": true
-        }),
-        None,
+    let tree = at_browser_stage(
+        BrowserWorkerStage::DownloadAccessibilityTree,
+        accessibility_tree(cdp, session),
+    )?;
+    let backend_node_id = at_browser_stage(
+        BrowserWorkerStage::DownloadElementLookup,
+        exact_element_backend_node(&tree, "link", target.name(), target.occurrence()),
+    )?;
+    let destination = at_browser_stage(
+        BrowserWorkerStage::DownloadDestination,
+        exact_link_destination(cdp, session, backend_node_id, request.url()),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::DownloadPreparation,
+        fs::create_dir(BROWSER_SANDBOX_DOWNLOADS).map_err(io_error),
+    )?;
+    at_browser_stage(
+        BrowserWorkerStage::DownloadPreparation,
+        cdp.command(
+            "Browser.setDownloadBehavior",
+            json!({
+                "behavior": "allowAndName",
+                "downloadPath": BROWSER_SANDBOX_DOWNLOADS,
+                "eventsEnabled": true
+            }),
+            None,
+        ),
     )?;
     cdp.download = None;
-    let navigation = cdp.command(
-        "Page.navigate",
-        json!({"url": destination.as_str(), "transitionType": "typed"}),
-        Some(session),
+    let navigation = at_browser_stage(
+        BrowserWorkerStage::DownloadNavigation,
+        cdp.command(
+            "Page.navigate",
+            json!({"url": destination.as_str(), "transitionType": "typed"}),
+            Some(session),
+        ),
     )?;
     if navigation.get("errorText").is_some()
         && navigation.get("isDownload").and_then(Value::as_bool) != Some(true)
     {
-        return Err(BrowserHostError::ProcessFailed);
+        return Err(worker_error(
+            BrowserWorkerStage::DownloadNavigation,
+            BrowserHostError::ProcessFailed,
+        ));
     }
-    let completed = cdp.wait_for_download(Duration::from_secs(10))?;
+    let completed = at_browser_stage(
+        BrowserWorkerStage::DownloadWait,
+        cdp.wait_for_download(Duration::from_secs(10)),
+    )?;
     if completed.url != destination.as_str() {
-        return Err(BrowserHostError::DestinationDenied);
+        return Err(worker_error(
+            BrowserWorkerStage::DownloadValidation,
+            BrowserHostError::DestinationDenied,
+        ));
     }
     let path = Path::new(BROWSER_SANDBOX_DOWNLOADS).join(&completed.guid);
-    let bytes = read_browser_download(&path)?;
+    let bytes = at_browser_stage(
+        BrowserWorkerStage::DownloadRead,
+        read_browser_download(&path),
+    )?;
     Ok(Some(json!({
         "dataBase64": BASE64_STANDARD.encode(&bytes),
         "mediaType": "application/octet-stream",
@@ -2441,8 +2529,32 @@ struct CdpClient {
     next_id: u64,
     ignored_responses: BTreeSet<u64>,
     messages: usize,
-    loaded_loader_ids: BTreeSet<String>,
+    completed_page_loads: BTreeSet<PageLoadIdentity>,
+    accessibility_sequence: u64,
+    completed_accessibility_roots: BTreeMap<(String, String), AccessibilityRootCompletion>,
     download: Option<CdpDownload>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PageLoadIdentity {
+    session: String,
+    frame: String,
+    loader: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AccessibilityRootCompletion {
+    sequence: u64,
+    node: String,
+    backend_node: Option<u64>,
+}
+
+fn page_document_is_ready(
+    expected: &PageLoadIdentity,
+    current: &PageLoadIdentity,
+    ready_state: &str,
+) -> bool {
+    expected == current && ready_state == "complete"
 }
 
 #[derive(Clone, Debug)]
@@ -2466,7 +2578,9 @@ impl CdpClient {
             next_id: 1,
             ignored_responses: BTreeSet::new(),
             messages: 0,
-            loaded_loader_ids: BTreeSet::new(),
+            completed_page_loads: BTreeSet::new(),
+            accessibility_sequence: 0,
+            completed_accessibility_roots: BTreeMap::new(),
             download: None,
         }
     }
@@ -2586,7 +2700,7 @@ impl CdpClient {
             .filter(|method| method.len() <= 256 && !method.chars().any(char::is_control))
             .ok_or(BrowserHostError::InvalidProtocol)?;
         if method == "Page.lifecycleEvent" {
-            record_completed_page_load(&mut self.loaded_loader_ids, object)?;
+            record_completed_page_load(&mut self.completed_page_loads, object)?;
         } else if method == "Browser.downloadWillBegin" {
             self.handle_download_will_begin(object)?;
         } else if method == "Browser.downloadProgress" {
@@ -2595,6 +2709,8 @@ impl CdpClient {
             self.handle_paused_request(object)?;
         } else if method == "Fetch.authRequired" {
             self.handle_auth_required(object)?;
+        } else if method == "Accessibility.loadComplete" {
+            self.handle_accessibility_load_complete(object)?;
         } else if matches!(
             method,
             "Network.webSocketCreated"
@@ -2605,6 +2721,22 @@ impl CdpClient {
             return Err(BrowserHostError::DestinationDenied);
         }
         Ok(None)
+    }
+
+    fn handle_accessibility_load_complete(
+        &mut self,
+        event: &Map<String, Value>,
+    ) -> Result<(), BrowserHostError> {
+        let next_sequence = self.accessibility_sequence.saturating_add(1);
+        let (key, completion) = accessibility_load_completion(event, next_sequence)?;
+        if !self.completed_accessibility_roots.contains_key(&key)
+            && self.completed_accessibility_roots.len() >= BROWSER_MAXIMUM_ACCESSIBILITY_FRAMES
+        {
+            return Err(BrowserHostError::OutputLimitExceeded);
+        }
+        self.accessibility_sequence = next_sequence;
+        self.completed_accessibility_roots.insert(key, completion);
+        Ok(())
     }
 
     fn handle_paused_request(
@@ -2732,19 +2864,44 @@ impl CdpClient {
         Ok(())
     }
 
-    fn wait_for_load(
+    fn wait_for_document_load(
         &mut self,
-        loader_id: &str,
+        identity: &PageLoadIdentity,
+        minimum_accessibility_sequence: u64,
         timeout: Duration,
     ) -> Result<(), BrowserHostError> {
         let deadline = Instant::now() + timeout;
-        while !self.loaded_loader_ids.remove(loader_id) {
+        loop {
             if Instant::now() >= deadline {
                 return Err(BrowserHostError::PageLoadTimedOut);
             }
+            match main_frame_identity(self, &identity.session) {
+                Ok(current)
+                    if current == *identity && self.completed_page_loads.contains(identity) =>
+                {
+                    match document_ready_state(self, &identity.session, &identity.frame) {
+                        Ok(state) if page_document_is_ready(identity, &current, state) => {
+                            match accessibility_tree_for_identity(
+                                self,
+                                identity,
+                                minimum_accessibility_sequence,
+                            ) {
+                                Ok(Some(_)) => return Ok(()),
+                                Ok(None) | Err(BrowserHostError::ProcessFailed) => {}
+                                Err(error) => return Err(error),
+                            }
+                        }
+                        Ok("loading" | "interactive") | Err(BrowserHostError::ProcessFailed) => {}
+                        Ok(_) => return Err(BrowserHostError::InvalidProtocol),
+                        Err(error) => return Err(error),
+                    }
+                }
+                Ok(_) | Err(BrowserHostError::ProcessFailed) => {}
+                Err(error) => return Err(error),
+            }
             let _ = self.read_and_dispatch(None)?;
+            thread::sleep(BROWSER_POLL_INTERVAL);
         }
-        Ok(())
     }
 
     fn pump_for(&mut self, duration: Duration) -> Result<(), BrowserHostError> {
@@ -2805,9 +2962,16 @@ fn cdp_nonnegative_integer(value: Option<&Value>) -> Result<u64, BrowserHostErro
 }
 
 fn record_completed_page_load(
-    loaded_loader_ids: &mut BTreeSet<String>,
+    completed: &mut BTreeSet<PageLoadIdentity>,
     event: &Map<String, Value>,
 ) -> Result<(), BrowserHostError> {
+    let session = event
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
     let params = event
         .get("params")
         .and_then(Value::as_object)
@@ -2815,27 +2979,84 @@ fn record_completed_page_load(
     let name = params
         .get("name")
         .and_then(Value::as_str)
-        .filter(|name| name.len() <= 128 && !name.chars().any(char::is_control))
+        .filter(|value| value.len() <= 128 && !value.chars().any(char::is_control))
         .ok_or(BrowserHostError::InvalidProtocol)?;
     if name != "load" {
         return Ok(());
     }
-    let loader_id = params
-        .get("loaderId")
+    let frame = params
+        .get("frameId")
         .and_then(Value::as_str)
-        .filter(|loader_id| {
-            !loader_id.is_empty()
-                && loader_id.len() <= 512
-                && !loader_id.chars().any(char::is_control)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
         })
         .ok_or(BrowserHostError::InvalidProtocol)?;
-    if loaded_loader_ids.len() >= BROWSER_MAXIMUM_CDP_MESSAGES
-        && !loaded_loader_ids.contains(loader_id)
-    {
+    let loader = params
+        .get("loaderId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let identity = PageLoadIdentity {
+        session: session.to_owned(),
+        frame: frame.to_owned(),
+        loader: loader.to_owned(),
+    };
+    if !completed.contains(&identity) && completed.len() >= BROWSER_MAXIMUM_CDP_MESSAGES {
         return Err(BrowserHostError::OutputLimitExceeded);
     }
-    loaded_loader_ids.insert(loader_id.to_owned());
+    completed.insert(identity);
     Ok(())
+}
+
+fn accessibility_load_completion(
+    event: &Map<String, Value>,
+    sequence: u64,
+) -> Result<((String, String), AccessibilityRootCompletion), BrowserHostError> {
+    let session = event
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let root = event
+        .get("params")
+        .and_then(|params| params.get("root"))
+        .and_then(Value::as_object)
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let frame = root
+        .get("frameId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let node = root
+        .get("nodeId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    if root
+        .get("role")
+        .and_then(|role| role.get("value"))
+        .and_then(Value::as_str)
+        != Some("RootWebArea")
+    {
+        return Err(BrowserHostError::InvalidProtocol);
+    }
+    let backend_node = optional_backend_node_id(root.get("backendDOMNodeId"))?;
+    Ok((
+        (session.to_owned(), frame.to_owned()),
+        AccessibilityRootCompletion {
+            sequence,
+            node: node.to_owned(),
+            backend_node,
+        },
+    ))
 }
 
 fn navigate_and_wait(
@@ -2843,6 +3064,7 @@ fn navigate_and_wait(
     session: &str,
     url: &str,
 ) -> Result<(), BrowserHostError> {
+    let minimum_accessibility_sequence = cdp.accessibility_sequence;
     let navigation = cdp.command(
         "Page.navigate",
         json!({"url": url, "transitionType": "typed"}),
@@ -2851,6 +3073,13 @@ fn navigate_and_wait(
     if navigation.get("errorText").is_some() {
         return Err(BrowserHostError::ProcessFailed);
     }
+    let frame_id = navigation
+        .get("frameId")
+        .and_then(Value::as_str)
+        .filter(|frame_id| {
+            !frame_id.is_empty() && frame_id.len() <= 512 && !frame_id.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
     let loader_id = navigation
         .get("loaderId")
         .and_then(Value::as_str)
@@ -2860,23 +3089,184 @@ fn navigate_and_wait(
                 && !loader_id.chars().any(char::is_control)
         })
         .ok_or(BrowserHostError::InvalidProtocol)?;
-    cdp.wait_for_load(loader_id, Duration::from_secs(10))
+    let identity = PageLoadIdentity {
+        session: session.to_owned(),
+        frame: frame_id.to_owned(),
+        loader: loader_id.to_owned(),
+    };
+    cdp.wait_for_document_load(
+        &identity,
+        minimum_accessibility_sequence,
+        Duration::from_secs(10),
+    )
+}
+
+fn main_frame_identity(
+    cdp: &mut CdpClient,
+    session: &str,
+) -> Result<PageLoadIdentity, BrowserHostError> {
+    let tree = cdp.command("Page.getFrameTree", json!({}), Some(session))?;
+    let frame = tree
+        .get("frameTree")
+        .and_then(|tree| tree.get("frame"))
+        .and_then(Value::as_object)
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let frame_id = frame
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|frame_id| {
+            !frame_id.is_empty() && frame_id.len() <= 512 && !frame_id.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let loader_id = frame
+        .get("loaderId")
+        .and_then(Value::as_str)
+        .filter(|loader_id| {
+            !loader_id.is_empty()
+                && loader_id.len() <= 512
+                && !loader_id.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    Ok(PageLoadIdentity {
+        session: session.to_owned(),
+        frame: frame_id.to_owned(),
+        loader: loader_id.to_owned(),
+    })
+}
+
+fn document_ready_state(
+    cdp: &mut CdpClient,
+    session: &str,
+    frame: &str,
+) -> Result<&'static str, BrowserHostError> {
+    let world = cdp.command(
+        "Page.createIsolatedWorld",
+        json!({
+            "frameId": frame,
+            "worldName": "mealy-readiness-observer",
+            "grantUniveralAccess": false,
+        }),
+        Some(session),
+    )?;
+    let context_id = world
+        .get("executionContextId")
+        .and_then(Value::as_u64)
+        .filter(|context_id| *context_id > 0)
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let evaluated = cdp.command(
+        "Runtime.evaluate",
+        json!({
+            "expression": "String(document.readyState)",
+            "returnByValue": true,
+            "awaitPromise": false,
+            "userGesture": false,
+            "contextId": context_id,
+        }),
+        Some(session),
+    )?;
+    match evaluated
+        .get("result")
+        .and_then(|result| result.get("value"))
+        .and_then(Value::as_str)
+    {
+        Some("loading") => Ok("loading"),
+        Some("interactive") => Ok("interactive"),
+        Some("complete") => Ok("complete"),
+        _ => Err(BrowserHostError::InvalidProtocol),
+    }
 }
 
 fn accessibility_tree(cdp: &mut CdpClient, session: &str) -> Result<Value, BrowserHostError> {
+    let identity = main_frame_identity(cdp, session)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match accessibility_tree_for_identity(cdp, &identity, 0) {
+            Ok(Some(tree)) => return Ok(tree),
+            Ok(None) | Err(BrowserHostError::ProcessFailed) => {}
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(BrowserHostError::PageLoadTimedOut);
+        }
+        let _ = cdp.read_and_dispatch(None)?;
+        thread::sleep(BROWSER_POLL_INTERVAL);
+    }
+}
+
+fn accessibility_tree_for_identity(
+    cdp: &mut CdpClient,
+    identity: &PageLoadIdentity,
+    minimum_sequence: u64,
+) -> Result<Option<Value>, BrowserHostError> {
+    if main_frame_identity(cdp, &identity.session)? != *identity {
+        return Ok(None);
+    }
     let tree = cdp.command(
         "Accessibility.getFullAXTree",
-        json!({"depth": -1}),
-        Some(session),
+        json!({"frameId": identity.frame}),
+        Some(&identity.session),
     )?;
-    if tree
+    let nodes = tree
         .get("nodes")
         .and_then(Value::as_array)
-        .is_none_or(|nodes| nodes.len() > 100_000)
-    {
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    if nodes.is_empty() || nodes.len() > 100_000 {
         return Err(BrowserHostError::InvalidProtocol);
     }
-    Ok(tree)
+    let root = accessibility_tree_root(nodes, &identity.frame)?;
+    let Some(completed) = cdp
+        .completed_accessibility_roots
+        .get(&(identity.session.clone(), identity.frame.clone()))
+    else {
+        return Ok(None);
+    };
+    if completed.sequence <= minimum_sequence
+        || completed.node != root.node
+        || completed.backend_node.is_some()
+            && root.backend_node.is_some()
+            && completed.backend_node != root.backend_node
+    {
+        return Ok(None);
+    }
+    Ok(Some(tree))
+}
+
+fn accessibility_tree_root(
+    nodes: &[Value],
+    expected_frame: &str,
+) -> Result<AccessibilityRootCompletion, BrowserHostError> {
+    let mut roots = nodes.iter().filter(|node| {
+        node.get("frameId").and_then(Value::as_str) == Some(expected_frame)
+            && ax_value(node, "role") == Some("RootWebArea")
+    });
+    let root = roots.next().ok_or(BrowserHostError::InvalidProtocol)?;
+    if roots.next().is_some() {
+        return Err(BrowserHostError::InvalidProtocol);
+    }
+    let node = root
+        .get("nodeId")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
+        })
+        .ok_or(BrowserHostError::InvalidProtocol)?;
+    let backend_node = optional_backend_node_id(root.get("backendDOMNodeId"))?;
+    Ok(AccessibilityRootCompletion {
+        sequence: 0,
+        node: node.to_owned(),
+        backend_node,
+    })
+}
+
+fn optional_backend_node_id(value: Option<&Value>) -> Result<Option<u64>, BrowserHostError> {
+    value
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|value| *value > 0)
+                .ok_or(BrowserHostError::InvalidProtocol)
+        })
+        .transpose()
 }
 
 fn exact_element_backend_node(
@@ -2929,6 +3319,21 @@ fn document_identity(
     cdp: &mut CdpClient,
     session: &str,
 ) -> Result<DocumentIdentity, BrowserHostError> {
+    let frame = main_frame_identity(cdp, session)?;
+    let world = cdp.command(
+        "Page.createIsolatedWorld",
+        json!({
+            "frameId": frame.frame,
+            "worldName": "mealy-document-observer",
+            "grantUniveralAccess": false,
+        }),
+        Some(session),
+    )?;
+    let context_id = world
+        .get("executionContextId")
+        .and_then(Value::as_u64)
+        .filter(|context_id| *context_id > 0)
+        .ok_or(BrowserHostError::InvalidProtocol)?;
     let evaluated = cdp.command(
         "Runtime.evaluate",
         json!({
@@ -2936,6 +3341,7 @@ fn document_identity(
             "returnByValue": true,
             "awaitPromise": false,
             "userGesture": false,
+            "contextId": context_id,
         }),
         Some(session),
     )?;
@@ -3243,14 +3649,17 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS, BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL,
-        BrowserProxy, BrowserVerificationOrigin, NeverCancelled, cdp_nonnegative_integer,
-        normalize_accessibility_tree, normalize_untrusted_text, reap_finished_threads,
-        record_completed_page_load, reserve_browser_connection, truncate_utf8_to_bytes,
+        AccessibilityRootCompletion, BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS,
+        BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL, BrowserProxy, BrowserVerificationOrigin,
+        NeverCancelled, PageLoadIdentity, accessibility_load_completion, accessibility_tree_root,
+        cdp_nonnegative_integer, normalize_accessibility_tree, normalize_untrusted_text,
+        page_document_is_ready, reap_finished_threads, record_completed_page_load,
+        reserve_browser_connection, truncate_utf8_to_bytes,
     };
     use mealy_application::WebAccessConfig;
     use serde_json::json;
     use std::{
+        collections::BTreeSet,
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -3381,53 +3790,148 @@ mod tests {
     }
 
     #[test]
-    fn page_load_readiness_is_correlated_to_the_navigation_loader() {
-        let mut loaded = std::collections::BTreeSet::new();
-        let stale = json!({
-            "params": {
-                "frameId": "frame",
-                "loaderId": "about-blank-loader",
-                "name": "load",
-                "timestamp": 1.0
-            }
-        });
-        record_completed_page_load(
-            &mut loaded,
-            stale.as_object().expect("stale lifecycle event"),
-        )
-        .expect("record stale load");
-        assert!(!loaded.remove("requested-navigation-loader"));
-        assert!(loaded.contains("about-blank-loader"));
+    fn page_load_readiness_requires_the_current_complete_navigation_document() {
+        let requested = PageLoadIdentity {
+            session: "requested-session".to_owned(),
+            frame: "frame".to_owned(),
+            loader: "requested-navigation-loader".to_owned(),
+        };
+        assert!(!page_document_is_ready(
+            &requested,
+            &PageLoadIdentity {
+                session: "stale-session".to_owned(),
+                frame: "frame".to_owned(),
+                loader: "requested-navigation-loader".to_owned(),
+            },
+            "complete",
+        ));
+        assert!(!page_document_is_ready(
+            &requested,
+            &PageLoadIdentity {
+                session: "requested-session".to_owned(),
+                frame: "stale-frame".to_owned(),
+                loader: "requested-navigation-loader".to_owned(),
+            },
+            "complete",
+        ));
+        assert!(!page_document_is_ready(
+            &requested,
+            &PageLoadIdentity {
+                session: "requested-session".to_owned(),
+                frame: "frame".to_owned(),
+                loader: "about-blank-loader".to_owned(),
+            },
+            "complete",
+        ));
+        assert!(!page_document_is_ready(
+            &requested,
+            &requested,
+            "interactive",
+        ));
+        assert!(page_document_is_ready(&requested, &requested, "complete",));
+    }
 
-        let not_ready = json!({
+    #[test]
+    fn lifecycle_load_completion_is_correlated_to_session_frame_and_loader() {
+        let requested = PageLoadIdentity {
+            session: "requested-session".to_owned(),
+            frame: "requested-frame".to_owned(),
+            loader: "requested-loader".to_owned(),
+        };
+        let mut completed = BTreeSet::new();
+        let incomplete = json!({
+            "sessionId": "requested-session",
             "params": {
-                "frameId": "frame",
-                "loaderId": "requested-navigation-loader",
-                "name": "DOMContentLoaded",
-                "timestamp": 2.0
+                "frameId": "requested-frame",
+                "loaderId": "requested-loader",
+                "name": "DOMContentLoaded"
             }
         });
         record_completed_page_load(
-            &mut loaded,
-            not_ready.as_object().expect("non-load lifecycle event"),
+            &mut completed,
+            incomplete.as_object().expect("incomplete lifecycle event"),
         )
         .expect("ignore incomplete lifecycle event");
-        assert!(!loaded.remove("requested-navigation-loader"));
+        assert!(completed.is_empty());
 
-        let ready = json!({
+        let load = json!({
+            "sessionId": "requested-session",
             "params": {
-                "frameId": "frame",
-                "loaderId": "requested-navigation-loader",
-                "name": "load",
-                "timestamp": 3.0
+                "frameId": "requested-frame",
+                "loaderId": "requested-loader",
+                "name": "load"
             }
         });
         record_completed_page_load(
-            &mut loaded,
-            ready.as_object().expect("load lifecycle event"),
+            &mut completed,
+            load.as_object().expect("load lifecycle event"),
         )
-        .expect("record requested load");
-        assert!(loaded.remove("requested-navigation-loader"));
+        .expect("record exact load completion");
+        assert!(completed.contains(&requested));
+        assert!(!completed.contains(&PageLoadIdentity {
+            session: "stale-session".to_owned(),
+            frame: requested.frame.clone(),
+            loader: requested.loader.clone(),
+        }));
+    }
+
+    #[test]
+    fn accessibility_completion_matches_the_exact_frame_root() {
+        let event = json!({
+            "sessionId": "requested-session",
+            "params": {
+                "root": {
+                    "backendDOMNodeId": 37,
+                    "frameId": "requested-frame",
+                    "nodeId": "ax-root",
+                    "role": {"value": "RootWebArea"}
+                }
+            }
+        });
+        let (key, completed) =
+            accessibility_load_completion(event.as_object().expect("accessibility load event"), 9)
+                .expect("parse accessibility load completion");
+        assert_eq!(
+            key,
+            ("requested-session".to_owned(), "requested-frame".to_owned())
+        );
+        assert_eq!(
+            completed,
+            AccessibilityRootCompletion {
+                sequence: 9,
+                node: "ax-root".to_owned(),
+                backend_node: Some(37),
+            }
+        );
+
+        let nodes = json!([
+            {
+                "backendDOMNodeId": 37,
+                "frameId": "requested-frame",
+                "nodeId": "ax-root",
+                "role": {"value": "RootWebArea"}
+            },
+            {
+                "backendDOMNodeId": 41,
+                "nodeId": "ax-link",
+                "role": {"value": "link"},
+                "name": {"value": "Details"}
+            }
+        ]);
+        let root = accessibility_tree_root(
+            nodes.as_array().expect("accessibility nodes"),
+            "requested-frame",
+        )
+        .expect("select exact frame root");
+        assert_eq!(root.node, completed.node);
+        assert_eq!(root.backend_node, completed.backend_node);
+        assert!(
+            accessibility_tree_root(
+                nodes.as_array().expect("accessibility nodes"),
+                "stale-frame"
+            )
+            .is_err()
+        );
     }
 
     #[test]
