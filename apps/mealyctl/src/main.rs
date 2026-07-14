@@ -11977,8 +11977,6 @@ enum CliError {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
-    use super::{macos_activation_command, service_definition};
     use super::{
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
@@ -11999,6 +11997,8 @@ mod tests {
     use super::{
         linux_activation_command, service_definition, service_read_write_paths, systemd_quote,
     };
+    #[cfg(target_os = "macos")]
+    use super::{macos_activation_command, service_definition};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
     use mealy_protocol::{
