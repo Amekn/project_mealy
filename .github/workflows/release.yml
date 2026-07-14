@@ -85,6 +85,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Require an explicit public-use project license
+        run: scripts/validate-public-license.sh .
       - run: rustup show
       - name: Verify tag, host architecture, and package identity
         shell: bash
@@ -308,6 +310,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Require an explicit public-use project license
+        run: scripts/validate-public-license.sh .
       - run: rustup show
       - name: Verify tag, host architecture, and package identity
         shell: bash
@@ -413,6 +417,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
+      actions: read       # Bind release notes to the exact acceptance workflows.
       contents: write      # Create the immutable GitHub release from verified assets.
       id-token: write      # Mint the short-lived identity used by actions/attest.
       attestations: write  # Publish the common-installer attestations.
@@ -482,8 +487,30 @@ jobs:
             echo "remote release tag no longer resolves to the built commit" >&2
             exit 65
           fi
+          runs=$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/live-smoke.yml/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -f event=workflow_dispatch \
+            -f status=success \
+            -F per_page=100)
+          live_run_url=$(jq -er --arg sha "$GITHUB_SHA" '
+            [.workflow_runs[] | select(
+              .head_sha == $sha
+              and .event == "workflow_dispatch"
+              and .status == "completed"
+              and .conclusion == "success"
+              and .path == ".github/workflows/live-smoke.yml"
+              and (.html_url | type == "string")
+            )] | sort_by(.id) | last | .html_url
+          ' <<<"$runs")
+          release_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          scripts/render-release-notes.sh \
+            docs/benchmarks/release-soak.json "$GITHUB_REPOSITORY" \
+            "$GITHUB_REF_NAME" "$GITHUB_SHA" "$live_run_url" "$release_run_url" \
+            "$RUNNER_TEMP/release-notes.md"
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag --generate-notes
+            --verify-tag --title "Mealy $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
 
   public-linux-acceptance:
     name: Verify public Linux install on ${{ matrix.target }}

@@ -98,9 +98,13 @@ jobs:
             scripts/installed-package-smoke.sh
             scripts/installed-deb-smoke.sh
             scripts/macos-control-plane-smoke.sh
+            scripts/render-release-notes.sh
             scripts/run-soak.sh
             scripts/systemd-service-smoke.sh
+            scripts/test-public-license-validator.sh
+            scripts/test-release-notes.sh
             scripts/test-release-soak-validator.sh
+            scripts/validate-public-license.sh
             scripts/validate-release-soak.sh
           )
           bash -n "${scripts[@]}"
@@ -109,6 +113,10 @@ jobs:
             python3 -m py_compile packaging/build-macos-preview.py
       - name: Verify release-soak evidence gate
         run: scripts/test-release-soak-validator.sh
+      - name: Verify public-release license gate
+        run: scripts/test-public-license-validator.sh
+      - name: Verify deterministic release notes
+        run: scripts/test-release-notes.sh
       - run: packaging/test-macos-packaging.sh
       - run: packaging/test-packaging.sh
       - run: packaging/test-deb-packaging.sh

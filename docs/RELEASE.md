@@ -42,12 +42,27 @@ reviewers, then add only the provider secret needed for the reviewed manual prob
 secret only when that independent option will run). Never place those credentials in repository,
 workflow, or command-line configuration.
 
+The checked project license is currently all-rights-reserved and expressly grants no right to use,
+copy, modify, publish, or distribute Mealy. It cannot support the public-install goal. Before a
+production tag, the copyright holder must deliberately replace it and the workspace metadata with
+Apache-2.0, MIT, or dual `MIT OR Apache-2.0` terms. The native tag jobs run
+`scripts/validate-public-license.sh` and refuse publication while the restrictive terms,
+`license-file` metadata, an unsupported/mismatched license text, or a workspace package that does
+not inherit the reviewed SPDX expression remains. This is a legal-distribution gate, not a claim
+that automated text checks replace legal review.
+
 The tag workflow independently fetches `origin/main`, checks ancestry in each native package job
 and again immediately before publication, and refuses unless the tagged SHA is an ancestor of that
 branch; a tag on an unmerged or subsequently removed commit cannot publish. Its x86-64 job also
 queries the exact `live-smoke.yml` workflow and refuses unless an owner-reviewed manual run for the
 tagged commit completed successfully; evidence from another commit, workflow, event, or incomplete
-run cannot qualify. On 2026-07-14, `main`
+run cannot qualify. Immediately before publication, the publish job repeats that exact live-run
+query and renders deterministic release notes from the checked soak JSON. The renderer rejects a
+mismatched tag, foreign workflow URL, short or dirty soak, incomplete workload, invalid latency
+ordering, corrupt SQLite result, or residual work. The notes link the exact release and
+live-provider workflow runs, commit, soak subject and daemon digest, and record the measured
+duration, workload, recovery, latency, memory, storage, integrity, and residue instead of
+substituting generic generated notes. On 2026-07-14, `main`
 was protected with administrator enforcement, pull-request-only changes, linear history, resolved
 conversations, and force-push/deletion denial. On 2026-07-15, strict protection began requiring the
 seven authoritative checks `Strict workspace gate`, `Linux sandbox conformance`, `Linux
@@ -373,7 +388,10 @@ remove it before uninstalling.
 
 ## Maintainer release checklist
 
-1. Make the workspace version and intended `vVERSION` tag identical.
+1. Have the copyright holder explicitly choose Apache-2.0, MIT, or dual `MIT OR Apache-2.0`, replace
+   the current all-rights-reserved `LICENSE` and workspace/package metadata, and run
+   `scripts/validate-public-license.sh .`. Then make the workspace version and intended `vVERSION`
+   tag identical.
 2. Compare the pinned Headless Shell version with the official
    [Chrome for Testing stable metadata](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json).
    If the reviewed stable patch changed, update its exact archive byte count/SHA-256 and product
@@ -402,8 +420,9 @@ remove it before uninstalling.
    control-plane acceptance against only the downloaded public assets. Independently download and
    inspect the retained verification evidence before declaring the release complete.
 7. Record clean-install, upgrade, backup/restore, rollback, uninstall, soak, and optional
-   live-provider observations in the
-   release notes.
+   live-provider observations in the release notes. The workflow renders the exact soak metrics and
+   live/release run links automatically; review that deterministic body and use the linked final
+   workflow result as authority for the post-publication native install observations.
 
 The workflow does not publish from an untagged branch or silently invent a tag. The repeatable soak
 harness and a dirty-worktree development baseline now exist, but the paced long clean-revision run,
