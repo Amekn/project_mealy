@@ -44,7 +44,10 @@ workflow, or command-line configuration.
 
 The tag workflow independently fetches `origin/main`, checks ancestry in each native package job
 and again immediately before publication, and refuses unless the tagged SHA is an ancestor of that
-branch; a tag on an unmerged or subsequently removed commit cannot publish. On 2026-07-14, `main`
+branch; a tag on an unmerged or subsequently removed commit cannot publish. Its x86-64 job also
+queries the exact `live-smoke.yml` workflow and refuses unless an owner-reviewed manual run for the
+tagged commit completed successfully; evidence from another commit, workflow, event, or incomplete
+run cannot qualify. On 2026-07-14, `main`
 was protected with administrator enforcement, pull-request-only changes, linear history, resolved
 conversations, and force-push/deletion denial. On 2026-07-15, strict protection began requiring the
 seven authoritative checks `Strict workspace gate`, `Linux sandbox conformance`, `Linux
@@ -385,8 +388,10 @@ remove it before uninstalling.
    the exact auditable release daemon. Investigate any integrity, replay, residue, recovery, or
    identity failure before tagging; the tag workflow repeats this gate and cannot publish without
    it.
-4. Create and push the reviewed tag. The release workflow refuses a mismatched version or a tag
-   that does not point at the checked-out commit.
+4. Run the manual `mealy-live-provider-smoke` workflow against the exact protected commit, approve
+   its `live-provider-smoke` environment deployment, and retain the successful run URL. Then create
+   and push the reviewed tag. The release workflow refuses a mismatched version, a tag that does
+   not point at the checked-out commit, or missing/stale live-provider workflow evidence.
 5. Wait for the native Linux and macOS jobs to pass the full all-feature/doc/RustSec suites, real
    daemon/dashboard or preview-control-plane smoke, auditable locked build, exact-binary audit,
    SBOM/license validation, archive and Debian reproducibility/lifecycle/Lintian tests, asset
