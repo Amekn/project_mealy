@@ -431,7 +431,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create --help | grep -Fq 'separate API calls'
+          release_create_help=$(gh release create --help)
+          grep -Fq 'separate API calls' <<<"$release_create_help"
           gh release verify --help >/dev/null
           ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
           object_type=$(jq -er '.object.type' <<<"$ref")
@@ -488,7 +489,8 @@ jobs:
           sudo apt-get install --yes \
             apparmor-profiles apparmor-utils bubblewrap curl jq
           scripts/prepare-bwrap-boundary.sh
-          gh attestation verify --help | grep -Fq -- '--bundle'
+          attestation_help=$(gh attestation verify --help)
+          grep -Fq -- '--bundle' <<<"$attestation_help"
           gh release verify --help >/dev/null
       - name: Verify immutable public release and exact native assets
         env:
@@ -617,7 +619,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh attestation verify --help | grep -Fq -- '--bundle'
+          attestation_help=$(gh attestation verify --help)
+          grep -Fq -- '--bundle' <<<"$attestation_help"
           gh release verify --help >/dev/null
           version=${GITHUB_REF_NAME#v}
           archive="mealy-v${version}-${MEALY_TARGET}.tar.gz"
