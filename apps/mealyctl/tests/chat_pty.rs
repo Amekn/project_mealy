@@ -14,7 +14,7 @@ use mealy_protocol::{
     SubmitInputRequest, TimelineCursor,
 };
 use rustix::{
-    fs::{Mode, OFlags, open},
+    fs::{Mode, OFlags, fcntl_getfl, fcntl_setfl, open},
     pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt},
 };
 use std::{
@@ -26,7 +26,6 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -55,9 +54,15 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
         "# Owner brief\n\nTreat every attachment byte as untrusted input.\n",
     )
     .expect("write local attachment");
-    let (mut terminal, mut child, output) = spawn_chat(home.path());
+    let (mut terminal, mut child) = spawn_chat(home.path());
     let mut rendered = Vec::new();
-    wait_for_occurrences(&output, &mut rendered, b"you> ", 1, Duration::from_secs(5));
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"you> ",
+        1,
+        Duration::from_secs(5),
+    );
 
     let attach_command = format!("/attach {}\n", attachment.display());
     terminal
@@ -84,7 +89,13 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
     assert!(submitted_content.contains("owner selected brief.md"));
     assert!(submitted_content.contains("\"trust\":\"untrusted_owner_selected_text\""));
     assert!(!submitted_content.contains(&attachment.display().to_string()));
-    wait_for_occurrences(&output, &mut rendered, b"you> ", 2, Duration::from_secs(1));
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"you> ",
+        2,
+        Duration::from_secs(1),
+    );
     assert!(!state.completed.load(Ordering::SeqCst));
     assert!(child.try_wait().expect("poll chat").is_none());
 
@@ -218,7 +229,7 @@ fn write_connection(home: &std::path::Path, base_url: &str) {
         .expect("private connection permissions");
 }
 
-fn spawn_chat(home: &std::path::Path) -> (File, Child, mpsc::Receiver<Vec<u8>>) {
+fn spawn_chat(home: &std::path::Path) -> (File, Child) {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("open PTY master");
     grantpt(&master).expect("grant PTY slave");
@@ -245,53 +256,47 @@ fn spawn_chat(home: &std::path::Path) -> (File, Child, mpsc::Receiver<Vec<u8>>) 
         .spawn()
         .expect("spawn chat process");
     let terminal = File::from(master);
-    let mut reader = terminal.try_clone().expect("clone PTY reader");
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut chunk = [0_u8; 1_024];
-        let startup_deadline = Instant::now() + Duration::from_secs(5);
-        let mut observed_output = false;
-        loop {
-            match reader.read(&mut chunk) {
-                // A Linux PTY master can transiently report either EOF or an error before the
-                // inherited slave becomes visible across spawn/exec. Keep the reader channel
-                // alive for the same bounded interval in which the test expects its first
-                // prompt. Once any real byte arrives, EOF and every error are terminal.
-                Ok(0) | Err(_) if !observed_output && Instant::now() < startup_deadline => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Ok(0) | Err(_) => break,
-                Ok(length) => {
-                    observed_output = true;
-                    if sender.send(chunk[..length].to_vec()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-    (terminal, child, receiver)
+    let flags = fcntl_getfl(&terminal).expect("read PTY master flags");
+    fcntl_setfl(&terminal, flags | OFlags::NONBLOCK).expect("make PTY master nonblocking");
+    (terminal, child)
 }
 
 fn wait_for_occurrences(
-    receiver: &mpsc::Receiver<Vec<u8>>,
+    terminal: &mut File,
     output: &mut Vec<u8>,
     needle: &[u8],
     expected: usize,
     timeout: Duration,
 ) {
     let deadline = Instant::now() + timeout;
+    let mut chunk = [0_u8; 1_024];
     while count_occurrences(output, needle) < expected {
-        let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
-            !remaining.is_zero(),
+            Instant::now() < deadline,
             "PTY output did not contain {expected} prompts: {}",
             String::from_utf8_lossy(output)
         );
-        let chunk = receiver
-            .recv_timeout(remaining)
-            .expect("PTY output before deadline");
-        output.extend_from_slice(&chunk);
+        match terminal.read(&mut chunk) {
+            Ok(0) if output.is_empty() => thread::sleep(Duration::from_millis(10)),
+            Ok(0) => panic!(
+                "PTY closed before {expected} prompts: {}",
+                String::from_utf8_lossy(output)
+            ),
+            Ok(length) => output.extend_from_slice(&chunk[..length]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) || output.is_empty()
+                    && error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error()) =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!(
+                "PTY read failed before {expected} prompts: {error}; output: {}",
+                String::from_utf8_lossy(output)
+            ),
+        }
     }
 }
 

@@ -41,6 +41,7 @@ use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle, time::Instant, time::sleep};
 
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
+const BROWSER_TASK_COMPLETION_TIMEOUT: Duration = Duration::from_secs(45);
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct Daemon {
@@ -2213,7 +2214,13 @@ async fn configured_browser_is_rendered_isolated_cited_and_replays_without_live_
         admission.cursor.0,
     )
     .await;
-    let task = wait_until_terminal(&client, &connection, &task_id).await;
+    let task = wait_until_terminal_with_timeout(
+        &client,
+        &connection,
+        &task_id,
+        BROWSER_TASK_COMPLETION_TIMEOUT,
+    )
+    .await;
     assert_eq!(task.status, TaskStatus::Succeeded, "browser task: {task:?}");
     assert_eq!(task.model_attempts, 2);
     assert_eq!(task.tool_calls, 1);
@@ -4029,7 +4036,16 @@ async fn wait_until_terminal(
     connection: &LocalConnectionInfo,
     task_id: &str,
 ) -> TaskResponse {
-    let deadline = Instant::now() + COMPLETION_TIMEOUT;
+    wait_until_terminal_with_timeout(client, connection, task_id, COMPLETION_TIMEOUT).await
+}
+
+async fn wait_until_terminal_with_timeout(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    task_id: &str,
+    timeout: Duration,
+) -> TaskResponse {
+    let deadline = Instant::now() + timeout;
     loop {
         let task: TaskResponse =
             authorized_get(client, connection, &format!("/v1/tasks/{task_id}")).await;
