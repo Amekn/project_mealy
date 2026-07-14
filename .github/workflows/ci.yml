@@ -100,11 +100,15 @@ jobs:
             scripts/macos-control-plane-smoke.sh
             scripts/run-soak.sh
             scripts/systemd-service-smoke.sh
+            scripts/test-release-soak-validator.sh
+            scripts/validate-release-soak.sh
           )
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" \
             python3 -m py_compile packaging/build-macos-preview.py
+      - name: Verify release-soak evidence gate
+        run: scripts/test-release-soak-validator.sh
       - run: packaging/test-macos-packaging.sh
       - run: packaging/test-packaging.sh
       - run: packaging/test-deb-packaging.sh

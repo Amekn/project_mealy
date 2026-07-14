@@ -138,6 +138,12 @@ jobs:
         run: scripts/build-release-binaries.sh --auditable
       - name: Audit the exact release binaries
         run: cargo audit bin target/release/mealyd target/release/mealyctl
+      - name: Bind the checked 24-hour soak to the exact release daemon
+        if: ${{ matrix.target == 'linux-x86_64-gnu' }}
+        run: >-
+          scripts/validate-release-soak.sh
+          docs/benchmarks/release-soak.json
+          target/release/mealyd "$GITHUB_SHA"
       - name: Prepare isolated systemd user manager
         shell: bash
         run: |
