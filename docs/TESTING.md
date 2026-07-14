@@ -375,19 +375,18 @@ Workspace configuration has two independent private-state overlap gates: the sto
 rejects a root equal to, beneath, or containing the daemon home without changing configuration,
 and startup rejects the same shapes plus redirected or unavailable roots from a manually changed
 document. Extension enable and invocation apply the same rule to every host mount. The service
-unit test and public configuration process test prove that only current writable workspaces join
-the home as outer Bubblewrap writable binds; read-only workspaces remain read-only under that
-daemon boundary and every workspace response requires service regeneration. The same tests reject
-paths hidden by the outer private temporary filesystems and volatile state filesystems, assert a
-private umask and forced-drain restart inhibition, and require a custom unit's activation command
-to link its exact safe path.
+unit test and public configuration process test prove that workspace changes require a daemon
+restart but no service regeneration, that the unit directly executes the exact configured daemon,
+and that it does not wrap the daemon in a namespace that would disable per-tool Bubblewrap. The
+same tests reject a volatile service home, assert a private umask and forced-drain restart
+inhibition, and require a custom unit's activation command to link its exact safe path.
 `scripts/systemd-service-smoke.sh` then starts the generated unit in the explicitly opted-in
 GitHub-hosted runner or disposable container's user manager,
 requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
-It requires the daemon's explicit outer Bubblewrap boundary and rejects systemd-user namespace
-directives that hardened Ubuntu cannot apply before `/usr/bin/bwrap` starts. CI runs this process
-proof after the direct sandbox suite; both native tag
+It rejects both an outer Bubblewrap wrapper (which Ubuntu's reviewed profile makes incompatible
+with nested per-tool namespaces) and systemd-user namespace directives that hardened Ubuntu cannot
+apply before daemon exec. CI runs this process proof after the direct sandbox suite; both native tag
 runners repeat it against the exact auditable release binaries and again from the root-owned paths
 of the just-built Debian package.
 Every user-manager command is time bounded. The failure trap removes only the exact link it created

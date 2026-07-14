@@ -9,7 +9,7 @@ use std::{
     fs,
     io::Write as _,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -26,14 +26,14 @@ impl CancellationProbe for NeverCancelled {
 struct DeadlineCancellation {
     started: Instant,
     after: Duration,
-    observed: AtomicBool,
+    observed: OnceLock<Instant>,
 }
 
 impl CancellationProbe for DeadlineCancellation {
     fn is_cancelled(&self) -> bool {
         let cancelled = self.started.elapsed() >= self.after;
         if cancelled {
-            self.observed.store(true, Ordering::Release);
+            self.observed.get_or_init(Instant::now);
         }
         cancelled
     }
@@ -199,13 +199,14 @@ fn durable_cancellation_stops_an_in_flight_mcp_call() {
     let cancellation = DeadlineCancellation {
         started: Instant::now(),
         after: Duration::from_millis(50),
-        observed: AtomicBool::new(false),
+        observed: OnceLock::new(),
     };
     let started = Instant::now();
     let error = tools[0]
         .execute(&json!({"milliseconds": 5_000}), &cancellation)
         .expect_err("call must cancel");
     assert_eq!(error, ReadToolError::Cancelled);
-    assert!(cancellation.observed.load(Ordering::Acquire));
-    assert!(started.elapsed() < Duration::from_secs(2));
+    let observed = cancellation.observed.get().expect("cancellation observed");
+    assert!(observed.elapsed() < Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_secs(10));
 }

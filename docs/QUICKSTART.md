@@ -1104,13 +1104,13 @@ stopped, enable it for one already-granted workspace and restart:
 ```sh
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config workspace-write-enable \
   project --approve
-"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" service install
 "$HOME/.local/bin/mealyd" --home "$HOME/.mealy"
 ```
 
-The service reinstall is required when using the generated Linux user unit. It regenerates the
-outer Bubblewrap writable-bind allowlist from the exact current writable-workspace roots while the
-daemon is stopped; a direct foreground launch does not consume the unit.
+The configuration response reports `restartRequired=true` and
+`serviceReinstallRequired=false`. The Linux unit does not embed workspace paths; after changing a
+grant, restart either the existing user service or the foreground daemon. Each governed operation
+still mounts only its selected workspace into a fresh Bubblewrap sandbox.
 
 In `mealyctl chat`, explicitly select action mode for one task:
 

@@ -153,12 +153,12 @@ jq -e --arg home "$home" --arg unit "$temporary/mealy.service" '
 grep -Fqx 'RestartPreventExitStatus=2' "$temporary/mealy.service"
 grep -Fqx 'UMask=0077' "$temporary/mealy.service"
 grep -Fqx 'NoNewPrivileges=true' "$temporary/mealy.service"
-grep -Fq 'ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc' \
+grep -Fqx "ExecStart=\"/usr/lib/mealy/release/bin/mealyd\" --home \"$home\"" \
   "$temporary/mealy.service"
-grep -Fq -- '--cap-drop ALL --hostname mealy-daemon --ro-bind / /' \
-  "$temporary/mealy.service"
-grep -Fq -- '--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp' \
-  "$temporary/mealy.service"
+if grep -Fq 'ExecStart=/usr/bin/bwrap' "$temporary/mealy.service"; then
+  echo "installed Debian service prevents per-tool Bubblewrap" >&2
+  exit 65
+fi
 if grep -Eq \
   '^(PrivateDevices|PrivateTmp|ProtectClock|ProtectControlGroups|ProtectHome|ProtectHostname|ProtectKernelLogs|ProtectKernelModules|ProtectKernelTunables|ProtectProc|ProtectSystem|ProcSubset|ReadWritePaths|RestrictSUIDSGID)=' \
   "$temporary/mealy.service"; then
@@ -169,7 +169,6 @@ grep -Fqx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
   "$temporary/mealy.service"
 grep -Fqx 'RestrictRealtime=true' "$temporary/mealy.service"
 grep -Fqx 'SystemCallArchitectures=native' "$temporary/mealy.service"
-grep -Fq -- "--bind \"$home\" \"$home\"" "$temporary/mealy.service"
 
 /usr/bin/mealyd --home "$home" --promotion-interval-ms 10 --outbox-delay-ms 0 \
   --agent-delay-ms 10 --fake-provider-delay-ms 10 \

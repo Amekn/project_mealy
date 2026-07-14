@@ -98,12 +98,11 @@ jq -e --arg daemon "$mealyd" --arg home "$home" --arg unit "$temporary/mealy.ser
 grep -Fqx 'RestartPreventExitStatus=2' "$temporary/mealy.service"
 grep -Fqx 'UMask=0077' "$temporary/mealy.service"
 grep -Fqx 'NoNewPrivileges=true' "$temporary/mealy.service"
-grep -Fq 'ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc' \
-  "$temporary/mealy.service"
-grep -Fq -- '--cap-drop ALL --hostname mealy-daemon --ro-bind / /' \
-  "$temporary/mealy.service"
-grep -Fq -- '--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp' \
-  "$temporary/mealy.service"
+grep -Fqx "ExecStart=\"$mealyd\" --home \"$home\"" "$temporary/mealy.service"
+if grep -Fq 'ExecStart=/usr/bin/bwrap' "$temporary/mealy.service"; then
+  echo "installed service prevents per-tool Bubblewrap" >&2
+  exit 65
+fi
 if grep -Eq \
   '^(PrivateDevices|PrivateTmp|ProtectClock|ProtectControlGroups|ProtectHome|ProtectHostname|ProtectKernelLogs|ProtectKernelModules|ProtectKernelTunables|ProtectProc|ProtectSystem|ProcSubset|ReadWritePaths|RestrictSUIDSGID)=' \
   "$temporary/mealy.service"; then
@@ -117,7 +116,6 @@ grep -Fqx 'SystemCallArchitectures=native' "$temporary/mealy.service"
 grep -Fqx 'MemoryMax=1536M' "$temporary/mealy.service"
 grep -Fqx 'MemorySwapMax=0' "$temporary/mealy.service"
 grep -Fqx 'TasksMax=384' "$temporary/mealy.service"
-grep -Fq -- "--bind \"$home\" \"$home\"" "$temporary/mealy.service"
 
 "$mealyd" \
   --home "$home" \

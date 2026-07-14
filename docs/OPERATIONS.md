@@ -140,10 +140,10 @@ rollback copy. Unsupported service-manager platforms fail explicitly instead of 
 unit. The daemon itself remains portable; arbitrary worker execution is separately fail-closed by
 the sandbox profile reported by `doctor`.
 
-On Linux, service installation requires the canonical Mealy home and every configured workspace to
-remain outside host `/tmp` and `/var/tmp`, because the outer Bubblewrap command deliberately
-replaces those views. The home must also be on a non-`tmpfs`, non-`ramfs` filesystem. This prevents
-a direct-launch test from silently naming different or volatile state when the unit starts. A
+On Linux, service installation requires the canonical Mealy home to remain outside host `/tmp` and
+`/var/tmp` and on a non-`tmpfs`, non-`ramfs` filesystem. This prevents volatile state from being
+mistaken for a durable service home. Configured workspaces are canonicalized and checked for
+private-state overlap, but can reside on any filesystem the owner deliberately configured. A
 custom unit output must be named `mealy.service`; its printed command links the exact absolute path
 before enablement.
 
@@ -154,14 +154,14 @@ large virtual address range and cannot run under a useful `RLIMIT_AS`; direct la
 equivalent operator-managed cgroup to obtain the same physical-memory containment. `UMask=0077`
 keeps daemon-created state private, and exit status 2 from a recorded forced bounded drain is
 explicitly restart-inhibited so the service manager cannot undo an operator's drain request. The
-unit also isolates devices; protects clock, kernel-module, process, and control-group interfaces;
-limits socket creation to Unix, IPv4, IPv6, and netlink; denies realtime scheduling; and permits
-only the native syscall ABI. The outer trusted Bubblewrap command—not the systemd user manager—
-provides the device, capability, process, temporary-filesystem, and read-only-host boundaries so it
-also works under Ubuntu's AppArmor restriction on unprivileged user namespaces. It deliberately
-leaves nested Bubblewrap available for governed tools and the worker's secure `openat2(O_CREAT)`
-path. Writable-executable memory and the Internet socket families remain available for V8,
-providers, and channels.
+unit limits socket creation to Unix, IPv4, IPv6, and netlink, denies realtime scheduling, permits
+only the native syscall ABI, and sets `NoNewPrivileges=true`. It executes the exact daemon directly
+because an outer Bubblewrap is incompatible with Ubuntu's reviewed profile: that profile removes
+capabilities from the outer sandbox's children and therefore prevents the per-tool Bubblewrap from
+creating its required namespace. The unit is supervision and resource containment, not a
+whole-daemon filesystem sandbox. Governed effects, MCP, extensions, and browser calls retain their
+fresh fail-closed Bubblewrap boundaries; writable-executable memory and Internet socket families
+remain available to V8, providers, and channels.
 
 ## Health, diagnostics, and traces
 
@@ -459,13 +459,11 @@ mealyctl --home "$HOME/.mealy" config workspace-write-enable project --approve
 mealyctl --home "$HOME/.mealy" config workspace-write-disable project --approve
 ```
 
-Each workspace response sets `serviceReinstallRequired`. If the generated Linux user service is
-used, run `mealyctl --home "$HOME/.mealy" service install` while stopped after any workspace
-change. The generated unit holds the same stopped-home lock and lists the exact private home plus
-only current writable roots as explicit outer Bubblewrap binds. The host root is mounted read-only,
-with private `/proc`, `/dev`, `/tmp`, and `/var/tmp`; nested per-tool Bubblewrap remains available.
-Service regeneration also revalidates that every workspace is outside those private temporary
-hierarchies.
+Each workspace response sets `restartRequired` and leaves `serviceReinstallRequired=false` because
+the generated service does not embed workspace paths. Restart the daemon after a workspace change;
+there is no separate service-regeneration step. The stopped-home command and daemon startup both
+validate private-state overlap, while every governed operation gives its fresh Bubblewrap process
+only the selected request-specific workspace mount.
 
 After restart, `workspace.create_file`, `workspace.manage_path`, and `workspace.replace_file`
 appear in `enabledActionTools`, but only explicit `/act TEXT`, `/manage TEXT`, and `/edit TEXT`

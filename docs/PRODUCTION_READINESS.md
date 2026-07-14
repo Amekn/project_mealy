@@ -170,15 +170,16 @@ A private-state overlap audit additionally closed a direct-launch/service mismat
 exposure path. Workspace roots, extension host mounts, and local attachments now fail closed when
 they equal, descend from, or contain the canonical daemon home; CLI, startup, public API, and
 process tests cover the independent boundaries. The generated Linux unit holds the stopped-home
-lock and derives exact outer-Bubblewrap writable binds from the current validated writable-workspace set,
-so recommended service launches retain the same useful mutation authority without making the rest
-of the owner account writable. It rejects private-temporary workspace/home paths and volatile
-state filesystems, uses a private umask, links an exact custom unit path, and prevents the
-intentional forced-drain exit from being restarted.
+lock, rejects a private-temporary or volatile home, uses a private umask, links an exact custom
+unit path, and prevents the intentional forced-drain exit from being restarted. Workspace changes
+require a daemon restart but no service regeneration because the unit does not embed workspace
+paths; request-specific worker sandboxes remain the write-authority boundary.
 Ubuntu 24.04 systemd-user integrations exposed controls that depend on a user namespace before the
-daemon command starts. The final unit delegates that filesystem/process/device isolation to an
-explicit trusted `/usr/bin/bwrap` command, which Ubuntu's reviewed AppArmor profile permits, and
-retains only rootless-compatible systemd controls. The new
+daemon command starts. A subsequent GitHub-hosted run proved that an explicit outer Bubblewrap is
+also incompatible: Ubuntu's packaged `unpriv_bwrap` child profile denies the capabilities a nested
+per-tool Bubblewrap needs. The final unit therefore executes the exact daemon directly and retains
+rootless-compatible process/cgroup controls; it does not claim whole-daemon filesystem isolation.
+The stronger request-specific Bubblewrap boundary remains mandatory for governed work. The new
 `scripts/systemd-service-smoke.sh` regression runs in CI and both native tag jobs, requires green
 observe/workspace-write profiles, approves an exact write, asserts the effect and file bytes, and
 then proves bounded drain. Each tag runner repeats it after installing the just-built Debian

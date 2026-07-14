@@ -1298,7 +1298,7 @@ fn config_workspace_grant_and_revoke_are_explicit_canonical_and_reversible() {
     assert_eq!(grant_response["workspaceId"], "project");
     assert_eq!(grant_response["operation"], "granted");
     assert_eq!(grant_response["restartRequired"], true);
-    assert_eq!(grant_response["serviceReinstallRequired"], true);
+    assert_eq!(grant_response["serviceReinstallRequired"], false);
     assert_eq!(
         grant_response["canonicalRoot"],
         workspace
@@ -1350,6 +1350,7 @@ fn config_workspace_grant_and_revoke_are_explicit_canonical_and_reversible() {
     let response: Value =
         serde_json::from_slice(&write_enabled.stdout).expect("write enable response");
     assert_eq!(response["operation"], "write_enabled");
+    assert_eq!(response["serviceReinstallRequired"], false);
     let write_config: Value = serde_json::from_slice(
         &fs::read(home.path().join("config.json")).expect("write-enabled workspace"),
     )
@@ -1400,12 +1401,11 @@ fn config_workspace_grant_and_revoke_are_explicit_canonical_and_reversible() {
                 .any(|path| path.as_str() == Some(workspace_text.as_str()))
         );
         let unit = fs::read_to_string(service_path).expect("service unit");
-        let canonical_workspace = workspace.path().canonicalize().expect("workspace path");
         assert!(unit.contains(&format!(
-            "--bind \"{}\" \"{}\"",
-            canonical_workspace.display(),
-            canonical_workspace.display()
+            "ExecStart=\"/usr/bin/true\" --home \"{home_text}\""
         )));
+        assert!(!unit.contains(&workspace_text));
+        assert!(!unit.contains("ExecStart=/usr/bin/bwrap"));
     }
 
     let write_disabled = workspace_config(

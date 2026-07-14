@@ -865,7 +865,13 @@ enum BrowserWorkerStage {
     LinkDestination,
     LinkNavigation,
     LinkWait,
-    ElementActivation,
+    ElementAccessibilityTree,
+    ElementLookup,
+    ElementLinkDestination,
+    ElementLinkNavigation,
+    ElementButtonResolution,
+    ElementButtonInvocation,
+    ElementWait,
     ElementFill,
     Download,
     DocumentIdentity,
@@ -888,7 +894,13 @@ impl BrowserWorkerStage {
             Self::LinkDestination => "link_destination",
             Self::LinkNavigation => "link_navigation",
             Self::LinkWait => "link_wait",
-            Self::ElementActivation => "element_activation",
+            Self::ElementAccessibilityTree => "element_accessibility_tree",
+            Self::ElementLookup => "element_lookup",
+            Self::ElementLinkDestination => "element_link_destination",
+            Self::ElementLinkNavigation => "element_link_navigation",
+            Self::ElementButtonResolution => "element_button_resolution",
+            Self::ElementButtonInvocation => "element_button_invocation",
+            Self::ElementWait => "element_wait",
             Self::ElementFill => "element_fill",
             Self::Download => "download",
             Self::DocumentIdentity => "document_identity",
@@ -1664,10 +1676,7 @@ fn perform_browser_actions(
     request: &BrowserSnapshotRequest,
 ) -> Result<BrowserActionResults, BrowserWorkerExecutionError> {
     let followed_link = follow_requested_link(cdp, session, request)?;
-    let activated_element = at_browser_stage(
-        BrowserWorkerStage::ElementActivation,
-        activate_requested_element(cdp, session, request),
-    )?;
+    let activated_element = activate_requested_element(cdp, session, request)?;
     let filled_element = at_browser_stage(
         BrowserWorkerStage::ElementFill,
         fill_requested_element(cdp, session, request),
@@ -1821,22 +1830,42 @@ fn activate_requested_element(
     cdp: &mut CdpClient,
     session: &str,
     request: &BrowserSnapshotRequest,
-) -> Result<Option<Value>, BrowserHostError> {
+) -> Result<Option<Value>, BrowserWorkerExecutionError> {
     let Some(target) = request.activate_element() else {
         return Ok(None);
     };
-    let tree = accessibility_tree(cdp, session)?;
-    let backend_node_id =
-        exact_element_backend_node(&tree, target.role(), target.name(), target.occurrence())?;
+    let tree = at_browser_stage(
+        BrowserWorkerStage::ElementAccessibilityTree,
+        accessibility_tree(cdp, session),
+    )?;
+    let backend_node_id = at_browser_stage(
+        BrowserWorkerStage::ElementLookup,
+        exact_element_backend_node(&tree, target.role(), target.name(), target.occurrence()),
+    )?;
     if target.role() == "link" {
-        let destination = exact_link_destination(cdp, session, backend_node_id, request.url())?;
-        navigate_and_wait(cdp, session, destination.as_str())?;
-        cdp.pump_for(Duration::from_millis(request.wait_ms()))?;
+        let destination = at_browser_stage(
+            BrowserWorkerStage::ElementLinkDestination,
+            exact_link_destination(cdp, session, backend_node_id, request.url()),
+        )?;
+        at_browser_stage(
+            BrowserWorkerStage::ElementLinkNavigation,
+            navigate_and_wait(cdp, session, destination.as_str()),
+        )?;
+        at_browser_stage(
+            BrowserWorkerStage::ElementWait,
+            cdp.pump_for(Duration::from_millis(request.wait_ms())),
+        )?;
     } else if target.role() == "button" {
         activate_form_free_button(cdp, session, backend_node_id)?;
-        cdp.pump_for(Duration::from_millis(request.wait_ms().max(250)))?;
+        at_browser_stage(
+            BrowserWorkerStage::ElementWait,
+            cdp.pump_for(Duration::from_millis(request.wait_ms().max(250))),
+        )?;
     } else {
-        return Err(BrowserHostError::InvalidConfiguration);
+        return Err(worker_error(
+            BrowserWorkerStage::ElementLookup,
+            BrowserHostError::InvalidConfiguration,
+        ));
     }
     Ok(Some(json!({
         "name": target.name(),
@@ -2103,28 +2132,39 @@ fn activate_form_free_button(
     cdp: &mut CdpClient,
     session: &str,
     backend_node_id: u64,
-) -> Result<(), BrowserHostError> {
-    let resolved = cdp.command(
-        "DOM.resolveNode",
-        json!({"backendNodeId": backend_node_id}),
-        Some(session),
+) -> Result<(), BrowserWorkerExecutionError> {
+    let resolved = at_browser_stage(
+        BrowserWorkerStage::ElementButtonResolution,
+        cdp.command(
+            "DOM.resolveNode",
+            json!({"backendNodeId": backend_node_id}),
+            Some(session),
+        ),
     )?;
     let object_id = resolved
         .get("object")
         .and_then(|object| object.get("objectId"))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty() && value.len() <= 512)
-        .ok_or(BrowserHostError::InvalidProtocol)?;
-    let activated = cdp.command(
-        "Runtime.callFunctionOn",
-        json!({
-            "functionDeclaration": "function () { return globalThis.__mealyActivateReadOnlyButton ? globalThis.__mealyActivateReadOnlyButton(this) : false; }",
-            "objectId": object_id,
-            "returnByValue": true,
-            "awaitPromise": false,
-            "userGesture": false
-        }),
-        Some(session),
+        .ok_or_else(|| {
+            worker_error(
+                BrowserWorkerStage::ElementButtonResolution,
+                BrowserHostError::InvalidProtocol,
+            )
+        })?;
+    let activated = at_browser_stage(
+        BrowserWorkerStage::ElementButtonInvocation,
+        cdp.command(
+            "Runtime.callFunctionOn",
+            json!({
+                "functionDeclaration": "function () { return globalThis.__mealyActivateReadOnlyButton ? globalThis.__mealyActivateReadOnlyButton(this) : false; }",
+                "objectId": object_id,
+                "returnByValue": true,
+                "awaitPromise": false,
+                "userGesture": false
+            }),
+            Some(session),
+        ),
     )?;
     if activated
         .get("result")
@@ -2132,7 +2172,10 @@ fn activate_form_free_button(
         .and_then(Value::as_bool)
         != Some(true)
     {
-        return Err(BrowserHostError::DestinationDenied);
+        return Err(worker_error(
+            BrowserWorkerStage::ElementButtonInvocation,
+            BrowserHostError::DestinationDenied,
+        ));
     }
     Ok(())
 }

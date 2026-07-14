@@ -167,10 +167,12 @@ partial runtime can satisfy a release gate.
 The PID-1-container evidence below records an earlier systemd-native form of the boundary. A later
 GitHub-hosted Ubuntu 24.04 user manager retained the host's default AppArmor restriction on
 unprivileged user namespaces and rejected those directives before `mealyd` could start with
-`218/CAPABILITIES`. The release candidate now invokes trusted `/usr/bin/bwrap` directly from the
-rootless unit: the host tree is read-only, only the validated home and writable workspaces are
-rebound writable, `/proc`, `/dev`, `/tmp`, and `/var/tmp` are private, capabilities are dropped,
-and nested per-tool Bubblewrap remains enabled. The GitHub systemd mutation job is the authoritative
+`218/CAPABILITIES`. The next candidate invoked trusted `/usr/bin/bwrap` directly from the rootless
+unit. GitHub run `29357794460` proved that proposal was also incompatible with the host's reviewed
+policy: the outer process started, but the packaged `unpriv_bwrap` child profile denied the
+capabilities the nested per-tool Bubblewrap needed. The final candidate directly executes the
+daemon under rootless-safe systemd process/cgroup controls and reserves Bubblewrap for the
+lower-authority per-request workers. The GitHub systemd mutation job remains the authoritative
 regression for that default-hardened Ubuntu host shape.
 
 An Ubuntu 24.04 PID-1 container with a real systemd user manager reproduced four independent outer
