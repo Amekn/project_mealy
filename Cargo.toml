@@ -82,3 +82,9 @@ debug = 1
 
 [profile.test]
 debug = 1
+
+# Real-browser conformance intentionally hashes the complete 200+ MiB pinned runtime at setup,
+# startup, and before every call. Keep that security boundary practical in otherwise-unoptimized
+# test binaries; release builds are already optimized and are unaffected by this override.
+[profile.test.package.sha2]
+opt-level = 3
