@@ -94,6 +94,12 @@ In `zsh`, add `$HOME/.local/bin` to `PATH` if needed, then run `mealyctl --home
 licenses, and operating guidance. Upgrades are manual replacement after a clean drain; the Linux
 archive manager's automatic previous-slot rollback does not claim macOS support.
 
+`mealyctl --home "$HOME/.mealy" service install` generates a `RunAtLoad` LaunchAgent that starts
+once when bootstrapped and deliberately has no unconditional `KeepAlive`. Consequently,
+`mealyctl --home "$HOME/.mealy" drain` leaves an intentionally stopped daemon stopped. Restart a
+loaded agent explicitly with `launchctl kickstart -k gui/$(id -u)/dev.mealy.mealyd`, or unload it
+with `launchctl bootout gui/$(id -u)/dev.mealy.mealyd`.
+
 > **Current capability boundary:** Mealy can now use explicit same-trust fallback chains containing
 > independently implemented `OpenAI` Responses and Anthropic Messages endpoints for bounded,
 > durable conversation, or its deterministic local fixture provider for offline conformance
@@ -1310,14 +1316,14 @@ BROWSER_BUNDLE="$("$FETCH_BROWSER" "$HOME/.cache/mealy/browser-runtimes")"
 "$MEALYCTL" --home "$HOME/.mealy" config browser-inspect "$BROWSER_BUNDLE"
 ```
 
-The helper currently pins Chrome for Testing Headless Shell `150.0.7871.115`, archive size
-`120341646`, and SHA-256
-`13ce11d150ab12f1a451f8555cc373eefe16476691eb99c21b4a6ed363c00dd8`. It uses HTTPS, rejects an
+The helper currently pins Chrome for Testing Headless Shell `150.0.7871.124`, archive size
+`120351731`, and SHA-256
+`98de0bcdc661d14b2fc122ae99a27df35d47e464e8d38a4a5e01f81a4ce295c2`. It uses HTTPS, rejects an
 unexpected redirect protocol/count, connection or total-time overrun, transfer size, archive
 path/type/count, and never silently selects “latest.” `browser-inspect` then
 performs complete no-symlink bundle inspection and executes only `--version` in a no-network,
 no-home Bubblewrap namespace. Review the returned bundle/executable digests, product
-`HeadlessChrome/150.0.7871.115`, and CDP `1.3` identity.
+`HeadlessChrome/150.0.7871.124`, and CDP `1.3` identity.
 
 Drain the daemon, install the exact bytes, and approve model-visible authority:
 
@@ -1649,6 +1655,11 @@ private `/tmp`/`/var/tmp` namespace, so installation rejects a home or workspace
 temporary hierarchy; it also rejects a home backed by `tmpfs` or `ramfs`. Keep durable state on a
 local persistent filesystem. A custom `--destination` must still be named `mealy.service`; the
 printed activation command links that exact absolute unit before enabling it.
+
+On macOS, the LaunchAgent starts once when bootstrapped but does not automatically undo an
+intentional drain. Restart the loaded agent with `launchctl kickstart -k
+gui/$(id -u)/dev.mealy.mealyd`; unload it with `launchctl bootout
+gui/$(id -u)/dev.mealy.mealyd`.
 
 ## Stop safely
 

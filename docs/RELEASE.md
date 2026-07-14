@@ -39,11 +39,20 @@ The tag workflow independently fetches `origin/main`, checks ancestry in each na
 and again immediately before publication, and refuses unless the tagged SHA is an ancestor of that
 branch; a tag on an unmerged or subsequently removed commit cannot publish. On 2026-07-14, `main`
 was protected with administrator enforcement, pull-request-only changes, linear history, resolved
-conversations, and force-push/deletion denial. Add the exact required CI contexts after the first
-current-source PR run publishes their authoritative names. The `live-provider-smoke` Environment
-requires an explicit repository-owner review, but no provider credential is present. Create the tag
-only after required CI, the current durability report, and one reviewed real-account smoke are all
-complete.
+conversations, and force-push/deletion denial. On 2026-07-15, strict protection began requiring the
+seven authoritative checks `Strict workspace gate`, `Linux sandbox conformance`, `Linux
+rendered-browser conformance`, and `Control plane` on Ubuntu x86-64, Ubuntu ARM64, macOS ARM64, and
+macOS Intel. Repository-level immutable releases and private vulnerability reporting are enabled.
+The `live-provider-smoke` Environment requires an explicit repository-owner review, but no provider
+credential is present. Create the tag only after required CI, the current durability report, and one
+reviewed real-account smoke are all complete.
+
+After publication, the same tag workflow downloads the immutable public assets without build-job
+state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on
+native Linux x86-64/ARM64 and macOS ARM64/Intel runners. Linux repeats the tokenless bootstrap plus
+archive and Debian lifecycle smokes; macOS repeats the packaged conversation, replay,
+backup/restore, and LaunchAgent-drain smoke. A release workflow is green only after all four public
+delivery checks pass.
 
 ## Verify and install a published release
 
@@ -368,12 +377,15 @@ remove it before uninstalling.
    failure before tagging.
 4. Create and push the reviewed tag. The release workflow refuses a mismatched version or a tag
    that does not point at the checked-out commit.
-5. Wait for both native architecture jobs to pass the full all-feature/doc/RustSec suites, real
-   daemon/dashboard smoke, auditable locked build, exact-binary audit, SBOM/license validation,
-   archive and Debian reproducibility/lifecycle/Lintian tests, asset attestation, and the single dependent
-   `gh release create --verify-tag` step.
-6. Download the published assets, run `gh release verify` and `gh release verify-asset`, and perform
-   clean-home archive and Debian installs plus `doctor` on conforming x86_64 and ARM64 Linux hosts.
+5. Wait for the native Linux and macOS jobs to pass the full all-feature/doc/RustSec suites, real
+   daemon/dashboard or preview-control-plane smoke, auditable locked build, exact-binary audit,
+   SBOM/license validation, archive and Debian reproducibility/lifecycle/Lintian tests, asset
+   attestation, remote-tag revalidation, and the single dependent `gh release create --verify-tag`
+   step.
+6. Wait for the post-publication native jobs to run `gh release verify` and `gh release
+   verify-asset`, then repeat tokenless bootstrap, archive/Debian lifecycle, and packaged macOS
+   control-plane acceptance against only the downloaded public assets. Independently download and
+   inspect the retained verification evidence before declaring the release complete.
 7. Record clean-install, upgrade, backup/restore, rollback, uninstall, soak, and optional
    live-provider observations in the
    release notes.

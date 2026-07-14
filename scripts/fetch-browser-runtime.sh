@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly version=150.0.7871.115
+readonly version=150.0.7871.124
 readonly archive_name=chrome-headless-shell-linux64.zip
-readonly archive_sha256=13ce11d150ab12f1a451f8555cc373eefe16476691eb99c21b4a6ed363c00dd8
-readonly archive_bytes=120341646
+readonly archive_sha256=98de0bcdc661d14b2fc122ae99a27df35d47e464e8d38a4a5e01f81a4ce295c2
+readonly archive_bytes=120351731
 readonly url="https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/${archive_name}"
 
 if [[ $# -ne 1 || -z $1 ]]; then

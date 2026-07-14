@@ -314,6 +314,10 @@ jobs:
         run: scripts/build-release-binaries.sh --auditable
       - name: Audit the exact preview binaries
         run: cargo audit bin target/release/mealyd target/release/mealyctl
+      - name: Verify exact macOS conversation, replay, backup, and LaunchAgent drain
+        env:
+          MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
+        run: scripts/macos-control-plane-smoke.sh target/release/mealyd target/release/mealyctl
       - name: Prepare bounded SBOM input
         shell: bash
         run: |
@@ -336,6 +340,8 @@ jobs:
           scripts/generate-third-party-licenses.sh
           "$(command -v cargo-about)" third-party-licenses.html
       - name: Build and verify deterministic macOS preview archive
+        env:
+          MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -351,6 +357,8 @@ jobs:
           (cd "extracted/$package" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
           test "$("extracted/$package/bin/mealyd" --version)" = "mealyd $version"
           test "$("extracted/$package/bin/mealyctl" --version)" = "mealyctl $version"
+          scripts/macos-control-plane-smoke.sh \
+            "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"
       - name: Attest macOS preview release assets
         id: attest-preview
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
@@ -417,9 +425,261 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 30
-      - name: Publish immutable-input GitHub release
+      - name: Revalidate the remote tag and publish the immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
-          --verify-tag --generate-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create --help | grep -Fq 'separate API calls'
+          gh release verify --help >/dev/null
+          ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
+          object_type=$(jq -er '.object.type' <<<"$ref")
+          object_sha=$(jq -er '.object.sha' <<<"$ref")
+          for _ in {1..8}; do
+            if [[ $object_type == commit ]]; then
+              break
+            fi
+            if [[ $object_type != tag ]]; then
+              echo "release tag does not resolve to a commit" >&2
+              exit 65
+            fi
+            tag=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")
+            object_type=$(jq -er '.object.type' <<<"$tag")
+            object_sha=$(jq -er '.object.sha' <<<"$tag")
+          done
+          if [[ $object_type != commit || $object_sha != "$GITHUB_SHA" ]]; then
+            echo "remote release tag no longer resolves to the built commit" >&2
+            exit 65
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --generate-notes
+
+  public-linux-acceptance:
+    name: Verify public Linux install on ${{ matrix.target }}
+    needs: publish
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      attestations: read # Verify the immutable public release and its downloaded assets.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x86_64-gnu
+            debian_architecture: amd64
+          - runner: ubuntu-24.04-arm
+            target: linux-aarch64-gnu
+            debian_architecture: arm64
+    env:
+      MEALY_TARGET: ${{ matrix.target }}
+      MEALY_DEBIAN_ARCHITECTURE: ${{ matrix.debian_architecture }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Prepare clean-host Linux prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            apparmor-profiles apparmor-utils bubblewrap curl jq
+          scripts/prepare-bwrap-boundary.sh
+          gh attestation verify --help | grep -Fq -- '--bundle'
+          gh release verify --help >/dev/null
+      - name: Verify immutable public release and exact native assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          archive="mealy-v${version}-${MEALY_TARGET}.tar.gz"
+          checksums="SHA256SUMS-${MEALY_TARGET}"
+          deb="mealy_${version}_${MEALY_DEBIAN_ARCHITECTURE}.deb"
+          sbom="mealy-v${version}-${MEALY_TARGET}.cdx.json"
+          architecture_bundle="ATTESTATION-${MEALY_TARGET}.sigstore.json"
+          installer_bundle=ATTESTATION-installers.sigstore.json
+          mkdir downloaded
+          verified=false
+          for _ in {1..60}; do
+            if gh release verify "$GITHUB_REF_NAME" --format json \
+              >downloaded/release-verification.json 2>downloaded/release-verification.err; then
+              verified=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ $verified != true ]]; then
+            cat downloaded/release-verification.err >&2
+            exit 70
+          fi
+          rm downloaded/release-verification.err
+          gh release download "$GITHUB_REF_NAME" --dir downloaded \
+            --pattern "$archive" \
+            --pattern "$checksums" \
+            --pattern "$deb" \
+            --pattern "$sbom" \
+            --pattern "$architecture_bundle" \
+            --pattern install-mealy.sh \
+            --pattern install-mealy-release.sh \
+            --pattern "$installer_bundle"
+          expected=$(printf '%s\n' "$archive" "$checksums" "$deb" "$sbom" \
+            "$architecture_bundle" install-mealy.sh install-mealy-release.sh \
+            "$installer_bundle" release-verification.json | sort)
+          actual=$(find downloaded -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [[ $actual != "$expected" \
+            || -n $(find downloaded -mindepth 1 -maxdepth 1 ! -type f -print -quit) ]]; then
+            echo "public Linux release download inventory is not exact" >&2
+            exit 65
+          fi
+          while IFS= read -r asset; do
+            gh release verify-asset "$GITHUB_REF_NAME" "downloaded/$asset" >/dev/null
+          done < <(printf '%s\n' "$archive" "$checksums" "$deb" "$sbom" \
+            "$architecture_bundle" install-mealy.sh install-mealy-release.sh \
+            "$installer_bundle")
+          (cd downloaded && sha256sum --check --strict "$checksums")
+      - name: Exercise the public tokenless rootless bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          temporary=$(mktemp -d "$HOME/mealy-public-bootstrap.XXXXXX")
+          trap 'rm -rf -- "$temporary"' EXIT
+          mkdir "$temporary/gh-config"
+          gh attestation verify downloaded/install-mealy-release.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --bundle downloaded/ATTESTATION-installers.sigstore.json \
+            --deny-self-hosted-runners >/dev/null
+          chmod 0755 downloaded/install-mealy-release.sh
+          GH_CONFIG_DIR="$temporary/gh-config" \
+            env -u GH_TOKEN -u GITHUB_TOKEN downloaded/install-mealy-release.sh \
+            --version "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" \
+            --prefix "$temporary/prefix" --home "$temporary/home"
+          test "$("$temporary/prefix/bin/mealyd" --version)" = "mealyd $version"
+          test "$("$temporary/prefix/bin/mealyctl" --version)" = "mealyctl $version"
+          mkdir -m 0700 "$temporary/home"
+          "$temporary/prefix/bin/mealyctl" --home "$temporary/home" service install \
+            --destination "$temporary/mealy.service" >"$temporary/service.json"
+          jq -e --arg daemon "$temporary/prefix/bin/mealyd" '
+            .platform == "linux-systemd-user"
+            and .daemonPath == $daemon
+            and (.activationCommand | contains("systemctl --user"))
+          ' "$temporary/service.json" >/dev/null
+          "$temporary/prefix/share/mealy-manager.sh" uninstall \
+            --prefix "$temporary/prefix" --home "$temporary/home" >/dev/null
+          test ! -e "$temporary/prefix/bin/mealyd"
+      - name: Re-run exact downloaded archive and Debian lifecycle smokes
+        env:
+          MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          chmod 0755 downloaded/install-mealy.sh
+          scripts/installed-package-smoke.sh \
+            "downloaded/mealy-v${version}-${MEALY_TARGET}.tar.gz" \
+            "downloaded/SHA256SUMS-${MEALY_TARGET}" \
+            downloaded/install-mealy.sh
+          scripts/installed-deb-smoke.sh \
+            "downloaded/mealy_${version}_${MEALY_DEBIAN_ARCHITECTURE}.deb"
+
+  public-macos-acceptance:
+    name: Verify public macOS preview on ${{ matrix.target }}
+    needs: publish
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: read # Verify the immutable public release and its downloaded assets.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: macos-arm64-preview
+          - runner: macos-15-intel
+            target: macos-x86_64-preview
+    env:
+      MEALY_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Verify immutable public release and exact native preview assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify --help | grep -Fq -- '--bundle'
+          gh release verify --help >/dev/null
+          version=${GITHUB_REF_NAME#v}
+          archive="mealy-v${version}-${MEALY_TARGET}.tar.gz"
+          checksums="SHA256SUMS-${MEALY_TARGET}"
+          sbom="mealy-v${version}-${MEALY_TARGET}.cdx.json"
+          architecture_bundle="ATTESTATION-${MEALY_TARGET}.sigstore.json"
+          mkdir downloaded
+          verified=false
+          for _ in {1..60}; do
+            if gh release verify "$GITHUB_REF_NAME" --format json \
+              >downloaded/release-verification.json 2>downloaded/release-verification.err; then
+              verified=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ $verified != true ]]; then
+            cat downloaded/release-verification.err >&2
+            exit 70
+          fi
+          rm downloaded/release-verification.err
+          gh release download "$GITHUB_REF_NAME" --dir downloaded \
+            --pattern "$archive" \
+            --pattern "$checksums" \
+            --pattern "$sbom" \
+            --pattern "$architecture_bundle"
+          expected=$(printf '%s\n' "$archive" "$checksums" "$sbom" \
+            "$architecture_bundle" release-verification.json | sort)
+          actual=$(find downloaded -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort)
+          if [[ $actual != "$expected" \
+            || -n $(find downloaded -mindepth 1 -maxdepth 1 ! -type f -print -quit) ]]; then
+            echo "public macOS release download inventory is not exact" >&2
+            exit 65
+          fi
+          while IFS= read -r asset; do
+            gh release verify-asset "$GITHUB_REF_NAME" "downloaded/$asset" >/dev/null
+          done < <(printf '%s\n' "$archive" "$checksums" "$sbom" "$architecture_bundle")
+          gh attestation verify "downloaded/$checksums" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --bundle "downloaded/$architecture_bundle" \
+            --deny-self-hosted-runners >/dev/null
+          (cd downloaded && shasum -a 256 -c "$checksums")
+      - name: Exercise the downloaded macOS preview control plane
+        env:
+          MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          package="mealy-v${version}-${MEALY_TARGET}"
+          mkdir extracted
+          tar -xzf "downloaded/${package}.tar.gz" -C extracted
+          (cd "extracted/$package" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
+          jq -e --arg version "$version" --arg target "$MEALY_TARGET" \
+            --arg commit "$GITHUB_SHA" '
+            .schemaVersion == "mealy.macos-preview.v1"
+            and .version == $version
+            and .target == $target
+            and .commit == $commit
+            and .capabilityBoundary == "conversation-only-control-plane-preview"
+          ' "extracted/$package/BUILD-MANIFEST.json" >/dev/null
+          scripts/macos-control-plane-smoke.sh \
+            "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"

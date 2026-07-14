@@ -11186,13 +11186,15 @@ fn service_definition(
         let user_home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
             CliError::InvalidService("HOME is required for LaunchAgent installation".to_owned())
         })?;
+        // Run once when bootstrapped, but remain stopped after an intentional clean drain.
+        // Unconditional KeepAlive would immediately relaunch the successfully drained daemon.
         let body = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
              \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
              <plist version=\"1.0\"><dict>\n<key>Label</key><string>dev.mealy.mealyd</string>\n\
              <key>ProgramArguments</key><array><string>{}</string><string>--home</string>\
-             <string>{}</string></array>\n<key>KeepAlive</key><true/>\n\
+             <string>{}</string></array>\n<key>RunAtLoad</key><true/>\n\
              <key>ProcessType</key><string>Background</string>\n</dict></plist>\n",
             xml_escape(&daemon_text),
             xml_escape(&home_text),
@@ -11975,6 +11977,8 @@ enum CliError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::macos_activation_command;
     use super::{
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
@@ -12003,7 +12007,7 @@ mod tests {
     use serde_json::json;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::path::Path;
     use std::{collections::BTreeMap, io::Cursor};
 
@@ -12553,6 +12557,35 @@ mod tests {
         assert!(
             quoted_activation
                 .starts_with("systemctl --user link '/srv/owner'\\''s services/mealy.service' && ")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn launch_agent_starts_once_and_preserves_explicit_drain() {
+        let home = tempfile::tempdir().expect("daemon home");
+        let canonical_home = home.path().canonicalize().expect("canonical home");
+        let (platform, destination, body, _) = service_definition(
+            Path::new("/usr/bin/true"),
+            &canonical_home,
+            std::slice::from_ref(&canonical_home),
+        )
+        .expect("LaunchAgent definition");
+
+        assert_eq!(platform, "macos-launch-agent");
+        assert!(destination.ends_with("Library/LaunchAgents/dev.mealy.mealyd.plist"));
+        assert!(body.contains("<key>RunAtLoad</key><true/>"));
+        assert!(!body.contains("<key>KeepAlive</key>"));
+        assert!(body.contains("<key>ProcessType</key><string>Background</string>"));
+        assert!(body.contains("<string>/usr/bin/true</string>"));
+        assert!(body.contains(&format!("<string>{}</string>", canonical_home.display())));
+
+        let activation =
+            macos_activation_command(Path::new("/Users/owner's services/dev.mealy.mealyd.plist"))
+                .expect("quoted LaunchAgent activation");
+        assert_eq!(
+            activation,
+            "launchctl bootstrap gui/$(id -u) '/Users/owner'\\''s services/dev.mealy.mealyd.plist'"
         );
     }
 
