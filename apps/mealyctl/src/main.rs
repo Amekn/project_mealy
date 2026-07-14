@@ -11070,6 +11070,8 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
         .canonicalize()
         .map_err(CliError::Io)?;
     validate_daemon_executable(&daemon)?;
+    #[cfg(target_os = "linux")]
+    validate_linux_service_sandbox()?;
     let (home, _instance_lock) = lock_stopped_home(home)?;
     let home = fs::canonicalize(home)?;
     let read_write_paths = service_read_write_paths(&home)?;
@@ -11098,6 +11100,22 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
         rollback_copy: rollback.map(|path| path.display().to_string()),
         activation_command,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_service_sandbox() -> Result<(), CliError> {
+    let configured = Path::new("/usr/bin/bwrap");
+    let canonical = configured.canonicalize().map_err(|_| {
+        CliError::InvalidService(
+            "the Linux user service requires trusted /usr/bin/bwrap".to_owned(),
+        )
+    })?;
+    if canonical != configured || !is_trusted_system_executable(&canonical) {
+        return Err(CliError::InvalidService(
+            "the Linux user service requires trusted /usr/bin/bwrap".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn default_daemon_path() -> Result<PathBuf, CliError> {
@@ -11144,30 +11162,29 @@ fn service_definition(
                 "service write paths must include the exact Mealy home".to_owned(),
             ));
         }
-        let mut read_write_lines = String::new();
+        let mut writable_binds = String::new();
         for path in read_write_paths {
             let path = path.display().to_string();
             validate_service_text(&path)?;
-            writeln!(
-                &mut read_write_lines,
-                "ReadWritePaths={}",
-                systemd_quote(&path)
+            write!(
+                &mut writable_binds,
+                " --bind {} {}",
+                systemd_quote(&path),
+                systemd_quote(&path),
             )
             .map_err(|_| CliError::InvalidService("service path encoding failed".to_owned()))?;
         }
         let destination = linux_default_service_destination()?;
         let body = format!(
             "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
-             [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
-             UMask=0077\nNoNewPrivileges=true\nPrivateDevices=true\nPrivateTmp=true\n\
-             ProtectClock=true\nProtectControlGroups=true\nProtectHome=read-only\nProtectKernelModules=true\n\
-             ProtectProc=invisible\nProcSubset=pid\nProtectSystem=strict\n\
+             [Service]\nType=simple\nExecStart=/usr/bin/bwrap --unshare-user --unshare-pid --unshare-uts --unshare-ipc --die-with-parent --new-session --cap-drop ALL --hostname mealy-daemon --ro-bind / / --proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp{} -- {} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
+             UMask=0077\nNoNewPrivileges=true\n\
              RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
              SystemCallArchitectures=native\n\
-             {}MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
+             MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
+            writable_binds,
             systemd_quote(&daemon_text),
             systemd_quote(&home_text),
-            read_write_lines,
         );
         Ok((
             "linux-systemd-user".to_owned(),
@@ -12506,12 +12523,23 @@ mod tests {
             &read_write_paths,
         )
         .expect("service definition");
-        assert!(body.contains(&format!("ReadWritePaths=\"{}\"", canonical_home.display())));
+        assert!(body.contains(&format!(
+            "--bind \"{}\" \"{}\"",
+            canonical_home.display(),
+            canonical_home.display()
+        )));
         assert!(body.contains("RestartPreventExitStatus=2"));
         assert!(body.contains("UMask=0077"));
-        assert!(body.contains("PrivateDevices=true"));
-        assert!(body.contains("ProtectProc=invisible"));
-        assert!(body.contains("ProcSubset=pid"));
+        assert!(body.contains("ExecStart=/usr/bin/bwrap --unshare-user --unshare-pid"));
+        assert!(body.contains("--cap-drop ALL --hostname mealy-daemon --ro-bind / /"));
+        assert!(body.contains("--proc /proc --dev /dev --tmpfs /tmp --tmpfs /var/tmp"));
+        assert!(!body.contains("PrivateDevices="));
+        assert!(!body.contains("PrivateTmp="));
+        assert!(!body.contains("ProtectProc="));
+        assert!(!body.contains("ProcSubset="));
+        assert!(!body.contains("ProtectSystem="));
+        assert!(!body.contains("ProtectHome="));
+        assert!(!body.contains("ReadWritePaths="));
         assert!(!body.contains("ProtectHostname="));
         assert!(!body.contains("ProtectKernelLogs="));
         assert!(!body.contains("ProtectKernelTunables="));
@@ -12519,11 +12547,13 @@ mod tests {
         assert!(body.contains("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"));
         assert!(body.contains("SystemCallArchitectures=native"));
         assert!(body.contains(&format!(
-            "ReadWritePaths=\"{}\"",
+            "--bind \"{}\" \"{}\"",
+            writable.path().canonicalize().expect("writable path").display(),
             writable.path().canonicalize().expect("writable path").display()
         )));
         assert!(!body.contains(&format!(
-            "ReadWritePaths=\"{}\"",
+            "--bind \"{}\" \"{}\"",
+            read_only.path().canonicalize().expect("read-only path").display(),
             read_only.path().canonicalize().expect("read-only path").display()
         )));
 
@@ -12593,7 +12623,11 @@ mod tests {
     #[test]
     fn local_descriptor_and_mcp_executable_reads_are_preflight_bounded() {
         let home = tempfile::tempdir().expect("descriptor home");
-        let descriptor = home.path().join("connection.json");
+        let canonical_home = home
+            .path()
+            .canonicalize()
+            .expect("canonical descriptor home");
+        let descriptor = canonical_home.join("connection.json");
         std::fs::write(
             &descriptor,
             serde_json::to_vec(&connection("http://127.0.0.1:4317")).expect("descriptor JSON"),
@@ -12602,16 +12636,16 @@ mod tests {
         #[cfg(unix)]
         std::fs::set_permissions(&descriptor, std::fs::Permissions::from_mode(0o600))
             .expect("descriptor permissions");
-        load_connection(home.path()).expect("bounded descriptor");
+        load_connection(&canonical_home).expect("bounded descriptor");
         std::fs::OpenOptions::new()
             .write(true)
             .open(&descriptor)
             .expect("open descriptor")
             .set_len(super::MAXIMUM_CONNECTION_DESCRIPTOR_BYTES + 1)
             .expect("oversized sparse descriptor");
-        assert!(load_connection(home.path()).is_err());
+        assert!(load_connection(&canonical_home).is_err());
 
-        let executable = home.path().join("oversized-server");
+        let executable = canonical_home.join("oversized-server");
         let file = std::fs::File::create(&executable).expect("create sparse executable");
         file.set_len(super::MAXIMUM_MCP_EXECUTABLE_BYTES + 1)
             .expect("oversized sparse executable");

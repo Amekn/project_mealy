@@ -1109,8 +1109,8 @@ stopped, enable it for one already-granted workspace and restart:
 ```
 
 The service reinstall is required when using the generated Linux user unit. It regenerates the
-outer `ReadWritePaths` allowlist from the exact current writable-workspace roots while the daemon
-is stopped; a direct foreground launch does not consume the unit.
+outer Bubblewrap writable-bind allowlist from the exact current writable-workspace roots while the
+daemon is stopped; a direct foreground launch does not consume the unit.
 
 In `mealyctl chat`, explicitly select action mode for one task:
 

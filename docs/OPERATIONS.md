@@ -141,10 +141,11 @@ unit. The daemon itself remains portable; arbitrary worker execution is separate
 the sandbox profile reported by `doctor`.
 
 On Linux, service installation requires the canonical Mealy home and every configured workspace to
-remain outside host `/tmp` and `/var/tmp`, because `PrivateTmp=true` deliberately replaces those
-views. The home must also be on a non-`tmpfs`, non-`ramfs` filesystem. This prevents a direct-launch
-test from silently naming different or volatile state when the unit starts. A custom unit output
-must be named `mealy.service`; its printed command links the exact absolute path before enablement.
+remain outside host `/tmp` and `/var/tmp`, because the outer Bubblewrap command deliberately
+replaces those views. The home must also be on a non-`tmpfs`, non-`ramfs` filesystem. This prevents
+a direct-launch test from silently naming different or volatile state when the unit starts. A
+custom unit output must be named `mealy.service`; its printed command links the exact absolute path
+before enablement.
 
 The Linux unit also bounds the daemon's complete child cgroup with `MemoryHigh=1G`,
 `MemoryMax=1536M`, `MemorySwapMax=0`, `TasksMax=384`, and `LimitNOFILE=1024`, with a three-start
@@ -155,12 +156,12 @@ keeps daemon-created state private, and exit status 2 from a recorded forced bou
 explicitly restart-inhibited so the service manager cannot undo an operator's drain request. The
 unit also isolates devices; protects clock, kernel-module, process, and control-group interfaces;
 limits socket creation to Unix, IPv4, IPv6, and netlink; denies realtime scheduling; and permits
-only the native syscall ABI. It deliberately retains the hostname, kernel-log, kernel-tunable, and
-SUID/SGID syscall operations that nested Bubblewrap and the worker's secure
-`openat2(O_CREAT)` path require. `NoNewPrivileges`, an owner-private umask, Bubblewrap capability
-dropping, read-only system/home views, and per-request mounts remain the applicable privilege and
-filesystem controls. Writable-executable memory and the Internet socket families remain available
-for V8, providers, and channels.
+only the native syscall ABI. The outer trusted Bubblewrap command—not the systemd user manager—
+provides the device, capability, process, temporary-filesystem, and read-only-host boundaries so it
+also works under Ubuntu's AppArmor restriction on unprivileged user namespaces. It deliberately
+leaves nested Bubblewrap available for governed tools and the worker's secure `openat2(O_CREAT)`
+path. Writable-executable memory and the Internet socket families remain available for V8,
+providers, and channels.
 
 ## Health, diagnostics, and traces
 
@@ -461,9 +462,10 @@ mealyctl --home "$HOME/.mealy" config workspace-write-disable project --approve
 Each workspace response sets `serviceReinstallRequired`. If the generated Linux user service is
 used, run `mealyctl --home "$HOME/.mealy" service install` while stopped after any workspace
 change. The generated unit holds the same stopped-home lock and lists the exact private home plus
-only current writable roots as separate `ReadWritePaths`; `ProtectHome=read-only` and
-`ProtectSystem=strict` continue to deny writes elsewhere. Service regeneration also revalidates
-that every workspace is outside the unit's private temporary hierarchies.
+only current writable roots as explicit outer Bubblewrap binds. The host root is mounted read-only,
+with private `/proc`, `/dev`, `/tmp`, and `/var/tmp`; nested per-tool Bubblewrap remains available.
+Service regeneration also revalidates that every workspace is outside those private temporary
+hierarchies.
 
 After restart, `workspace.create_file`, `workspace.manage_path`, and `workspace.replace_file`
 appear in `enabledActionTools`, but only explicit `/act TEXT`, `/manage TEXT`, and `/edit TEXT`

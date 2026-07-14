@@ -376,16 +376,18 @@ rejects a root equal to, beneath, or containing the daemon home without changing
 and startup rejects the same shapes plus redirected or unavailable roots from a manually changed
 document. Extension enable and invocation apply the same rule to every host mount. The service
 unit test and public configuration process test prove that only current writable workspaces join
-the home in `ReadWritePaths`; read-only workspaces remain read-only under the outer systemd
-boundary and every workspace response requires service regeneration. The same tests reject
-`PrivateTmp`-hidden paths and volatile state filesystems, assert a private umask and forced-drain
-restart inhibition, and require a custom unit's activation command to link its exact safe path.
+the home as outer Bubblewrap writable binds; read-only workspaces remain read-only under that
+daemon boundary and every workspace response requires service regeneration. The same tests reject
+paths hidden by the outer private temporary filesystems and volatile state filesystems, assert a
+private umask and forced-drain restart inhibition, and require a custom unit's activation command
+to link its exact safe path.
 `scripts/systemd-service-smoke.sh` then starts the generated unit in the explicitly opted-in
 GitHub-hosted runner or disposable container's user manager,
 requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
-It rejects outer restrictions known to break nested Bubblewrap or the worker's secure
-`openat2(O_CREAT)` call. CI runs this process proof after the direct sandbox suite; both native tag
+It requires the daemon's explicit outer Bubblewrap boundary and rejects systemd-user namespace
+directives that hardened Ubuntu cannot apply before `/usr/bin/bwrap` starts. CI runs this process
+proof after the direct sandbox suite; both native tag
 runners repeat it against the exact auditable release binaries and again from the root-owned paths
 of the just-built Debian package.
 Every user-manager command is time bounded. The failure trap removes only the exact link it created

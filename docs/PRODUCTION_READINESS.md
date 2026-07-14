@@ -170,15 +170,15 @@ A private-state overlap audit additionally closed a direct-launch/service mismat
 exposure path. Workspace roots, extension host mounts, and local attachments now fail closed when
 they equal, descend from, or contain the canonical daemon home; CLI, startup, public API, and
 process tests cover the independent boundaries. The generated Linux unit holds the stopped-home
-lock and derives exact `ReadWritePaths` entries from the current validated writable-workspace set,
+lock and derives exact outer-Bubblewrap writable binds from the current validated writable-workspace set,
 so recommended service launches retain the same useful mutation authority without making the rest
 of the owner account writable. It rejects private-temporary workspace/home paths and volatile
 state filesystems, uses a private umask, links an exact custom unit path, and prevents the
 intentional forced-drain exit from being restarted.
-An isolated Ubuntu 24.04 systemd-user integration exposed and closed three probe/startup
-incompatibilities plus a fourth mutation-only incompatibility: the final unit replaces the nested
-proc-conflicting protections with `ProtectProc=invisible`/`ProcSubset=pid` and omits
-`RestrictSUIDSGID`, which blocks the worker's secure `openat2(O_CREAT)` call. The new
+Ubuntu 24.04 systemd-user integrations exposed controls that depend on a user namespace before the
+daemon command starts. The final unit delegates that filesystem/process/device isolation to an
+explicit trusted `/usr/bin/bwrap` command, which Ubuntu's reviewed AppArmor profile permits, and
+retains only rootless-compatible systemd controls. The new
 `scripts/systemd-service-smoke.sh` regression runs in CI and both native tag jobs, requires green
 observe/workspace-write profiles, approves an exact write, asserts the effect and file bytes, and
 then proves bounded drain. Each tag runner repeats it after installing the just-built Debian
