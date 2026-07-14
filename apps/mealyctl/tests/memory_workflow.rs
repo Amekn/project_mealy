@@ -17,7 +17,7 @@ use std::{
 
 #[test]
 fn remember_proposes_exact_provenance_then_owner_authorizes_activation() {
-    let home = tempfile::tempdir().expect("temporary Mealy home");
+    let home = private_temporary_home();
     let content = "The owner prefers concise operational summaries";
     let content_digest = sha256_digest(content.as_bytes());
     let proposed = memory_response("proposed", 0, content, &content_digest);
@@ -95,7 +95,7 @@ fn remember_proposes_exact_provenance_then_owner_authorizes_activation() {
 
 #[test]
 fn activation_failure_reports_the_durable_proposal_for_recovery() {
-    let home = tempfile::tempdir().expect("temporary Mealy home");
+    let home = private_temporary_home();
     let content = "A recoverable proposed memory";
     let digest = sha256_digest(content.as_bytes());
     let proposed = memory_response("proposed", 0, content, &digest);
@@ -136,6 +136,17 @@ struct CapturedRequest {
     method_and_target: String,
     headers: String,
     body: Value,
+}
+
+fn private_temporary_home() -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("temporary Mealy home");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+            .expect("private temporary Mealy home");
+    }
+    home
 }
 
 fn serve_memory_responses(
