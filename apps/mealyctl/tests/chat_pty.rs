@@ -249,28 +249,24 @@ fn spawn_chat(home: &std::path::Path) -> (File, Child, mpsc::Receiver<Vec<u8>>) 
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut chunk = [0_u8; 1_024];
-        let startup_deadline = Instant::now() + Duration::from_secs(2);
+        let startup_deadline = Instant::now() + Duration::from_secs(5);
         let mut observed_output = false;
         loop {
             match reader.read(&mut chunk) {
-                Ok(0) => break,
+                // A Linux PTY master can transiently report either EOF or an error before the
+                // inherited slave becomes visible across spawn/exec. Keep the reader channel
+                // alive for the same bounded interval in which the test expects its first
+                // prompt. Once any real byte arrives, EOF and every error are terminal.
+                Ok(0) | Err(_) if !observed_output && Instant::now() < startup_deadline => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(0) | Err(_) => break,
                 Ok(length) => {
                     observed_output = true;
                     if sender.send(chunk[..length].to_vec()).is_err() {
                         break;
                     }
                 }
-                // Linux PTY masters may transiently return EIO between `openpt` and the
-                // spawned process opening its inherited slave. Treat that pre-output state as
-                // a bounded startup race; after output, EIO means the slave really closed.
-                Err(error)
-                    if !observed_output
-                        && error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
-                        && Instant::now() < startup_deadline =>
-                {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break,
             }
         }
     });
