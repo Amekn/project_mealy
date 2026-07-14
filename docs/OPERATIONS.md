@@ -140,6 +140,11 @@ rollback copy. Unsupported service-manager platforms fail explicitly instead of 
 unit. The daemon itself remains portable; arbitrary worker execution is separately fail-closed by
 the sandbox profile reported by `doctor`.
 
+The macOS definition uses `RunAtLoad` without unconditional `KeepAlive`: bootstrapping starts it
+once, while a successful operator-requested drain stays stopped. Restart a loaded definition with
+`launchctl kickstart -k gui/$(id -u)/dev.mealy.mealyd`, or unload it with `launchctl bootout
+gui/$(id -u)/dev.mealy.mealyd`.
+
 On Linux, service installation requires the canonical Mealy home to remain outside host `/tmp` and
 `/var/tmp` and on a non-`tmpfs`, non-`ramfs` filesystem. This prevents volatile state from being
 mistaken for a durable service home. Configured workspaces are canonicalized and checked for

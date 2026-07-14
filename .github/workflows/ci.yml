@@ -97,6 +97,7 @@ jobs:
             scripts/generate-third-party-licenses.sh
             scripts/installed-package-smoke.sh
             scripts/installed-deb-smoke.sh
+            scripts/macos-control-plane-smoke.sh
             scripts/run-soak.sh
             scripts/systemd-service-smoke.sh
           )
@@ -134,6 +135,11 @@ jobs:
           test "$(target/release/mealyd --version)" = "mealyd 0.1.0"
           test "$(target/release/mealyctl --version)" = "mealyctl 0.1.0"
           test "$(target/release/mealyd --print-supported-schema-version)" = "15"
+      - name: Verify macOS conversation, replay, backup, and LaunchAgent drain
+        if: ${{ runner.os == 'macOS' }}
+        env:
+          MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
+        run: scripts/macos-control-plane-smoke.sh target/release/mealyd target/release/mealyctl
 
   linux-sandbox-conformance:
     name: Linux sandbox conformance
