@@ -1,6 +1,7 @@
 use crate::{
     ContextEpoch, ContextManifest, ContextMemoryEvidence, ModelUsage, NormalizedMessage,
-    OwnershipContext, ProviderCapabilities, ProviderOutput, ProviderRequest, ReadToolDescriptor,
+    OwnershipContext, ProviderCapabilities, ProviderErrorClass, ProviderOutput, ProviderRequest,
+    ReadToolDescriptor,
 };
 use mealy_domain::{
     ArtifactId, AttemptId, ChannelBindingId, CompactionId, CorrelationId, EventId, LeaseFence,
@@ -9,6 +10,13 @@ use mealy_domain::{
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
+
+/// Maximum non-authoritative streamed text bytes retained for one provider attempt.
+pub const MAXIMUM_MODEL_PROGRESS_BYTES: u64 = 64 * 1024;
+/// Maximum durable progress events retained for one provider attempt.
+pub const MAXIMUM_MODEL_PROGRESS_EVENTS: u64 = 256;
+/// Maximum UTF-8 bytes in one durable progress delta event.
+pub const MAXIMUM_MODEL_PROGRESS_DELTA_BYTES: usize = 4 * 1024;
 
 /// Durable next step in the bounded Phase 2 agent loop.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -191,10 +199,14 @@ pub struct AgentContextSource {
 pub struct AgentRunSnapshot {
     /// Claimed run.
     pub run_id: RunId,
+    /// Immutable execution role (`assistant`, `delegate`, or `validator`).
+    pub agent_role: String,
     /// User-visible task.
     pub task_id: TaskId,
     /// Session mutation turn.
     pub turn_id: TurnId,
+    /// Canonical, delegated, or validation turn classification.
+    pub turn_kind: String,
     /// Owning session.
     pub session_id: SessionId,
     /// Owning authenticated principal.
@@ -211,6 +223,8 @@ pub struct AgentRunSnapshot {
     pub next_action: AgentNextAction,
     /// Effective limits.
     pub limits: AgentLoopLimits,
+    /// Immutable maximum authority copied onto this root or delegated run.
+    pub capability_ceiling: mealy_domain::CapabilityGrant,
     /// Structured usage.
     pub usage: AgentBudgetUsage,
     /// Existing active epoch, if already initialized.
@@ -223,6 +237,8 @@ pub struct AgentRunSnapshot {
     pub current_model_output: Option<ProviderOutput>,
     /// Current prepared/completed tool call.
     pub current_tool_call_id: Option<ToolCallId>,
+    /// Stable identity of the current prepared read tool.
+    pub current_read_tool_id: Option<String>,
     /// Committed normalized arguments for the current tool call.
     pub current_tool_arguments: Option<serde_json::Value>,
     /// Whether cancellation has been durably requested.
@@ -304,6 +320,25 @@ pub struct DispatchModelAttemptCommit {
     pub dispatched_at: SystemTime,
 }
 
+/// Appends one bounded non-authoritative provider text delta while an attempt is dispatching.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordModelProgressCommit {
+    /// Exact current lease ownership.
+    pub fence: LeaseFence,
+    /// Dispatching attempt.
+    pub attempt_id: AttemptId,
+    /// Zero-based attempt-local progress sequence.
+    pub progress_sequence: u64,
+    /// Exact coalesced UTF-8 delta.
+    pub delta: String,
+    /// Cumulative UTF-8 bytes after this delta.
+    pub cumulative_bytes: u64,
+    /// Durable non-authoritative progress event.
+    pub event_id: EventId,
+    /// Observation time.
+    pub recorded_at: SystemTime,
+}
+
 /// Records the normalized provider terminal result before any dependent tool runs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecordModelResultCommit {
@@ -327,6 +362,40 @@ pub struct RecordModelResultCommit {
     pub checkpoint_event_id: EventId,
     /// Completion time.
     pub completed_at: SystemTime,
+}
+
+/// Records one classified provider failure and optionally schedules a fenced retry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordModelFailureCommit {
+    /// Exact current lease ownership.
+    pub fence: LeaseFence,
+    /// Dispatching attempt that failed.
+    pub attempt_id: AttemptId,
+    /// Stable normalized failure class.
+    pub error_class: ProviderErrorClass,
+    /// Redacted bounded diagnostic message.
+    pub error_message: String,
+    /// Whether another attempt under identical trust/tool policy may succeed.
+    pub retryable: bool,
+    /// Persisted delay before a retry becomes scheduler-eligible.
+    pub retry_delay: Duration,
+    /// Durable attempt-failure event.
+    pub attempt_event_id: EventId,
+    /// Durable loop-checkpoint event when a retry is scheduled.
+    pub checkpoint_event_id: EventId,
+    /// Durable lease-release/run-requeue event when a retry is scheduled.
+    pub lease_event_id: EventId,
+    /// Completion time.
+    pub completed_at: SystemTime,
+}
+
+/// Durable result of classifying one failed provider dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModelFailureReceipt {
+    /// Whether the run was atomically requeued for another provider attempt.
+    pub retry_scheduled: bool,
+    /// Earliest scheduler eligibility when a retry was scheduled.
+    pub retry_at: Option<SystemTime>,
 }
 
 /// Prepares one schema-validated invocation derived from a committed model result.
@@ -601,6 +670,17 @@ pub trait AgentExecutionStore {
         commit: DispatchModelAttemptCommit,
     ) -> Result<(), AgentStoreError>;
 
+    /// Appends one bounded non-authoritative text delta without settling the provider attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentStoreError`] for stale ownership, cancellation, invalid sequence/bounds, or
+    /// persistence failure.
+    fn record_model_progress(
+        &mut self,
+        commit: RecordModelProgressCommit,
+    ) -> Result<(), AgentStoreError>;
+
     /// Records normalized provider output and usage before dependent execution.
     ///
     /// # Errors
@@ -610,6 +690,18 @@ pub trait AgentExecutionStore {
         &mut self,
         commit: RecordModelResultCommit,
     ) -> Result<(), AgentStoreError>;
+
+    /// Records a provider failure, settles its reservation, and atomically requeues a bounded
+    /// retry after a persisted delay when policy and budget allow.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentStoreError`] for stale ownership, invalid error evidence, budget conflict,
+    /// or persistence failure.
+    fn record_model_failure(
+        &mut self,
+        commit: RecordModelFailureCommit,
+    ) -> Result<ModelFailureReceipt, AgentStoreError>;
 
     /// Commits a validated read-tool call before dispatch.
     ///
@@ -698,6 +790,9 @@ pub enum AgentUseCaseError {
     /// A timestamp or duration cannot be represented.
     #[error("agent deadline cannot be represented")]
     DeadlineOverflow,
+    /// Provider retry delay bounds or ordinal are invalid.
+    #[error("provider retry delay is invalid")]
+    InvalidRetryDelay,
     /// Persistence failed.
     #[error(transparent)]
     Store(#[from] AgentStoreError),
@@ -711,6 +806,46 @@ pub enum AgentUseCaseError {
 pub fn bounded_deadline(now: SystemTime, timeout_ms: u64) -> Result<SystemTime, AgentUseCaseError> {
     now.checked_add(Duration::from_millis(timeout_ms))
         .ok_or(AgentUseCaseError::DeadlineOverflow)
+}
+
+/// Computes bounded exponential provider retry delay with stable per-attempt jitter.
+///
+/// # Errors
+///
+/// Returns [`AgentUseCaseError::InvalidRetryDelay`] for a zero ordinal, zero/inverted bound, or a
+/// maximum above one hour.
+pub fn provider_retry_delay(
+    attempt_id: AttemptId,
+    retry_ordinal: u64,
+    base: Duration,
+    maximum: Duration,
+) -> Result<Duration, AgentUseCaseError> {
+    if retry_ordinal == 0
+        || base < Duration::from_millis(1)
+        || maximum < base
+        || maximum > Duration::from_hours(1)
+    {
+        return Err(AgentUseCaseError::InvalidRetryDelay);
+    }
+    let exponent = retry_ordinal.saturating_sub(1).min(31);
+    let exponential_ms = base
+        .as_millis()
+        .saturating_mul(1_u128 << exponent)
+        .min(maximum.as_millis());
+    let jitter_window_ms = exponential_ms / 4;
+    let seed = attempt_id.as_uuid().as_u128()
+        ^ u128::from(retry_ordinal).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let jitter_ms = if jitter_window_ms == 0 {
+        0
+    } else {
+        seed % (jitter_window_ms + 1)
+    };
+    let delay_ms = exponential_ms
+        .saturating_add(jitter_ms)
+        .min(maximum.as_millis());
+    u64::try_from(delay_ms)
+        .map(Duration::from_millis)
+        .map_err(|_| AgentUseCaseError::InvalidRetryDelay)
 }
 
 /// Ensures a tool result uses exactly one inline-or-artifact representation.
@@ -769,7 +904,9 @@ pub fn checked_usage_total(
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentLoopLimits, AgentUseCaseError};
+    use super::{AgentLoopLimits, AgentUseCaseError, provider_retry_delay};
+    use mealy_domain::AttemptId;
+    use std::{str::FromStr, time::Duration};
 
     #[test]
     fn default_loop_limits_are_enforceable() {
@@ -787,5 +924,30 @@ mod tests {
             ..AgentLoopLimits::default()
         };
         assert_eq!(limits.validate(), Err(AgentUseCaseError::InvalidLimits));
+    }
+
+    #[test]
+    fn provider_retry_delay_is_deterministic_exponential_and_bounded() {
+        let attempt_id =
+            AttemptId::from_str("018f4f8f-0000-7000-8000-000000000001").expect("attempt ID");
+        let base = Duration::from_millis(250);
+        let maximum = Duration::from_secs(5);
+        let first = provider_retry_delay(attempt_id, 1, base, maximum).expect("first retry");
+        let second = provider_retry_delay(attempt_id, 2, base, maximum).expect("second retry");
+        assert!((base..=Duration::from_millis(312)).contains(&first));
+        assert!((Duration::from_millis(500)..=Duration::from_millis(625)).contains(&second));
+        assert!(second > first);
+        assert_eq!(
+            provider_retry_delay(attempt_id, 2, base, maximum),
+            Ok(second)
+        );
+        assert_eq!(
+            provider_retry_delay(attempt_id, 0, base, maximum),
+            Err(AgentUseCaseError::InvalidRetryDelay)
+        );
+        assert_eq!(
+            provider_retry_delay(attempt_id, 1, Duration::ZERO, Duration::from_secs(1)),
+            Err(AgentUseCaseError::InvalidRetryDelay)
+        );
     }
 }

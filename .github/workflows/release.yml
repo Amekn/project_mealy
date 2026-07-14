@@ -1,0 +1,447 @@
+name: mealy-release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions: {}
+
+concurrency:
+  group: mealy-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  browser-conformance:
+    name: Verify pinned rendered-browser boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - run: rustup show
+      - name: Prepare Bubblewrap and pinned Chrome Headless Shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            apparmor-profiles apparmor-utils bubblewrap curl fonts-liberation \
+            libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+            libdbus-1-3 libexpat1 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libudev1 \
+            libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+            libxkbcommon0 libxrandr2 unzip
+          if sysctl kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo install -m 0644 \
+              /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+              /etc/apparmor.d/bwrap-userns-restrict
+            sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          fi
+          bwrap --die-with-parent --new-session --unshare-user --unshare-pid \
+            --unshare-net --ro-bind / / -- /bin/true
+          browser_bundle=$(scripts/fetch-browser-runtime.sh "$RUNNER_TEMP/mealy-browser")
+          echo "MEALY_BROWSER_BUNDLE=$browser_bundle" >>"$GITHUB_ENV"
+      - run: >-
+          cargo test --locked -p mealy-infrastructure --all-features
+          --test browser_runtime -- --ignored
+      - run: >-
+          cargo test --locked -p mealyd --all-features --test real_provider
+          configured_browser_is_rendered_isolated_cited_and_replays_without_live_chrome
+          -- --ignored
+      - run: >-
+          cargo test --locked -p mealyctl --all-features --test browser_configuration
+          -- --ignored
+      - name: Validate locked dependency policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_deny=$(scripts/fetch-cargo-deny.sh "$RUNNER_TEMP/cargo-deny")
+          "$cargo_deny" check
+
+  linux-packages:
+    name: Verify and package ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write      # Mint the short-lived identity used by actions/attest.
+      attestations: write  # Publish attestations for this architecture's assets.
+      artifact-metadata: write # Record the subjects linked to each attestation.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x86_64-gnu
+            host_architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            target: linux-aarch64-gnu
+            host_architecture: aarch64
+    env:
+      MEALY_TARGET: ${{ matrix.target }}
+      MEALY_HOST_ARCHITECTURE: ${{ matrix.host_architecture }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: rustup show
+      - name: Verify tag, host architecture, and package identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          version=${tag#v}
+          workspace_version=$(cargo metadata --locked --no-deps --format-version 1 | \
+            jq -r '.packages[] | select(.name == "mealyd") | .version')
+          test "$version" = "$workspace_version"
+          test "$(git tag --points-at HEAD | grep -Fx "$tag")" = "$tag"
+          git show-ref --verify --quiet refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          test "$(uname -m)" = "$MEALY_HOST_ARCHITECTURE"
+      - name: Establish reproducible source epoch
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_date_epoch=$(git show -s --format=%ct HEAD)
+          test "$source_date_epoch" -ge 1
+          echo "SOURCE_DATE_EPOCH=$source_date_epoch" >>"$GITHUB_ENV"
+      - name: Prepare Bubblewrap boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-profiles apparmor-utils binutils bubblewrap lintian shellcheck
+          if sysctl kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo install -m 0644 \
+              /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+              /etc/apparmor.d/bwrap-userns-restrict
+            sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          fi
+          bwrap --die-with-parent --new-session --unshare-user --unshare-pid \
+            --unshare-net --ro-bind / / -- /bin/true
+      - run: cargo fmt --all -- --check
+      - name: Validate shell entry points
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n packaging/*.sh scripts/*.sh
+          shellcheck packaging/*.sh scripts/*.sh
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-targets --all-features
+      - run: cargo test --locked --workspace --doc --all-features
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+      - name: Verify interactive dashboard against a real daemon
+        run: scripts/dashboard-smoke.sh
+      - run: packaging/test-packaging.sh
+      - run: packaging/test-macos-packaging.sh
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo install --locked --features cli cargo-about --version 0.9.1
+          cargo install --locked cargo-audit --version 0.22.2
+          cargo install --locked cargo-auditable --version 0.7.5
+      - name: Audit locked dependencies against RustSec
+        run: cargo audit --deny warnings
+      - name: Build auditable locked release binaries
+        run: scripts/build-release-binaries.sh --auditable
+      - name: Audit the exact release binaries
+        run: cargo audit bin target/release/mealyd target/release/mealyctl
+      - name: Prepare isolated systemd user manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid=$(id -u)
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >>"$GITHUB_ENV"
+          XDG_RUNTIME_DIR="/run/user/${uid}" systemctl --user show-environment >/dev/null
+      - name: Verify exact release service through an approved mutation
+        env:
+          MEALY_SYSTEMD_SMOKE_ALLOW_HOST: 'true'
+        run: scripts/systemd-service-smoke.sh target/release/mealyd target/release/mealyctl
+      - name: Prepare bounded SBOM input
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sbom-input/bin sbom
+          install -m 0755 target/release/mealyd sbom-input/bin/mealyd
+          install -m 0755 target/release/mealyctl sbom-input/bin/mealyctl
+      - name: Generate CycloneDX SBOM from auditable binaries
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: sbom-input
+          format: cyclonedx-json
+          output-file: sbom/mealy.raw.cdx.json
+          artifact-name: mealy-${{ github.ref_name }}-${{ matrix.target }}.cdx.json
+          syft-version: v1.46.0
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Normalize reproducible release SBOM identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          packaging/normalize-sbom.sh sbom/mealy.raw.cdx.json sbom/mealy.cdx.json \
+            "$version" "$MEALY_TARGET" "$GITHUB_SHA" "$SOURCE_DATE_EPOCH"
+      - name: Validate release SBOM inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            .bomFormat == "CycloneDX"
+            and (.components | type == "array" and length > 0)
+            and ([.components[].name] | index("mealyd") != null)
+            and ([.components[].name] | index("mealyctl") != null)
+          ' sbom/mealy.cdx.json >/dev/null
+      - name: Generate reproducible third-party license notice
+        run: >-
+          scripts/generate-third-party-licenses.sh
+          "$(command -v cargo-about)" third-party-licenses.html
+      - name: Build reproducible release archive
+        env:
+          MEALY_SYSTEMD_SMOKE_ALLOW_HOST: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          state_schema_version=$(target/release/mealyd --print-supported-schema-version)
+          packaging/build-release.sh "$version" "$MEALY_TARGET" target/release \
+            sbom/mealy.cdx.json third-party-licenses.html dist "$GITHUB_SHA" \
+            "$SOURCE_DATE_EPOCH" "$state_schema_version"
+          packaging/build-deb.sh "$version" "$MEALY_TARGET" \
+            "dist/mealy-v${version}-${MEALY_TARGET}.tar.gz" dist/SHA256SUMS dist \
+            "$SOURCE_DATE_EPOCH"
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true scripts/installed-package-smoke.sh \
+            "dist/mealy-v${version}-${MEALY_TARGET}.tar.gz" dist/SHA256SUMS \
+            dist/install-mealy.sh
+          debian_version=${version/-/~}
+          case $MEALY_TARGET in
+            linux-x86_64-gnu) debian_architecture=amd64 ;;
+            linux-aarch64-gnu) debian_architecture=arm64 ;;
+          esac
+          lintian --fail-on error,warning \
+            "dist/mealy_${debian_version}_${debian_architecture}.deb"
+          package_installed=false
+          cleanup_service_package() {
+            if [[ $package_installed == true ]]; then
+              sudo dpkg --purge mealy >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_service_package EXIT
+          package_installed=true
+          sudo dpkg --install \
+            "dist/mealy_${debian_version}_${debian_architecture}.deb" >/dev/null
+          scripts/systemd-service-smoke.sh \
+            /usr/lib/mealy/release/bin/mealyd /usr/lib/mealy/release/bin/mealyctl
+          sudo dpkg --purge mealy >/dev/null
+          package_installed=false
+          trap - EXIT
+          MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true scripts/installed-deb-smoke.sh \
+            "dist/mealy_${debian_version}_${debian_architecture}.deb"
+          mv dist/SHA256SUMS "dist/SHA256SUMS-${MEALY_TARGET}"
+          rm dist/install-mealy.sh dist/install-mealy-release.sh
+      - name: Attest architecture-specific release assets
+        id: attest-architecture
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: 'dist/*'
+      - name: Retain offline architecture provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-architecture.outputs.bundle-path }}
+        run: >-
+          install -m 0644 "$ATTESTATION_BUNDLE"
+          "dist/ATTESTATION-${MEALY_TARGET}.sigstore.json"
+      - name: Retain architecture-specific workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mealy-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  macos-preview:
+    name: Verify and package ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write      # Mint the short-lived identity used by actions/attest.
+      attestations: write  # Publish attestations for this preview architecture.
+      artifact-metadata: write # Record the subjects linked to each attestation.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: macos-arm64-preview
+            host_architecture: arm64
+          - runner: macos-15-intel
+            target: macos-x86_64-preview
+            host_architecture: x86_64
+    env:
+      MEALY_TARGET: ${{ matrix.target }}
+      MEALY_HOST_ARCHITECTURE: ${{ matrix.host_architecture }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: rustup show
+      - name: Verify tag, host architecture, and package identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          version=${tag#v}
+          workspace_version=$(cargo metadata --locked --no-deps --format-version 1 | \
+            jq -r '.packages[] | select(.name == "mealyd") | .version')
+          test "$version" = "$workspace_version"
+          test "$(git tag --points-at HEAD | grep -Fx "$tag")" = "$tag"
+          git show-ref --verify --quiet refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          test "$(uname -m)" = "$MEALY_HOST_ARCHITECTURE"
+      - name: Establish reproducible source epoch
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_date_epoch=$(git show -s --format=%ct HEAD)
+          test "$source_date_epoch" -ge 1
+          echo "SOURCE_DATE_EPOCH=$source_date_epoch" >>"$GITHUB_ENV"
+      - run: cargo fmt --all -- --check
+      - run: cargo check --locked --workspace --all-targets --all-features
+      - run: cargo test --locked -p mealyctl --bin mealyctl --all-features
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo install --locked --features cli cargo-about --version 0.9.1
+          cargo install --locked cargo-audit --version 0.22.2
+          cargo install --locked cargo-auditable --version 0.7.5
+      - name: Audit locked dependencies against RustSec
+        run: cargo audit --deny warnings
+      - name: Build auditable locked preview binaries
+        run: scripts/build-release-binaries.sh --auditable
+      - name: Audit the exact preview binaries
+        run: cargo audit bin target/release/mealyd target/release/mealyctl
+      - name: Prepare bounded SBOM input
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sbom-input/bin sbom
+          install -m 0755 target/release/mealyd sbom-input/bin/mealyd
+          install -m 0755 target/release/mealyctl sbom-input/bin/mealyctl
+      - name: Generate CycloneDX SBOM from preview binaries
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: sbom-input
+          format: cyclonedx-json
+          output-file: sbom/mealy.raw.cdx.json
+          artifact-name: mealy-${{ github.ref_name }}-${{ matrix.target }}.cdx.json
+          syft-version: v1.46.0
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate reproducible third-party license notice
+        run: >-
+          scripts/generate-third-party-licenses.sh
+          "$(command -v cargo-about)" third-party-licenses.html
+      - name: Build and verify deterministic macOS preview archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          state_schema_version=$(target/release/mealyd --print-supported-schema-version)
+          python3 packaging/build-macos-preview.py "$version" "$MEALY_TARGET" \
+            target/release sbom/mealy.raw.cdx.json third-party-licenses.html dist \
+            "$GITHUB_SHA" "$SOURCE_DATE_EPOCH" "$state_schema_version"
+          (cd dist && shasum -a 256 -c "SHA256SUMS-${MEALY_TARGET}")
+          package="mealy-v${version}-${MEALY_TARGET}"
+          mkdir extracted
+          tar -xzf "dist/${package}.tar.gz" -C extracted
+          (cd "extracted/$package" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
+          test "$("extracted/$package/bin/mealyd" --version)" = "mealyd $version"
+          test "$("extracted/$package/bin/mealyctl" --version)" = "mealyctl $version"
+      - name: Attest macOS preview release assets
+        id: attest-preview
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: 'dist/*'
+      - name: Retain offline macOS provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-preview.outputs.bundle-path }}
+        run: >-
+          install -m 0644 "$ATTESTATION_BUNDLE"
+          "dist/ATTESTATION-${MEALY_TARGET}.sigstore.json"
+      - name: Retain macOS preview workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mealy-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Validate and publish release
+    needs: [browser-conformance, linux-packages, macos-preview]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write      # Create the immutable GitHub release from verified assets.
+      id-token: write      # Mint the short-lived identity used by actions/attest.
+      attestations: write  # Publish the common-installer attestations.
+      artifact-metadata: write # Record the subjects linked to each attestation.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download all architecture-specific assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mealy-${{ github.ref_name }}-*
+          path: gathered
+          merge-multiple: true
+      - name: Validate complete release inventory and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          git show-ref --verify --quiet refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          packaging/assemble-release.sh "$version" gathered dist
+      - name: Attest common installers
+        id: attest-installers
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: 'dist/install-mealy*.sh'
+      - name: Retain offline installer provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-installers.outputs.bundle-path }}
+        run: >-
+          install -m 0644 "$ATTESTATION_BUNDLE"
+          dist/ATTESTATION-installers.sigstore.json
+      - name: Retain complete release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mealy-${{ github.ref_name }}-release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable-input GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --verify-tag --generate-notes

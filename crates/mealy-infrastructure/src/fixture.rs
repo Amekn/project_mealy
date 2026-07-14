@@ -18,6 +18,10 @@ const MAXIMUM_FIXTURE_RESOURCES: usize = 256;
 const MAXIMUM_FIXTURE_RESOURCE_BYTES: usize = 16 * 1024 * 1024;
 const MAXIMUM_FIXTURE_ID_BYTES: usize = 256;
 const MAXIMUM_FIXTURE_MEDIA_TYPE_BYTES: usize = 128;
+// Keep the deterministic in-memory adapter at the normal run ceiling so host scheduler delay
+// cannot silently shorten the configured policy. A one-second descriptor made a side-effect-free
+// read fail terminally after 1.15 seconds of unrelated host contention.
+const FIXTURE_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One immutable logical resource exposed to the built-in fixture reader.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,6 +141,10 @@ impl FixtureReadTool {
 impl ReadOnlyTool for FixtureReadTool {
     fn descriptor(&self) -> ReadToolDescriptor {
         self.descriptor.clone()
+    }
+
+    fn validate_arguments(&self, arguments: &serde_json::Value) -> Result<(), ReadToolError> {
+        parse_resource_id(arguments).map(|_| ())
     }
 
     fn execute(
@@ -267,7 +275,7 @@ fn fixture_descriptor(
         effect_class: "read_only".to_owned(),
         risk_class: "low".to_owned(),
         required_capability: "observe:fixture".to_owned(),
-        timeout: Duration::from_secs(1),
+        timeout: FIXTURE_READ_TIMEOUT,
         maximum_output_bytes,
         conflict_key_template: "fixture-read:{resourceId}".to_owned(),
         recovery: "retry".to_owned(),
@@ -286,7 +294,7 @@ fn digest_json(value: &serde_json::Value) -> Result<String, FixtureToolConfigura
 
 #[cfg(test)]
 mod tests {
-    use super::{FixtureReadTool, FixtureResource};
+    use super::{FIXTURE_READ_TIMEOUT, FixtureReadTool, FixtureResource};
     use mealy_application::{CancellationProbe, ReadOnlyTool};
 
     struct NotCancelled;
@@ -315,7 +323,9 @@ mod tests {
             .expect("read logical fixture");
         assert_eq!(output.bytes, b"evidence");
         assert_eq!(tool.invocation_count(), 1);
-        tool.descriptor()
+        let descriptor = tool.descriptor();
+        assert_eq!(descriptor.timeout, FIXTURE_READ_TIMEOUT);
+        descriptor
             .validate_evidence()
             .expect("fixture descriptor evidence should be canonical");
     }

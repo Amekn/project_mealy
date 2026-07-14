@@ -16,8 +16,14 @@ pub struct CapabilityGrant {
     pub effect_classes: BTreeSet<EffectClass>,
     /// Canonical workspace roots visible to the run.
     pub workspace_roots: BTreeSet<String>,
+    /// Exact subset of logical workspace roots that may receive mutations.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub writable_workspace_roots: BTreeSet<String>,
     /// Exact outbound network destinations visible to the run.
     pub network_destinations: BTreeSet<String>,
+    /// Exact executable content identities visible to process-capable runs.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub executable_identity_digests: BTreeSet<String>,
     /// Opaque secret references, never secret values.
     pub secret_references: BTreeSet<String>,
     /// Enforceable execution profiles available to the run.
@@ -36,7 +42,9 @@ impl CapabilityGrant {
         for items in [
             &self.tools,
             &self.workspace_roots,
+            &self.writable_workspace_roots,
             &self.network_destinations,
+            &self.executable_identity_digests,
             &self.secret_references,
         ] {
             if items.len() > MAXIMUM_SET_ITEMS
@@ -53,6 +61,12 @@ impl CapabilityGrant {
         if self.effect_classes.len() > MAXIMUM_SET_ITEMS || self.profiles.len() > MAXIMUM_SET_ITEMS
         {
             return Err(CapabilityGrantError::TooManyItems);
+        }
+        if !self
+            .writable_workspace_roots
+            .is_subset(&self.workspace_roots)
+        {
+            return Err(CapabilityGrantError::WritableWorkspaceOutsideGrant);
         }
         Ok(())
     }
@@ -75,10 +89,20 @@ impl CapabilityGrant {
                 &requested.workspace_roots,
                 &policy.workspace_roots,
             ),
+            writable_workspace_roots: intersection3(
+                &self.writable_workspace_roots,
+                &requested.writable_workspace_roots,
+                &policy.writable_workspace_roots,
+            ),
             network_destinations: intersection3(
                 &self.network_destinations,
                 &requested.network_destinations,
                 &policy.network_destinations,
+            ),
+            executable_identity_digests: intersection3(
+                &self.executable_identity_digests,
+                &requested.executable_identity_digests,
+                &policy.executable_identity_digests,
             ),
             secret_references: intersection3(
                 &self.secret_references,
@@ -101,8 +125,14 @@ impl CapabilityGrant {
             && child.effect_classes.is_subset(&self.effect_classes)
             && child.workspace_roots.is_subset(&self.workspace_roots)
             && child
+                .writable_workspace_roots
+                .is_subset(&self.writable_workspace_roots)
+            && child
                 .network_destinations
                 .is_subset(&self.network_destinations)
+            && child
+                .executable_identity_digests
+                .is_subset(&self.executable_identity_digests)
             && child.secret_references.is_subset(&self.secret_references)
             && child.profiles.is_subset(&self.profiles)
             && child.maximum_delegated_runs <= self.maximum_delegated_runs
@@ -130,6 +160,9 @@ pub enum CapabilityGrantError {
     /// A capability dimension exceeds the bounded item count.
     #[error("capability grant contains too many items")]
     TooManyItems,
+    /// A writable workspace was not also present in the general workspace authority set.
+    #[error("writable workspace grant is outside the workspace authority set")]
+    WritableWorkspaceOutsideGrant,
 }
 
 #[cfg(test)]
@@ -150,6 +183,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             workspace_roots: set(&["/a", "/b"]),
+            writable_workspace_roots: set(&["/b"]),
             profiles: [PolicyProfile::Observe, PolicyProfile::WorkspaceWrite]
                 .into_iter()
                 .collect(),
@@ -160,6 +194,7 @@ mod tests {
             tools: set(&["write", "admin"]),
             effect_classes: [EffectClass::Idempotent].into_iter().collect(),
             workspace_roots: set(&["/b", "/c"]),
+            writable_workspace_roots: set(&["/b", "/c"]),
             profiles: [PolicyProfile::WorkspaceWrite].into_iter().collect(),
             maximum_delegated_runs: 2,
             ..CapabilityGrant::default()
@@ -168,6 +203,7 @@ mod tests {
             tools: set(&["read", "write"]),
             effect_classes: [EffectClass::Idempotent].into_iter().collect(),
             workspace_roots: set(&["/b"]),
+            writable_workspace_roots: set(&["/b"]),
             profiles: [PolicyProfile::WorkspaceWrite].into_iter().collect(),
             maximum_delegated_runs: 1,
             ..CapabilityGrant::default()
@@ -175,6 +211,7 @@ mod tests {
         let child = parent.intersect_for_child(&requested, &policy);
         assert_eq!(child.tools, set(&["write"]));
         assert_eq!(child.workspace_roots, set(&["/b"]));
+        assert_eq!(child.writable_workspace_roots, set(&["/b"]));
         assert_eq!(child.maximum_delegated_runs, 1);
         assert!(child.maximum_delegated_runs <= parent.maximum_delegated_runs.saturating_sub(1));
         assert!(parent.contains(&child));

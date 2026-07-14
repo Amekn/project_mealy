@@ -1,0 +1,62 @@
+# Dependency policy for the complete all-feature, supported-platform graph.
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# Workspace packages deliberately use the repository's all-rights-reserved license.
+ignore = true
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+highlight = "simplest-path"
+deny = [
+    { crate = "native-tls", reason = "Remote transports use rustls and must not regain an ambient platform-TLS dependency." },
+    { crate = "openssl", reason = "Remote transports use rustls; OpenSSL adds an unnecessary native supply-chain boundary." },
+    { crate = "openssl-sys", reason = "Remote transports use rustls; OpenSSL adds an unnecessary native supply-chain boundary." },
+]
+skip = [
+    { crate = "block-buffer@0.10.4", reason = "Argon2 remains on the RustCrypto digest 0.10 generation." },
+    { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 remains on the RustCrypto cipher 0.4 generation." },
+    { crate = "cpufeatures@0.2.17", reason = "The older RustCrypto generation is still required by Argon2 and chacha20poly1305." },
+    { crate = "crypto-common@0.1.7", reason = "Argon2 and chacha20poly1305 remain on the RustCrypto 0.1 generation." },
+    { crate = "digest@0.10.7", reason = "Argon2 remains on digest 0.10 while current hashing uses digest 0.11." },
+    { crate = "getrandom@0.2.17", reason = "Argon2's rand_core 0.6 lineage still requires getrandom 0.2." },
+    { crate = "getrandom@0.3.4", reason = "The property-test dependency graph still requires getrandom 0.3." },
+    { crate = "rand_core@0.6.4", reason = "Argon2 remains on rand_core 0.6." },
+    { crate = "tower-http@0.6.11", reason = "reqwest 0.13 internally uses tower-http 0.6 while the API uses 0.7." },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+]
+allow-git = []

@@ -650,6 +650,9 @@ pub(super) struct ReplayAgentEffect {
     pub(super) effect_id: String,
     pub(super) model_attempt_id: String,
     pub(super) tool_call_id: String,
+    pub(super) tool_id: String,
+    pub(super) arguments: Value,
+    pub(super) target_resources: Vec<String>,
     pub(super) message_id: String,
     pub(super) content: String,
     pub(super) content_digest: String,
@@ -763,7 +766,15 @@ pub(super) fn load_replay_agent_effects(
                     | EffectStatus::Compensated
             )
             || i64::try_from(view.revision).ok() != Some(observed_revision)
-            || view.policy_request.tool.tool_id != mealy_application::FIXTURE_WRITE_FILE_TOOL_ID
+            || !matches!(
+                view.policy_request.tool.tool_id.as_str(),
+                mealy_application::FIXTURE_WRITE_FILE_TOOL_ID
+                    | mealy_application::WORKSPACE_CREATE_FILE_TOOL_ID
+                    | mealy_application::WORKSPACE_REPLACE_FILE_TOOL_ID
+                    | mealy_application::WORKSPACE_MANAGE_PATH_TOOL_ID
+                    | mealy_application::PROCESS_RUN_TOOL_ID
+            )
+            || !valid_replay_write_contract(&view)
         {
             return Ok(None);
         }
@@ -812,6 +823,9 @@ pub(super) fn load_replay_agent_effects(
             effect_id: effect_id_text,
             model_attempt_id,
             tool_call_id,
+            tool_id: view.policy_request.tool.tool_id.clone(),
+            arguments: view.policy_request.normalized_arguments.clone(),
+            target_resources: view.policy_request.target_resources.clone(),
             message_id,
             content,
             content_digest,
@@ -820,6 +834,190 @@ pub(super) fn load_replay_agent_effects(
         });
     }
     Ok(Some(effects))
+}
+
+fn valid_replay_write_contract(view: &mealy_application::EffectLedgerView) -> bool {
+    let Some(approval) = view.approval.as_ref() else {
+        return false;
+    };
+    let request = &view.policy_request;
+    let effect_id = view.effect_id;
+    if request.tool.tool_id == mealy_application::FIXTURE_WRITE_FILE_TOOL_ID {
+        let Some(workspace_root) = request.workspace_roots.first() else {
+            return false;
+        };
+        let grant = mealy_application::FixtureWritePolicyGrant {
+            principal_id: request.principal_id,
+            channel_binding_id: request.channel_binding_id,
+            task_id: request.task_id,
+            run_id: request.run_id,
+            tool_descriptor_digest: request.tool.descriptor_digest.clone(),
+            worker_identity_digest: request.tool.executable_identity_digest.clone(),
+            workspace_root: workspace_root.clone(),
+            capability: mealy_application::FIXTURE_WRITE_CAPABILITY.to_owned(),
+            profile: mealy_domain::PolicyProfile::WorkspaceWrite,
+            valid_from_ms: request.evaluated_at_ms,
+            expires_at_ms: approval.subject.expires_at_ms,
+        };
+        return mealy_application::evaluate_fixture_write_policy(request, &grant)
+            == view.policy_evaluation
+            && mealy_application::fixture_write_approval_subject(
+                effect_id,
+                request,
+                approval.subject.expires_at_ms,
+            )
+            .is_ok_and(|subject| subject == approval.subject);
+    }
+    let Some(workspace_id) = request
+        .normalized_arguments
+        .get("workspaceId")
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    let Some(workspace_root) = request.workspace_roots.first() else {
+        return false;
+    };
+    if request.tool.tool_id == mealy_application::PROCESS_RUN_TOOL_ID {
+        let Some(command_id) = request
+            .normalized_arguments
+            .get("commandId")
+            .and_then(Value::as_str)
+        else {
+            return false;
+        };
+        let command_prefix = format!("command://{command_id}@sha256:");
+        let Some(command_identity_digest) = request
+            .target_resources
+            .iter()
+            .find_map(|target| target.strip_prefix(&command_prefix))
+            .filter(|digest| mealy_application::is_sha256_digest(digest))
+        else {
+            return false;
+        };
+        let grant = mealy_application::ProcessRunPolicyGrant {
+            principal_id: request.principal_id,
+            channel_binding_id: request.channel_binding_id,
+            task_id: request.task_id,
+            run_id: request.run_id,
+            tool_descriptor_digest: request.tool.descriptor_digest.clone(),
+            worker_identity_digest: request.tool.executable_identity_digest.clone(),
+            command_id: command_id.to_owned(),
+            command_identity_digest: command_identity_digest.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            workspace_root: workspace_root.clone(),
+            valid_from_ms: request.evaluated_at_ms,
+            expires_at_ms: approval.subject.expires_at_ms,
+        };
+        return mealy_application::evaluate_process_run_policy(request, &grant)
+            == view.policy_evaluation
+            && mealy_application::process_run_approval_subject(
+                effect_id,
+                request,
+                approval.subject.expires_at_ms,
+            )
+            .is_ok_and(|subject| subject == approval.subject);
+    }
+    if request.tool.tool_id == mealy_application::WORKSPACE_REPLACE_FILE_TOOL_ID {
+        return valid_replay_workspace_replace_contract(view, workspace_id, workspace_root);
+    }
+    if request.tool.tool_id == mealy_application::WORKSPACE_MANAGE_PATH_TOOL_ID {
+        return valid_replay_workspace_manage_contract(view, workspace_id, workspace_root);
+    }
+    if request.tool.tool_id != mealy_application::WORKSPACE_CREATE_FILE_TOOL_ID {
+        return false;
+    }
+    valid_replay_workspace_create_contract(view, workspace_id, workspace_root)
+}
+
+fn valid_replay_workspace_create_contract(
+    view: &mealy_application::EffectLedgerView,
+    workspace_id: &str,
+    workspace_root: &str,
+) -> bool {
+    let Some(approval) = view.approval.as_ref() else {
+        return false;
+    };
+    let request = &view.policy_request;
+    let grant = mealy_application::WorkspaceCreatePolicyGrant {
+        principal_id: request.principal_id,
+        channel_binding_id: request.channel_binding_id,
+        task_id: request.task_id,
+        run_id: request.run_id,
+        tool_descriptor_digest: request.tool.descriptor_digest.clone(),
+        worker_identity_digest: request.tool.executable_identity_digest.clone(),
+        workspace_id: workspace_id.to_owned(),
+        workspace_root: workspace_root.to_owned(),
+        valid_from_ms: request.evaluated_at_ms,
+        expires_at_ms: approval.subject.expires_at_ms,
+    };
+    mealy_application::evaluate_workspace_create_policy(request, &grant) == view.policy_evaluation
+        && mealy_application::workspace_create_approval_subject(
+            view.effect_id,
+            request,
+            approval.subject.expires_at_ms,
+        )
+        .is_ok_and(|subject| subject == approval.subject)
+}
+
+fn valid_replay_workspace_replace_contract(
+    view: &mealy_application::EffectLedgerView,
+    workspace_id: &str,
+    workspace_root: &str,
+) -> bool {
+    let Some(approval) = view.approval.as_ref() else {
+        return false;
+    };
+    let request = &view.policy_request;
+    let grant = mealy_application::WorkspaceReplacePolicyGrant {
+        principal_id: request.principal_id,
+        channel_binding_id: request.channel_binding_id,
+        task_id: request.task_id,
+        run_id: request.run_id,
+        tool_descriptor_digest: request.tool.descriptor_digest.clone(),
+        worker_identity_digest: request.tool.executable_identity_digest.clone(),
+        workspace_id: workspace_id.to_owned(),
+        workspace_root: workspace_root.to_owned(),
+        valid_from_ms: request.evaluated_at_ms,
+        expires_at_ms: approval.subject.expires_at_ms,
+    };
+    mealy_application::evaluate_workspace_replace_policy(request, &grant) == view.policy_evaluation
+        && mealy_application::workspace_replace_approval_subject(
+            view.effect_id,
+            request,
+            approval.subject.expires_at_ms,
+        )
+        .is_ok_and(|subject| subject == approval.subject)
+}
+
+fn valid_replay_workspace_manage_contract(
+    view: &mealy_application::EffectLedgerView,
+    workspace_id: &str,
+    workspace_root: &str,
+) -> bool {
+    let Some(approval) = view.approval.as_ref() else {
+        return false;
+    };
+    let request = &view.policy_request;
+    let grant = mealy_application::WorkspaceManagePolicyGrant {
+        principal_id: request.principal_id,
+        channel_binding_id: request.channel_binding_id,
+        task_id: request.task_id,
+        run_id: request.run_id,
+        tool_descriptor_digest: request.tool.descriptor_digest.clone(),
+        worker_identity_digest: request.tool.executable_identity_digest.clone(),
+        workspace_id: workspace_id.to_owned(),
+        workspace_root: workspace_root.to_owned(),
+        valid_from_ms: request.evaluated_at_ms,
+        expires_at_ms: approval.subject.expires_at_ms,
+    };
+    mealy_application::evaluate_workspace_manage_policy(request, &grant) == view.policy_evaluation
+        && mealy_application::workspace_manage_approval_subject(
+            view.effect_id,
+            request,
+            approval.subject.expires_at_ms,
+        )
+        .is_ok_and(|subject| subject == approval.subject)
 }
 
 fn verify_effect_model_origin(
@@ -831,7 +1029,7 @@ fn verify_effect_model_origin(
 ) -> Result<bool, AgentStoreError> {
     let row = connection
         .query_row(
-            "SELECT request_json, response_json, state, response_kind \
+            "SELECT request_json, request_digest, response_json, state, response_kind \
              FROM model_attempt WHERE attempt_id = ?1 AND run_id = ?2",
             params![model_attempt_id, run_id.to_string()],
             |row| {
@@ -840,14 +1038,26 @@ fn verify_effect_model_origin(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .optional()
         .map_err(agent::map_sqlite_error)?;
-    let Some((request_json, response_json, state, response_kind)) = row else {
+    let Some((stored_request_json, request_digest, response_json, state, response_kind)) = row
+    else {
         return Ok(false);
     };
+    let request_json = agent::decode_durable_json(
+        &stored_request_json,
+        agent::MAXIMUM_MODEL_REQUEST_JSON_BYTES,
+    )
+    .map_err(|()| agent::invariant("replay effect model request encoding is invalid"))?;
+    if sha256_digest(request_json.as_bytes()) != request_digest {
+        return Err(agent::invariant(
+            "replay effect model request digest does not match",
+        ));
+    }
     let request = serde_json::from_str::<ProviderRequest>(&request_json)
         .map_err(|_| agent::invariant("replay effect model request is invalid"))?;
     let response = serde_json::from_str::<ProviderResponse>(&response_json)

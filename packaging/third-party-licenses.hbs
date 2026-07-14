@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mealy third-party licenses</title>
+  <style>
+    body { font-family: sans-serif; line-height: 1.4; margin: 2rem auto; max-width: 72rem; padding: 0 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { border: 1px solid #aaa; padding: 0.35rem; text-align: left; }
+    pre { border: 1px solid #aaa; overflow: auto; padding: 1rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Mealy third-party licenses</h1>
+  <p>This file records dependency license expressions and selected license texts for the supported Linux release binaries.</p>
+  <table>
+    <thead><tr><th>Component</th><th>Version</th><th>Declared license expression</th></tr></thead>
+    <tbody>
+    {{#each crates}}
+      <tr><td>{{package.name}}</td><td>{{package.version}}</td><td>{{license}}</td></tr>
+    {{/each}}
+    </tbody>
+  </table>
+  {{#each overview}}
+  <section>
+    <h2>{{name}}</h2>
+    <pre>{{text}}</pre>
+  </section>
+  {{/each}}
+</body>
+</html>

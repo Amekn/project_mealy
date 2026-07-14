@@ -6,8 +6,8 @@ use mealy_application::{
     ReleaseLeaseCommit, RunCompletionStatus, SchedulerStore, SchedulerStoreError,
     SchedulerUseCaseError, TimelineQuery, admit_input, claim_next_work,
     claim_next_work_with_concurrency, complete_run, create_session, heartbeat_lease,
-    pending_promotion_sessions, promote_next_input, query_session_status, query_timeline,
-    recover_expired_leases,
+    pending_promotion_sessions, promote_next_input, query_session_status, query_sessions,
+    query_timeline, recover_expired_leases,
 };
 use mealy_domain::{
     ChannelBindingId, CorrelationId, DeliveryMode, EventId, PrincipalId, SessionId, WorkerId,
@@ -88,6 +88,45 @@ fn admit_mode(
         },
     )
     .expect("admit input");
+}
+
+#[test]
+fn recent_session_discovery_is_exact_binding_bounded_and_reports_pending_state() {
+    let clock = TestClock::new(NOW_MS);
+    let ids = TestIdGenerator::new(NOW_MS as u64);
+    let principal = PrincipalId::new();
+    let ownership = OwnershipContext::new(principal, ChannelBindingId::new());
+    let foreign = OwnershipContext::new(principal, ChannelBindingId::new());
+    let mut store = SqliteStore::open_in_memory(NOW_MS).expect("open store");
+    let first = create_session(&mut store, &clock, &ids, ownership).expect("first session");
+    let second = create_session(&mut store, &clock, &ids, ownership).expect("second session");
+    let foreign_session =
+        create_session(&mut store, &clock, &ids, foreign).expect("foreign session");
+    admit(&mut store, &clock, &ids, second, ownership, 1);
+
+    let sessions = query_sessions(&store, ownership, 100).expect("list sessions");
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions.iter().any(|session| session.session_id == first));
+    assert!(
+        sessions
+            .iter()
+            .all(|session| session.session_id != foreign_session)
+    );
+    assert_eq!(
+        sessions
+            .iter()
+            .find(|session| session.session_id == second)
+            .expect("pending session")
+            .pending_inputs,
+        1
+    );
+    assert_eq!(
+        query_sessions(&store, ownership, 1)
+            .expect("bounded list")
+            .len(),
+        1
+    );
+    assert!(query_sessions(&store, ownership, 0).is_err());
 }
 
 #[test]

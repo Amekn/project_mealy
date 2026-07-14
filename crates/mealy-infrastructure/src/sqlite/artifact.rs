@@ -171,10 +171,8 @@ impl AuthorizedArtifactRow {
     ) -> Result<ArtifactContentDescriptor, ArtifactEvidenceStoreError> {
         let size_bytes = u64::try_from(self.size_bytes)
             .map_err(|_| invariant("stored artifact size is negative"))?;
-        if self.committed_at_ms < 0 || self.created_at_ms < self.committed_at_ms {
-            return Err(invariant(
-                "artifact metadata predates its committed content blob",
-            ));
+        if self.committed_at_ms < 0 || self.created_at_ms < 0 {
+            return Err(invariant("stored artifact timestamp is negative"));
         }
         let expected_access_policy = serde_json::json!({
             "principalId": self.principal_id,
@@ -273,6 +271,25 @@ mod tests {
             descriptor.committed_blob().relative_path,
             format!("sha256/{}", metadata.digest)
         );
+    }
+
+    #[test]
+    fn deduplicated_blob_observation_time_does_not_order_independent_artifact_metadata() {
+        let fixture = Fixture::new();
+        fixture
+            .store
+            .connection
+            .execute(
+                "UPDATE artifact_blob SET committed_at_ms = ?1 WHERE digest = ?2",
+                params![CREATED_AT_MS + 1, fixture.digest],
+            )
+            .expect("simulate a concurrent producer publishing the shared blob row later");
+
+        let descriptor = fixture
+            .store
+            .artifact_content_descriptor(fixture.ownership, fixture.artifact_id)
+            .expect("shared blob timestamps do not order independent metadata transactions");
+        assert_eq!(descriptor.metadata().digest, fixture.digest);
     }
 
     #[test]

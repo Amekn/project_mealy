@@ -17,6 +17,7 @@ edition = "2024"
 rust-version = "1.96"
 license-file = "LICENSE"
 repository = "https://github.com/Amekn/project_mealy"
+publish = false
 
 [workspace.dependencies]
 async-stream = "0.3.6"
@@ -24,20 +25,27 @@ argon2 = "0.5.3"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "tracing"] }
 base64 = "0.22.1"
 chacha20poly1305 = "0.10.1"
+chrono = { version = "0.4.42", default-features = false, features = ["std"] }
+chrono-tz = "0.10.4"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+croner = "=3.0.1"
+dunce = "1.0.5"
 eventsource-stream = "0.2.3"
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 futures-util = "0.3.32"
 getrandom = "0.4.3"
 hmac = "0.13.0"
-mealy-api = { path = "crates/mealy-api" }
-mealy-application = { path = "crates/mealy-application" }
-mealy-domain = { path = "crates/mealy-domain" }
-mealy-infrastructure = { path = "crates/mealy-infrastructure" }
-mealy-protocol = { path = "crates/mealy-protocol" }
-mealy-testkit = { path = "crates/mealy-testkit" }
+jsonschema = { version = "0.47.0", default-features = false }
+mealy-api = { path = "crates/mealy-api", version = "=0.1.0" }
+mealy-application = { path = "crates/mealy-application", version = "=0.1.0" }
+mealy-domain = { path = "crates/mealy-domain", version = "=0.1.0" }
+mealy-infrastructure = { path = "crates/mealy-infrastructure", version = "=0.1.0" }
+mealy-protocol = { path = "crates/mealy-protocol", version = "=0.1.0" }
+mealy-testkit = { path = "crates/mealy-testkit", version = "=0.1.0" }
 proptest = "1.7.0"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "rustls", "stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "query", "rustls", "stream"] }
 rusqlite = { version = "0.40.1", features = ["backup", "bundled"] }
+rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11.0"
@@ -48,6 +56,8 @@ tower-http = { version = "0.7.0", features = ["cors", "limit", "request-id", "se
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 subtle = "2.6.1"
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+url = "2.5.8"
 uuid = { version = "1.23.3", features = ["serde", "v7"] }
 zeroize = "1.8.2"
 
@@ -62,3 +72,13 @@ pedantic = "warn"
 [profile.release]
 lto = "thin"
 strip = "symbols"
+
+# Keep line-table diagnostics for local failures without embedding full DWARF into every test
+# executable. The daemon deliberately enforces a 256 MiB upper bound on its content-pinned
+# sandbox worker; full debug information can otherwise make the all-in-one test daemon exceed
+# that security bound even though production release artifacts are stripped.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1

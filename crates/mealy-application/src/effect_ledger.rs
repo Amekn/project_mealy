@@ -4,7 +4,7 @@ use crate::{
 };
 use mealy_domain::{
     ApprovalDecision, ApprovalId, ApprovalStatus, AttemptId, CorrelationId, EffectId, EffectStatus,
-    EventId, IdempotencyClass, LeaseFence, RecoveryStrategy, RunId, TaskId,
+    EventId, IdempotencyClass, LeaseFence, OutboxId, RecoveryStrategy, RunId, TaskId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,6 +76,8 @@ pub struct RecordEffectProposalCommit {
     pub policy_evaluation: PolicyEvaluation,
     /// Present exactly when policy requires an authenticated approval.
     pub approval: Option<ApprovalRequestDraft>,
+    /// Durable remote-channel notification allocated exactly when approval is present.
+    pub approval_outbox_id: Option<OutboxId>,
     /// Journal event for the durable `effect.proposed` fact.
     pub effect_event_id: EventId,
     /// Correlates the proposal, policy evidence, approval, and owning task.

@@ -6,14 +6,20 @@ edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+croner.workspace = true
 hmac.workspace = true
+jsonschema.workspace = true
 mealy-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true

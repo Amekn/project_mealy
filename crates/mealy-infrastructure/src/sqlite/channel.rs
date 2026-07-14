@@ -387,7 +387,9 @@ impl WebhookChannelStore for SqliteStore {
     ) -> Result<Option<OutboundWebhookTarget>, WebhookChannelStoreError> {
         if !matches!(
             topic,
-            "session.input_acknowledgement" | "session.turn_completed"
+            "session.input_acknowledgement"
+                | "session.turn_completed"
+                | "effect.approval_requested"
         ) {
             return Ok(None);
         }

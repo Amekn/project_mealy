@@ -378,6 +378,30 @@ pub enum ProviderErrorClass {
     InvalidResponse,
 }
 
+impl ProviderErrorClass {
+    /// Stable storage and event spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid_request",
+            Self::Unavailable => "unavailable",
+            Self::RateLimited => "rate_limited",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::InvalidResponse => "invalid_response",
+        }
+    }
+}
+
+/// Whether a failed adapter call proved the downstream provider outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderFailureDisposition {
+    /// The provider did not accept work or returned a definite terminal response.
+    Known,
+    /// Dispatch crossed the network boundary without a provable terminal response.
+    OutcomeUnknown,
+}
+
 /// Normalized provider failure with retry guidance.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("{class}: {message}")]
@@ -388,12 +412,28 @@ pub struct ProviderError {
     pub message: String,
     /// Whether retry under the same residency/tool policy may succeed.
     pub retryable: bool,
+    /// Whether retry could duplicate downstream work or hide unknown usage/cost.
+    pub disposition: ProviderFailureDisposition,
 }
 
 /// Cancellation probe passed into a provider dispatch without exposing storage internals.
 pub trait CancellationProbe: Send + Sync {
     /// Returns whether the current run should stop at the next safe boundary.
     fn is_cancelled(&self) -> bool;
+}
+
+/// Non-authoritative bounded progress emitted before a normalized provider result is committed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderProgress {
+    /// Exact UTF-8 assistant text delta received from the provider stream.
+    TextDelta(String),
+}
+
+/// Best-effort progress port kept separate from canonical provider result settlement.
+pub trait ProviderProgressSink: Send + Sync {
+    /// Observes one provider progress item. Implementations must remain bounded and must not treat
+    /// this preview as the authoritative model response.
+    fn emit(&self, progress: ProviderProgress);
 }
 
 /// Provider capability and normalized-completion port.
@@ -411,6 +451,22 @@ pub trait ModelProvider: Send + Sync + 'static {
         request: &ProviderRequest,
         cancellation: &dyn CancellationProbe,
     ) -> Result<ProviderOutput, ProviderError>;
+
+    /// Performs one bounded completion while optionally emitting non-authoritative progress.
+    ///
+    /// Providers without streaming support use the terminal-only implementation by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for classified dispatch or response failures.
+    fn complete_with_progress(
+        &self,
+        request: &ProviderRequest,
+        cancellation: &dyn CancellationProbe,
+        _progress: &dyn ProviderProgressSink,
+    ) -> Result<ProviderOutput, ProviderError> {
+        self.complete(request, cancellation)
+    }
 }
 
 #[cfg(test)]

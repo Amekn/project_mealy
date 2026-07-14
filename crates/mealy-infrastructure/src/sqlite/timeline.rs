@@ -1,13 +1,173 @@
 use super::SqliteStore;
 use mealy_application::{
-    OwnershipContext, SessionStatusView, TimelineCursor, TimelineEvent, TimelinePage,
-    TimelineQuery, TimelineStore, TimelineStoreError,
+    OwnershipContext, SessionSearchHitView, SessionSearchQuery, SessionStatusView,
+    SessionSummaryView, TimelineCursor, TimelineEvent, TimelinePage, TimelineQuery, TimelineStore,
+    TimelineStoreError, session_search_excerpt, sha256_digest,
 };
 use mealy_domain::SessionId;
 use rusqlite::{OptionalExtension, params};
 use std::{str::FromStr, time::SystemTime};
 
 impl TimelineStore for SqliteStore {
+    fn sessions(
+        &self,
+        ownership: OwnershipContext,
+        limit: usize,
+    ) -> Result<Vec<SessionSummaryView>, TimelineStoreError> {
+        let limit = i64::try_from(limit)
+            .map_err(|_| invariant("session list limit exceeds SQLite range"))?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT session.id, session.status, session.revision, \
+                        (SELECT COUNT(*) FROM session_inbox inbox \
+                         WHERE inbox.session_id = session.id AND inbox.state = 'pending'), \
+                        session.active_turn_id, session.created_at_ms, session.updated_at_ms \
+                 FROM session WHERE principal_id = ?1 AND channel_binding_id = ?2 \
+                 ORDER BY updated_at_ms DESC, id DESC LIMIT ?3",
+            )
+            .map_err(map_sqlite_error)?;
+        statement
+            .query_map(
+                params![
+                    ownership.principal_id().to_string(),
+                    ownership.channel_binding_id().to_string(),
+                    limit,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
+            )
+            .map_err(map_sqlite_error)?
+            .map(|row| {
+                let (
+                    session_id,
+                    status,
+                    revision,
+                    pending_inputs,
+                    active_turn_id,
+                    created_at_ms,
+                    updated_at_ms,
+                ) = row.map_err(map_sqlite_error)?;
+                if !matches!(status.as_str(), "active" | "paused" | "closed") {
+                    return Err(invariant("session status is invalid"));
+                }
+                Ok(SessionSummaryView {
+                    session_id: parse_id(&session_id, "session ID")?,
+                    status,
+                    revision: nonnegative_u64(revision, "session revision")?,
+                    pending_inputs: nonnegative_u64(pending_inputs, "pending input count")?,
+                    active_turn_id: active_turn_id
+                        .as_deref()
+                        .map(|value| parse_id(value, "active turn ID"))
+                        .transpose()?,
+                    created_at: system_time(created_at_ms)?,
+                    updated_at: system_time(updated_at_ms)?,
+                })
+            })
+            .collect()
+    }
+
+    fn search_sessions(
+        &self,
+        query: &SessionSearchQuery,
+    ) -> Result<Vec<SessionSearchHitView>, TimelineStoreError> {
+        if query.query.is_empty()
+            || query.query.len() > 4_096
+            || query.query.trim() != query.query
+            || query.query.chars().any(char::is_control)
+            || !(1..=100).contains(&query.limit)
+        {
+            return Err(TimelineStoreError::InvalidSearch);
+        }
+        let limit = i64::try_from(query.limit)
+            .map_err(|_| invariant("session search limit exceeds SQLite range"))?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT session.id, turn.id, turn.task_id, inbox.content, \
+                        final_message.content_inline, final_message.content_digest, \
+                        turn.created_at_ms \
+                 FROM turn \
+                 JOIN session ON session.id = turn.session_id \
+                 JOIN session_inbox inbox ON inbox.inbox_entry_id = turn.inbox_entry_id \
+                 JOIN run_loop_state loop ON loop.run_id = turn.run_id \
+                 LEFT JOIN message final_message ON final_message.id = loop.final_message_id \
+                 WHERE session.principal_id = ?1 AND session.channel_binding_id = ?2 \
+                   AND turn.turn_kind = 'canonical' AND (\
+                       instr(lower(inbox.content), lower(?3)) > 0 OR \
+                       instr(lower(COALESCE(final_message.content_inline, '')), lower(?3)) > 0\
+                   ) \
+                 ORDER BY turn.created_at_ms DESC, turn.id DESC LIMIT ?4",
+            )
+            .map_err(map_sqlite_error)?;
+        statement
+            .query_map(
+                params![
+                    query.ownership.principal_id().to_string(),
+                    query.ownership.channel_binding_id().to_string(),
+                    query.query,
+                    limit,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
+            )
+            .map_err(map_sqlite_error)?
+            .map(|row| {
+                let (
+                    session_id,
+                    turn_id,
+                    task_id,
+                    user_content,
+                    assistant_content,
+                    assistant_content_digest,
+                    created_at_ms,
+                ) = row.map_err(map_sqlite_error)?;
+                if assistant_content.as_ref().is_some_and(|content| {
+                    assistant_content_digest
+                        .as_ref()
+                        .is_none_or(|digest| sha256_digest(content.as_bytes()) != *digest)
+                }) {
+                    return Err(invariant("stored searchable assistant content is invalid"));
+                }
+                let user_excerpt = session_search_excerpt(&user_content, &query.query);
+                let assistant_excerpt = assistant_content
+                    .as_deref()
+                    .and_then(|content| session_search_excerpt(content, &query.query));
+                if user_excerpt.is_none() && assistant_excerpt.is_none() {
+                    return Err(invariant("session search row does not contain its query"));
+                }
+                Ok(SessionSearchHitView {
+                    session_id: parse_id(&session_id, "session ID")?,
+                    turn_id: parse_id(&turn_id, "turn ID")?,
+                    task_id: parse_id(&task_id, "task ID")?,
+                    user_excerpt,
+                    user_content_digest: sha256_digest(user_content.as_bytes()),
+                    assistant_excerpt,
+                    assistant_content_digest,
+                    created_at: system_time(created_at_ms)?,
+                })
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_lines)]
     fn timeline_page(&self, query: TimelineQuery) -> Result<TimelinePage, TimelineStoreError> {
         authorize(&self.connection, query.session_id, query.ownership)?;

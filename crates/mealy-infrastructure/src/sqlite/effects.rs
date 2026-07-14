@@ -79,7 +79,13 @@ pub(super) fn record_effect_proposal_transaction(
     set_sequence(transaction, "effect", &commit.effect_id.to_string(), 0)?;
 
     if let Some(approval) = &commit.approval {
-        insert_approval_request(transaction, commit, approval, evidence.proposed_at_ms)?;
+        insert_approval_request(
+            transaction,
+            commit,
+            approval,
+            &session_id,
+            evidence.proposed_at_ms,
+        )?;
     }
     Ok(())
 }
@@ -2828,6 +2834,11 @@ fn obligations_deny_all(obligations: &PolicyObligations) -> bool {
 fn validate_approval_draft(
     commit: &RecordEffectProposalCommit,
 ) -> Result<(), EffectLedgerStoreError> {
+    if commit.approval.is_some() != commit.approval_outbox_id.is_some() {
+        return Err(invalid(
+            "approval and remote notification identities must be allocated together",
+        ));
+    }
     match (commit.policy_evaluation.decision, &commit.approval) {
         (PolicyDecision::RequireApproval, Some(approval)) => {
             approval
@@ -3002,6 +3013,7 @@ fn insert_approval_request(
     transaction: &Transaction<'_>,
     commit: &RecordEffectProposalCommit,
     approval: &ApprovalRequestDraft,
+    session_id: &str,
     requested_at_ms: i64,
 ) -> Result<(), EffectLedgerStoreError> {
     let subject_json =
@@ -3047,6 +3059,30 @@ fn insert_approval_request(
                 approval.requested_event_id.to_string(),
                 requested_at_ms,
                 approval.subject.expires_at_ms,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    transaction
+        .execute(
+            "INSERT INTO outbox(outbox_id, topic, payload_json, created_at_ms) \
+             VALUES (?1, 'effect.approval_requested', ?2, ?3)",
+            params![
+                commit
+                    .approval_outbox_id
+                    .ok_or_else(|| invalid("approval notification identity is absent"))?
+                    .to_string(),
+                json!({
+                    "session_id": session_id,
+                    "approval_id": approval.approval_id,
+                    "effect_id": commit.effect_id,
+                    "subject_digest": subject_digest,
+                    "tool_id": commit.policy_request.tool.tool_id,
+                    "normalized_arguments": commit.policy_request.normalized_arguments,
+                    "target_resources": commit.policy_request.target_resources,
+                    "expires_at_ms": approval.subject.expires_at_ms,
+                })
+                .to_string(),
+                requested_at_ms,
             ],
         )
         .map_err(map_sqlite_error)?;
@@ -4229,6 +4265,8 @@ mod tests {
                 },
             },
             approval,
+            approval_outbox_id: (decision == PolicyDecision::RequireApproval)
+                .then(mealy_domain::OutboxId::new),
             effect_event_id: EventId::new(),
             correlation_id: CorrelationId::new(),
             proposed_at: time(NOW_MS),
@@ -4350,6 +4388,48 @@ mod tests {
         assert_eq!(view.revision, 1);
         let approval = view.approval.expect("approval projection");
         assert_eq!(approval.status, ApprovalStatus::Pending);
+        let approval_payload_json: String = store
+            .connection
+            .query_row(
+                "SELECT payload_json FROM outbox WHERE topic = 'effect.approval_requested'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("approval notification outbox");
+        let approval_payload: serde_json::Value =
+            serde_json::from_str(&approval_payload_json).expect("approval notification JSON");
+        let approval_id_text = approval_id.to_string();
+        let effect_id_text = effect_id.to_string();
+        assert_eq!(
+            approval_payload["approval_id"].as_str(),
+            Some(approval_id_text.as_str())
+        );
+        assert_eq!(
+            approval_payload["effect_id"].as_str(),
+            Some(effect_id_text.as_str())
+        );
+        assert_eq!(
+            approval_payload["subject_digest"].as_str(),
+            Some(approval.subject_digest.as_str())
+        );
+        assert_eq!(approval_payload["tool_id"], "service.update");
+        assert_eq!(
+            approval_payload["normalized_arguments"],
+            serde_json::json!({
+                "resourceId": "service://example/item",
+                "value": 7,
+            })
+        );
+        assert_eq!(
+            approval_payload["target_resources"],
+            serde_json::json!(["service://example/item"])
+        );
+        assert_eq!(approval_payload["expires_at_ms"], NOW_MS + 1_000);
+        approval_payload["session_id"]
+            .as_str()
+            .expect("approval session ID")
+            .parse::<SessionId>()
+            .expect("valid approval session ID");
         assert_eq!(
             store
                 .pending_approval_requests(graph.ownership)

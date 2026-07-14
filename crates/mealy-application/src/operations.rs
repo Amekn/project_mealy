@@ -85,6 +85,20 @@ pub struct OperationalSnapshot {
     pub failed_extensions: u64,
     /// Active signed external channel bindings.
     pub active_channels: u64,
+    /// Active external channels with consecutive durable transport failures.
+    pub degraded_channels: u64,
+    /// Reserved Telegram updates or Discord messages awaiting terminal evidence.
+    pub reserved_channel_updates: u64,
+    /// Active recurring agent schedules.
+    pub active_schedules: u64,
+    /// Paused recurring agent schedules retained for owner inspection.
+    pub paused_schedules: u64,
+    /// Schedule occurrences currently held by an unexpired daemon claim.
+    pub claimed_schedule_runs: u64,
+    /// Terminally failed schedule occurrence admissions retained in history.
+    pub failed_schedule_runs: u64,
+    /// Policy-skipped schedule occurrences retained in history.
+    pub skipped_schedule_runs: u64,
     /// Ten newest durable failure/unknown event types and aggregate IDs.
     pub recent_failures: Vec<OperationalFailure>,
     /// UTC start time.
@@ -112,6 +126,65 @@ pub struct OperationalFailure {
     pub correlation_id: String,
     /// UTC event time.
     pub occurred_at_ms: i64,
+}
+
+/// Durable aggregate of dispatched model attempts for one exact provider/model endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderEndpointHistory {
+    /// Stable configured provider identity.
+    pub provider_id: String,
+    /// Exact configured model identity.
+    pub model_id: String,
+    /// Cumulative durably dispatched attempts across daemon lifetimes.
+    pub invocation_count: u64,
+    /// Most recent durably completed successful attempt.
+    pub last_success_at_ms: Option<i64>,
+    /// Most recent durably completed classified provider failure.
+    pub last_failure_at_ms: Option<i64>,
+}
+
+/// One exact UTC-day aggregate of terminal run usage for an authenticated owner binding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedUsageBucket {
+    /// UTC day start in epoch milliseconds.
+    pub bucket_start_ms: i64,
+    /// UTC day end, clipped to the requested report bound.
+    pub bucket_end_ms: i64,
+    /// Terminal root, delegated, or validation runs settled in this bucket.
+    pub completed_runs: u64,
+    /// Runs whose canonical terminal state is succeeded.
+    pub succeeded_runs: u64,
+    /// Runs whose canonical terminal state is failed.
+    pub failed_runs: u64,
+    /// Runs whose canonical terminal state is cancelled.
+    pub cancelled_runs: u64,
+    /// Settled or conservatively charged provider calls.
+    pub used_model_calls: u64,
+    /// Settled read/effect tool calls.
+    pub used_tool_calls: u64,
+    /// Settled delegated child-run reservations.
+    pub used_delegated_runs: u64,
+    /// Classified provider/tool retries.
+    pub used_retries: u64,
+    /// Recorded provider input tokens.
+    pub used_input_tokens: u64,
+    /// Recorded provider output tokens.
+    pub used_output_tokens: u64,
+    /// Provider-neutral configured-price microunits.
+    pub used_cost_microunits: u64,
+    /// Recorded provider/tool output bytes.
+    pub used_output_bytes: u64,
+}
+
+/// Bounded exact-owner terminal usage report grouped by UTC completion day.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedUsageReport {
+    /// Inclusive requested lower epoch-millisecond bound.
+    pub from_ms: i64,
+    /// Exclusive requested upper epoch-millisecond bound.
+    pub to_ms: i64,
+    /// Ordered non-empty UTC-day buckets; empty days are omitted.
+    pub buckets: Vec<CompletedUsageBucket>,
 }
 
 /// Persistence failures for daemon lifecycle and operational snapshots.
@@ -165,6 +238,31 @@ pub trait OperationalStore {
         &self,
         ownership: OwnershipContext,
     ) -> Result<OperationalSnapshot, OperationalStoreError>;
+
+    /// Reads cumulative durable dispatch history for exact configured endpoints.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationalStoreError`] for malformed identities, authorization, or storage
+    /// failure.
+    fn provider_endpoint_history(
+        &self,
+        ownership: OwnershipContext,
+        endpoints: &[(String, String)],
+    ) -> Result<Vec<ProviderEndpointHistory>, OperationalStoreError>;
+
+    /// Reads settled terminal-run usage over at most 31 days, grouped by UTC completion day.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationalStoreError`] for an invalid range, malformed stored usage, owner
+    /// mismatch, or storage failure.
+    fn completed_usage_report(
+        &self,
+        ownership: OwnershipContext,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<CompletedUsageReport, OperationalStoreError>;
 
     /// Checkpoints WAL state after background workers stop.
     ///

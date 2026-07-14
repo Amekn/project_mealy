@@ -439,7 +439,8 @@ fn insert_compaction_artifact(
         .execute(
             "INSERT INTO artifact_blob(algorithm, digest, size_bytes, relative_path, committed_at_ms) \
              VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT(algorithm, digest) DO NOTHING",
+             ON CONFLICT(algorithm, digest) DO UPDATE SET \
+               committed_at_ms = MIN(artifact_blob.committed_at_ms, excluded.committed_at_ms)",
             params![
                 commit.artifact_blob.algorithm,
                 commit.artifact_blob.digest,
@@ -758,7 +759,8 @@ fn map_timeline_error(error: mealy_application::TimelineStoreError) -> Compactio
         mealy_application::TimelineStoreError::SessionNotFound
         | mealy_application::TimelineStoreError::Unauthorized => CompactionStoreError::NotFound,
         mealy_application::TimelineStoreError::Gap { .. }
-        | mealy_application::TimelineStoreError::CursorAhead => {
+        | mealy_application::TimelineStoreError::CursorAhead
+        | mealy_application::TimelineStoreError::InvalidSearch => {
             CompactionStoreError::InvalidSourceRange
         }
         mealy_application::TimelineStoreError::Unavailable(message) => {

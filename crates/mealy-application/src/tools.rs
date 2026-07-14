@@ -471,6 +471,13 @@ pub trait ReadOnlyTool: Send + Sync + 'static {
     /// Returns the immutable descriptor bound into model requests.
     fn descriptor(&self) -> ReadToolDescriptor;
 
+    /// Validates the exact argument shape before durable tool preparation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadToolError`] without performing I/O or changing external state.
+    fn validate_arguments(&self, arguments: &serde_json::Value) -> Result<(), ReadToolError>;
+
     /// Executes validated logical-resource arguments.
     ///
     /// # Errors

@@ -1,0 +1,52 @@
+{
+  "artifactBytes": 19712,
+  "buildProfile": "release",
+  "completedTurns": 504,
+  "completedTurnsPerMinute": 492,
+  "databaseBytesIncludingSidecars": 108163072,
+  "databaseBytesPerCompletedTurn": 214609,
+  "duplicateAdmissions": 28,
+  "finishedAtUnixMs": 1783879764174,
+  "hardRestarts": 12,
+  "harnessMode": "cargo_integration_binary",
+  "interruptedProviderTurns": 84,
+  "latencyMs": {
+    "maximum": 1625,
+    "mean": 719,
+    "minimum": 527,
+    "p50": 642,
+    "p95": 1285,
+    "p99": 1520
+  },
+  "mealyVersion": "0.1.0",
+  "observedDurationMs": 61372,
+  "peakResidentSetKiB": 51776,
+  "providerDelayMs": 250,
+  "requestedDurationSeconds": 60,
+  "residual": {
+    "activeLeases": 0,
+    "failedOutbox": 0,
+    "nonterminalRuns": 0,
+    "pendingApprovals": 0,
+    "pendingInputs": 0,
+    "unknownEffects": 0
+  },
+  "resumedUndispatchedModelTurns": 0,
+  "resumedUndispatchedReadToolTurns": 0,
+  "retriedReadToolTurns": 3,
+  "revision": "5f52f744be8b196f604120a978478b4fd84567ce-dirty",
+  "roundIntervalMs": 0,
+  "rounds": 63,
+  "schemaVersion": "mealy.soak-report.v1",
+  "sessions": 8,
+  "sourceState": "dirty_worktree",
+  "sqliteIntegrity": "ok",
+  "startedAtUnixMs": 1783879702801,
+  "target": {
+    "architecture": "x86_64",
+    "cpuModel": "Intel(R) Core(TM) Ultra 5 235T",
+    "hostMemoryKiB": 15772292,
+    "logicalCpus": 14,
+    "os": "linux"
+  }
+}
