@@ -453,12 +453,23 @@ impl Drop for BrowserVerificationOrigin {
 }
 
 fn serve_browser_verification(stream: &mut TcpStream) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-    let mut request = [0_u8; 8192];
-    let Ok(read) = stream.read(&mut request) else {
+    if stream.set_read_timeout(Some(BROWSER_IO_TIMEOUT)).is_err() {
+        return;
+    }
+    let Some(request) = read_browser_verification_request(stream) else {
         return;
     };
-    if !request[..read].starts_with(b"GET ") {
+    let Ok(request) = std::str::from_utf8(&request) else {
+        return;
+    };
+    let Some(request_line) = request
+        .strip_suffix("\r\n\r\n")
+        .and_then(|request| request.split("\r\n").next())
+    else {
+        return;
+    };
+    let fields = request_line.split_ascii_whitespace().collect::<Vec<_>>();
+    if fields != ["GET", "/", "HTTP/1.1"] {
         return;
     }
     let body = "<!doctype html><title>Mealy browser verification</title><main>isolated rendered evidence</main>";
@@ -467,6 +478,36 @@ fn serve_browser_verification(stream: &mut TcpStream) {
         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
+}
+
+fn read_browser_verification_request(stream: &mut impl Read) -> Option<Vec<u8>> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 2048];
+    while Instant::now() < deadline {
+        match stream.read(&mut buffer) {
+            Ok(0) => return None,
+            Ok(read) => {
+                request.extend_from_slice(&buffer[..read]);
+                if request.len() > BROWSER_MAXIMUM_PROXY_HEADER_BYTES {
+                    return None;
+                }
+                if request.ends_with(b"\r\n\r\n") {
+                    return Some(request);
+                }
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    return None;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn browser_probe_command(bubblewrap_path: &Path, inspection: &BrowserBundleInspection) -> Command {
@@ -3653,8 +3694,8 @@ mod tests {
         BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL, BrowserProxy, BrowserVerificationOrigin,
         NeverCancelled, PageLoadIdentity, accessibility_load_completion, accessibility_tree_root,
         cdp_nonnegative_integer, normalize_accessibility_tree, normalize_untrusted_text,
-        page_document_is_ready, reap_finished_threads, record_completed_page_load,
-        reserve_browser_connection, truncate_utf8_to_bytes,
+        page_document_is_ready, read_browser_verification_request, reap_finished_threads,
+        record_completed_page_load, reserve_browser_connection, truncate_utf8_to_bytes,
     };
     use mealy_application::WebAccessConfig;
     use serde_json::json;
@@ -3931,6 +3972,37 @@ mod tests {
                 "stale-frame"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn verification_request_reader_accepts_a_header_fragmented_to_single_bytes() {
+        use std::io::Read;
+
+        struct OneByteReader {
+            bytes: Vec<u8>,
+            offset: usize,
+        }
+
+        impl Read for OneByteReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.offset == self.bytes.len() || buffer.is_empty() {
+                    return Ok(0);
+                }
+                buffer[0] = self.bytes[self.offset];
+                self.offset += 1;
+                Ok(1)
+            }
+        }
+
+        let expected = b"GET / HTTP/1.1\r\nHost: 127.0.0.1:43127\r\nConnection: close\r\n\r\n";
+        let mut reader = OneByteReader {
+            bytes: expected.to_vec(),
+            offset: 0,
+        };
+        assert_eq!(
+            read_browser_verification_request(&mut reader).as_deref(),
+            Some(expected.as_slice())
         );
     }
 
