@@ -402,14 +402,35 @@ impl BrowserVerificationOrigin {
         let stop = Arc::new(AtomicBool::new(false));
         let server_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
+            let active = Arc::new(AtomicUsize::new(0));
+            let mut accepted = 0;
+            let mut connections = Vec::new();
             while !server_stop.load(Ordering::Acquire) {
+                reap_finished_threads(&mut connections);
                 match listener.accept() {
-                    Ok((mut stream, _)) => serve_browser_verification(&mut stream),
+                    Ok((mut stream, _)) => {
+                        let Some(connection) = reserve_browser_connection(
+                            &active,
+                            &mut accepted,
+                            BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS,
+                            BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL,
+                        ) else {
+                            let _ = stream.shutdown(Shutdown::Both);
+                            continue;
+                        };
+                        connections.push(thread::spawn(move || {
+                            let _connection = connection;
+                            serve_browser_verification(&mut stream);
+                        }));
+                    }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(BROWSER_POLL_INTERVAL);
                     }
                     Err(_) => break,
                 }
+            }
+            for connection in connections {
+                let _ = connection.join();
             }
         });
         Ok(Self {
@@ -3177,9 +3198,9 @@ fn encode_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::{
         BROWSER_MAXIMUM_CONCURRENT_PROXY_CONNECTIONS, BROWSER_MAXIMUM_PROXY_CONNECTIONS_PER_CALL,
-        BrowserProxy, NeverCancelled, cdp_nonnegative_integer, normalize_accessibility_tree,
-        normalize_untrusted_text, reap_finished_threads, reserve_browser_connection,
-        truncate_utf8_to_bytes,
+        BrowserProxy, BrowserVerificationOrigin, NeverCancelled, cdp_nonnegative_integer,
+        normalize_accessibility_tree, normalize_untrusted_text, reap_finished_threads,
+        reserve_browser_connection, truncate_utf8_to_bytes,
     };
     use mealy_application::WebAccessConfig;
     use serde_json::json;
@@ -3311,6 +3332,38 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(connections.is_empty());
+    }
+
+    #[test]
+    fn verification_origin_does_not_let_an_idle_connection_block_navigation() {
+        use std::{
+            io::{Read, Write},
+            net::TcpStream,
+        };
+
+        let origin = BrowserVerificationOrigin::start().expect("verification origin");
+        let idle = TcpStream::connect(origin.address).expect("idle speculative connection");
+        thread::sleep(Duration::from_millis(50));
+
+        let mut navigation = TcpStream::connect(origin.address).expect("navigation connection");
+        navigation
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .expect("navigation read timeout");
+        navigation
+            .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .expect("navigation request");
+        let mut response = Vec::new();
+        navigation
+            .read_to_end(&mut response)
+            .expect("navigation response before idle connection timeout");
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert!(
+            response
+                .windows(b"isolated rendered evidence".len())
+                .any(|window| window == b"isolated rendered evidence")
+        );
+        drop(idle);
+        drop(origin);
     }
 
     #[test]

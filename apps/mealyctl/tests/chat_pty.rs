@@ -249,9 +249,28 @@ fn spawn_chat(home: &std::path::Path) -> (File, Child, mpsc::Receiver<Vec<u8>>) 
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut chunk = [0_u8; 1_024];
-        while let Ok(length) = reader.read(&mut chunk) {
-            if length == 0 || sender.send(chunk[..length].to_vec()).is_err() {
-                break;
+        let startup_deadline = Instant::now() + Duration::from_secs(2);
+        let mut observed_output = false;
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(length) => {
+                    observed_output = true;
+                    if sender.send(chunk[..length].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                // Linux PTY masters may transiently return EIO between `openpt` and the
+                // spawned process opening its inherited slave. Treat that pre-output state as
+                // a bounded startup race; after output, EIO means the slave really closed.
+                Err(error)
+                    if !observed_output
+                        && error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
+                        && Instant::now() < startup_deadline =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
             }
         }
     });

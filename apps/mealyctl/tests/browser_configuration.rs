@@ -2,7 +2,7 @@
 
 use mealy_application::{AgentLoopLimits, ProviderConfig};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path, process::Command, time::Instant};
 use tempfile::TempDir;
 
 fn initialize_home(home: &Path) {
@@ -60,11 +60,17 @@ fn run(home: &Path, arguments: &[&str]) -> std::process::Output {
 }
 
 fn run_success(home: &Path, arguments: &[&str]) -> Value {
+    let started = Instant::now();
     let output = run(home, arguments);
     assert!(
         output.status.success(),
-        "mealyctl failed: {}",
+        "mealyctl {arguments:?} failed with {}: {}",
+        output.status,
         String::from_utf8_lossy(&output.stderr)
+    );
+    eprintln!(
+        "mealyctl {arguments:?} completed in {:?}",
+        started.elapsed()
     );
     serde_json::from_slice(&output.stdout).expect("mealyctl JSON")
 }
