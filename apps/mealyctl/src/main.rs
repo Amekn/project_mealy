@@ -11978,7 +11978,7 @@ enum CliError {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
-    use super::macos_activation_command;
+    use super::{macos_activation_command, service_definition};
     use super::{
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
