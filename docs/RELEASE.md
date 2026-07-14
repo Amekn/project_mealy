@@ -10,6 +10,13 @@ the packager independently rejects common Linux, macOS, and Windows user-home pa
 scans both `Cargo.lock` and the resulting binaries
 against RustSec, and generates a bounded CycloneDX SBOM with pinned Syft. Each architecture creates
 and attests a reproducible archive, root-owned Debian package, target checksum manifest, and SBOM.
+A tag's native x86-64 job also rejects publication unless the checked
+`docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report for
+at least 86,400 seconds, names an ancestor of the tagged commit, and has the exact SHA-256/version
+of the newly built auditable daemon. The validator independently requires complete turn/recovery
+accounting, SQLite integrity, ordered latency measurements, and zero residual work; protected CI
+exercises its positive fixture and short/dirty/wrong-binary/volatile-home/residue/recovery/integrity
+rejections.
 A frozen, pinned `cargo-about` pass also generates the exact dependency license notice twice and
 requires byte-identical output before the notice enters the checksummed package payload.
 The `.deb` is constructed from the already verified release payload without maintainer scripts,
@@ -373,8 +380,11 @@ remove it before uninstalling.
    current.
    Ensure the branch CI and packaging conformance job are green only after that review.
 3. Run the paced long soak from `docs/benchmarks/README.md` against a clean revision, retain its
-   unedited report, and investigate any integrity, replay, residue, or unclassified-recovery
-   failure before tagging.
+   unedited report as `docs/benchmarks/release-soak.json`, and run
+   `scripts/validate-release-soak.sh docs/benchmarks/release-soak.json MEALYD TAG_COMMIT` against
+   the exact auditable release daemon. Investigate any integrity, replay, residue, recovery, or
+   identity failure before tagging; the tag workflow repeats this gate and cannot publish without
+   it.
 4. Create and push the reviewed tag. The release workflow refuses a mismatched version or a tag
    that does not point at the checked-out commit.
 5. Wait for the native Linux and macOS jobs to pass the full all-feature/doc/RustSec suites, real
