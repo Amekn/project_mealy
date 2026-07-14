@@ -177,13 +177,30 @@ systemctl_user link "$unit" >/dev/null
 linked=true
 systemctl_user daemon-reload
 systemctl_user enable --now mealy.service >/dev/null
-service_pid=$(systemctl_user show mealy.service --property=MainPID --value)
-if [[ ! $service_pid =~ ^[1-9][0-9]*$ ]]; then
-  echo "generated service did not publish a valid main PID" >&2
-  exit 70
-fi
-if [[ $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) != "$mealyd" ]]; then
-  echo "generated service main PID is not the exact configured daemon" >&2
+observed_pid=
+observed_executable=
+observed_state=
+for _ in $(seq 1 400); do
+  observed_pid=$(systemctl_user show mealy.service --property=MainPID --value)
+  observed_state=$(systemctl_user show mealy.service --property=ActiveState --value)
+  observed_executable=
+  if [[ $observed_pid =~ ^[1-9][0-9]*$ ]]; then
+    observed_executable=$(readlink -f -- "/proc/$observed_pid/exe" 2>/dev/null || true)
+    if [[ $observed_executable == "$mealyd" ]]; then
+      service_pid=$observed_pid
+      break
+    fi
+  fi
+  if [[ $observed_state == failed || $observed_state == inactive ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ -z $service_pid ]]; then
+  echo "generated service did not reach the exact configured daemon" >&2
+  printf 'observed state=%s pid=%s executable=%s\n' \
+    "${observed_state:-unknown}" "${observed_pid:-unknown}" \
+    "${observed_executable:-unavailable}" >&2
   exit 70
 fi
 for _ in $(seq 1 400); do
