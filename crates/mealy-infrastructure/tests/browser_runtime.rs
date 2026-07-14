@@ -92,14 +92,21 @@ fn serve_page(
     unsafe_requests: &std::sync::atomic::AtomicUsize,
     address: std::net::SocketAddr,
 ) {
-    let mut request = [0_u8; 8192];
-    let Ok(read) = stream.read(&mut request) else {
-        return;
-    };
-    if read == 0 {
+    let mut request = Vec::with_capacity(8192);
+    while request.len() < 8192 && !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        let mut chunk = [0_u8; 1024];
+        let Ok(read) = stream.read(&mut chunk) else {
+            return;
+        };
+        if read == 0 {
+            return;
+        }
+        request.extend_from_slice(&chunk[..read]);
+    }
+    if !request.windows(4).any(|window| window == b"\r\n\r\n") {
         return;
     }
-    let request = String::from_utf8_lossy(&request[..read]);
+    let request = String::from_utf8_lossy(&request);
     if !request.starts_with("GET ") && !request.starts_with("HEAD ")
         || request.starts_with("GET /socket ")
     {
@@ -229,7 +236,7 @@ fn real_headless_shell_is_isolated_rendered_bounded_and_can_activate_read_only_e
     let result = serde_json::from_slice::<Value>(&output.bytes).expect("browser JSON");
     assert_eq!(result["browserProduct"], product);
     assert!(result["activatedElement"].is_null());
-    assert_eq!(result["title"], "Details");
+    assert_eq!(result["title"], "Details", "browser result: {result}");
     assert!(
         result["text"]
             .as_str()

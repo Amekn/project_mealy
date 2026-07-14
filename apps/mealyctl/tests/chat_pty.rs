@@ -46,6 +46,8 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
     let state = AdmissionState::default();
     let (base_url, server) = spawn_control_plane(state.clone()).await;
     let home = tempfile::tempdir().expect("temporary Mealy home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
     let attachment_root = tempfile::tempdir().expect("attachment root");
     write_connection(home.path(), &base_url);
     let attachment = attachment_root.path().join("owner selected brief.md");
