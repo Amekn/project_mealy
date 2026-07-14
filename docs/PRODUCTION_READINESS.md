@@ -163,6 +163,15 @@ MinGW Windows and GCC AArch64 Linux all-target/all-feature checks, and a real Wi
 normalizing Windows canonical paths without changing either Linux binary. A fresh 24-hour clock
 uses that exact unchanged daemon; final packages still wait for the long report and resulting
 documentation bytes.
+One final browser transport audit then found that the verification listener could reject a valid
+fragmented HTTP request before its headers were complete. Commit `c483945` applies the same
+bounded-header accumulation used by the main proxy path. Two clean auditable builds reproduced
+`mealyd` SHA-256 `649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572`
+and `mealyctl` SHA-256
+`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`; the fresh 24-hour clock
+uses that exact daemon. Verifier-only commit `c797e8e` reproduced both binary hashes after closing
+a systemd 257 pre-exec `MainPID` observation race, and all seven protected contexts passed in
+[workflow run 29374834884](https://github.com/Amekn/project_mealy/actions/runs/29374834884).
 The checked [live public web-fetch observation](benchmarks/2026-07-13-live-public-web-fetch.md)
 also passes the production no-proxy DNS-pinned adapter without credentials; Brave Search remains
 unexercised because no subscription credential is present.
@@ -204,6 +213,12 @@ fresh run is required to select the verified extracted release daemon explicitly
 that exact executable SHA-256 instead of merely identifying a Cargo integration build. It must
 also use and retain an explicit disk-backed home: a short superseded launch was stopped after the
 storage audit found that the default temporary directory was RAM-backed `tmpfs` on this host.
+The exact current run began at 2026-07-15 10:47:53 Pacific/Auckland with that disk-backed home.
+An early live snapshot recorded 432 successful tasks/runs, 864 completed model attempts, four
+planned-restart interruptions, one completed hard restart, SQLite `quick_check` `ok`, and no
+nonterminal task or run. These are health diagnostics only, not a pass: the final promoted report
+must cover the complete 86,400-second interval, integrity, replay, clean drain, and zero residual
+work before the durability gate closes.
 
 The storage gate now has object-level attribution and bounded compatibility-preserving compression.
 The checked [60-second optimized storage observation](benchmarks/2026-07-13-storage-optimized-soak.json)
