@@ -191,15 +191,19 @@ applies to every `/usr/bin/bwrap` invocation on the host, then explicitly copy a
 sudo install -m 0644 \
   /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
   /etc/apparmor.d/bwrap-userns-restrict
-sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r -K /etc/apparmor.d/bwrap-userns-restrict
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
 bwrap --die-with-parent --new-session --unshare-user --unshare-pid \
   --unshare-net --ro-bind / / -- /bin/true
 ```
 
-The final command must exit zero. If the distro profile is absent or conflicts with another local
-policy, stop and use a dedicated reviewed host policy rather than making Bubblewrap setuid or
-globally setting `kernel.apparmor_restrict_unprivileged_userns=0`. After Mealy starts, require
+The two profile queries and final command must all exit zero. Loading the exact profile with
+`apparmor_parser` avoids `aa-enforce` scanning and rejecting an unrelated malformed optional
+profile. If the distro profile is absent or conflicts with another local policy, stop and use a
+dedicated reviewed host policy rather than making Bubblewrap setuid or globally setting
+`kernel.apparmor_restrict_unprivileged_userns=0`. After Mealy starts, require
 `mealyctl doctor` to report the `observe` and `workspace_write` profiles `enforceable`; Mealy fails
 closed when it cannot enforce the requested worker profile.
 

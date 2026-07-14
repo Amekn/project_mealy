@@ -35,8 +35,8 @@ Spawn the real executor/extension protocol. Verify framing, malformed messages, 
 
 GitHub's Ubuntu 24.04 runner enables AppArmor's unprivileged-user-namespace restriction, which can
 make Bubblewrap fail while bringing up its private loopback device with `RTM_NEWADDR: Operation not
-permitted`. The CI and tag workflows install, copy, and enforce Noble's packaged
-`bwrap-userns-restrict` extra profile, explicitly retain
+permitted`. The CI and tag workflows install and directly load only Noble's packaged
+`bwrap-userns-restrict` extra profile, verify both stacked profiles are enforced, explicitly retain
 `kernel.apparmor_restrict_unprivileged_userns=1`, ensure
 `kernel.unprivileged_userns_clone=1` when that older switch exists, and require a private-network
 Bubblewrap probe before tests. A normal production host follows the same reviewed distro-profile
