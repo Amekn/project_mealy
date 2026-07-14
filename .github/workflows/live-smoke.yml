@@ -1,0 +1,242 @@
+name: mealy-live-provider-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Remote provider adapter to exercise
+        required: true
+        type: choice
+        options:
+          - openai
+          - anthropic
+          - openrouter
+      model:
+        description: Exact current model ID or snapshot
+        required: true
+        type: string
+      context_tokens:
+        description: Conservative verified context-token limit
+        required: true
+        type: string
+      input_price:
+        description: Input price in currency microunits per million tokens
+        required: true
+        type: string
+      output_price:
+        description: Output price in currency microunits per million tokens
+        required: true
+        type: string
+      run_brave_search:
+        description: Also exercise Brave Search using BRAVE_SEARCH_API_KEY
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mealy-live-provider-smoke
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  live-provider:
+    name: Live ${{ inputs.provider }} adapter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: live-provider-smoke
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - run: rustup show
+      - name: Prepare Bubblewrap boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap jq
+          if sysctl kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo install -m 0644 \
+              /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+              /etc/apparmor.d/bwrap-userns-restrict
+            sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          fi
+          bwrap --die-with-parent --new-session --unshare-user --unshare-pid \
+            --unshare-net --ro-bind / / -- /bin/true
+      - name: Build exact release binaries
+        run: scripts/build-release-binaries.sh
+      - name: Verify public credentialless fetch
+        run: >-
+          cargo test --locked -p mealy-infrastructure --all-features --test web_live
+          public_https_fetch_is_pinned_bounded_sanitized_and_cited
+          -- --ignored --exact --nocapture
+      - name: Verify optional live Brave Search
+        if: ${{ inputs.run_brave_search }}
+        env:
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+        run: >-
+          cargo test --locked -p mealy-infrastructure --all-features --test web_live
+          live_brave_search_is_credential_scoped_bounded_and_cited
+          -- --ignored --exact --nocapture
+      - name: Probe, run, settle, replay, and drain live provider
+        shell: bash
+        env:
+          LIVE_PROVIDER: ${{ inputs.provider }}
+          LIVE_MODEL: ${{ inputs.model }}
+          LIVE_CONTEXT_TOKENS: ${{ inputs.context_tokens }}
+          LIVE_INPUT_PRICE: ${{ inputs.input_price }}
+          LIVE_OUTPUT_PRICE: ${{ inputs.output_price }}
+          MEALY_OPENAI_LIVE_API_KEY: ${{ inputs.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          MEALY_ANTHROPIC_LIVE_API_KEY: ${{ inputs.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          MEALY_OPENROUTER_LIVE_API_KEY: ${{ inputs.provider == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          home="$RUNNER_TEMP/mealy-live-home"
+          daemon_stdout="$RUNNER_TEMP/mealy-live-daemon.stdout"
+          daemon_stderr="$RUNNER_TEMP/mealy-live-daemon.stderr"
+          daemon_pid=
+          cleanup() {
+            if [[ -n $daemon_pid ]]; then
+              kill "$daemon_pid" 2>/dev/null || true
+              wait "$daemon_pid" 2>/dev/null || true
+            fi
+            rm -rf -- "$home" "$RUNNER_TEMP/mealy-live-workspace"
+          }
+          trap cleanup EXIT
+          case $LIVE_PROVIDER in
+            openai) MEALY_LIVE_API_KEY=$MEALY_OPENAI_LIVE_API_KEY ;;
+            anthropic) MEALY_LIVE_API_KEY=$MEALY_ANTHROPIC_LIVE_API_KEY ;;
+            openrouter) MEALY_LIVE_API_KEY=$MEALY_OPENROUTER_LIVE_API_KEY ;;
+            *) echo "unsupported live provider selection" >&2; exit 64 ;;
+          esac
+          unset MEALY_OPENAI_LIVE_API_KEY MEALY_ANTHROPIC_LIVE_API_KEY \
+            MEALY_OPENROUTER_LIVE_API_KEY
+          export MEALY_LIVE_API_KEY
+          credential=$MEALY_LIVE_API_KEY
+          if [[ -z $credential ]]; then
+            echo "the selected live-provider-smoke environment secret is absent" >&2
+            exit 78
+          fi
+          contains_credential() {
+            grep -Fq -f <(printf '%s\n' "$credential") -- "$@"
+          }
+          target/release/mealyctl --home "$home" setup \
+            --provider "$LIVE_PROVIDER" \
+            --model "$LIVE_MODEL" \
+            --context-tokens "$LIVE_CONTEXT_TOKENS" \
+            --maximum-output-tokens 256 \
+            --credential-env MEALY_LIVE_API_KEY \
+            --input-microunits-per-million-tokens "$LIVE_INPUT_PRICE" \
+            --output-microunits-per-million-tokens "$LIVE_OUTPUT_PRICE" \
+            --approve >"$RUNNER_TEMP/mealy-live-setup.json"
+          if contains_credential "$RUNNER_TEMP/mealy-live-setup.json" "$home/config.json"; then
+            echo "provider credential escaped the broker during setup" >&2
+            exit 70
+          fi
+          workspace="$RUNNER_TEMP/mealy-live-workspace"
+          mkdir -p "$workspace"
+          printf 'LIVE_PROVIDER_EVIDENCE: model, tool, settlement, and replay boundary.\n' \
+            >"$workspace/evidence.txt"
+          target/release/mealyctl --home "$home" config workspace-grant \
+            live-smoke "$workspace" --approve >"$RUNNER_TEMP/mealy-live-workspace.json"
+          unset MEALY_LIVE_API_KEY
+          target/release/mealyd --home "$home" \
+            --promotion-interval-ms 10 --agent-delay-ms 10 --outbox-delay-ms 0 \
+            >"$daemon_stdout" 2>"$daemon_stderr" &
+          daemon_pid=$!
+          for _ in $(seq 1 400); do
+            if [[ -s $home/connection.json ]] \
+              && target/release/mealyctl --home "$home" health >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              echo "live-provider daemon exited before health" >&2
+              exit 70
+            fi
+            sleep 0.05
+          done
+          target/release/mealyctl --home "$home" doctor >"$RUNNER_TEMP/mealy-live-doctor.json"
+          jq -e '.controlPlaneReady == true and .sandboxAvailable == true' \
+            "$RUNNER_TEMP/mealy-live-doctor.json" >/dev/null
+          session=$(target/release/mealyctl --home "$home" session create)
+          session_id=$(jq -er '.sessionId' <<<"$session")
+          marker="Live provider smoke $session_id: use workspace.read with workspaceId live-smoke and path evidence.txt, then cite workspace://live-smoke/evidence.txt and briefly report its LIVE_PROVIDER_EVIDENCE canary."
+          target/release/mealyctl --home "$home" session send "$session_id" "$marker" \
+            --idempotency-key live-provider-smoke-1 >"$RUNNER_TEMP/mealy-live-admission.json"
+          task_id=
+          for _ in $(seq 1 1200); do
+            search=$(target/release/mealyctl --home "$home" session search --limit 1 "$marker")
+            task_id=$(jq -r '.hits[0].taskId // empty' <<<"$search")
+            if [[ -n $task_id ]]; then
+              task=$(target/release/mealyctl --home "$home" task status "$task_id")
+              status=$(jq -r '.status' <<<"$task")
+              if [[ $status == succeeded || $status == failed || $status == cancelled ]]; then
+                break
+              fi
+            fi
+            sleep 0.1
+          done
+          if [[ -z $task_id ]]; then
+            echo "live provider did not publish a canonical task" >&2
+            exit 70
+          fi
+          printf '%s\n' "$task" >"$RUNNER_TEMP/mealy-live-task.json"
+          jq -e '
+            .status == "succeeded"
+            and (.finalResponse | type == "string" and length > 0)
+            and (.finalResponse | contains("workspace://live-smoke/evidence.txt"))
+            and .modelAttempts >= 2
+            and .toolCalls >= 1
+            and .usage.usedModelCalls >= 1
+            and .usage.usedToolCalls >= 1
+            and .usage.reservedModelCalls == 0
+            and .usage.reservedToolCalls == 0
+            and .usage.reservedCostMicrounits == 0
+          ' "$RUNNER_TEMP/mealy-live-task.json" >/dev/null
+          target/release/mealyctl --home "$home" task replay "$task_id" \
+            >"$RUNNER_TEMP/mealy-live-replay.json"
+          jq -e '
+            .mode == "recorded_only"
+            and .evidenceComplete == true
+            and .liveProviderCalls == 0
+            and .liveToolCalls == 0
+          ' "$RUNNER_TEMP/mealy-live-replay.json" >/dev/null
+          target/release/mealyctl --home "$home" status >"$RUNNER_TEMP/mealy-live-status.json"
+          jq -e '
+            .providerHealth == "healthy"
+            and ([.providerEndpoints[].invocationCount] | add // 0) >= 1
+          ' "$RUNNER_TEMP/mealy-live-status.json" >/dev/null
+          target/release/mealyctl --home "$home" usage --days 1 \
+            >"$RUNNER_TEMP/mealy-live-usage.json"
+          jq -e '([.buckets[].completedRuns] | add // 0) >= 1' \
+            "$RUNNER_TEMP/mealy-live-usage.json" >/dev/null
+          if contains_credential \
+            "$daemon_stdout" "$daemon_stderr" "$RUNNER_TEMP"/mealy-live-*.json \
+            "$home/config.json" "$home"/config-history/*.json; then
+            echo "provider credential appeared in live smoke output" >&2
+            exit 70
+          fi
+          credential=
+          target/release/mealyctl --home "$home" drain >"$RUNNER_TEMP/mealy-live-drain.json"
+          for _ in $(seq 1 400); do
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.05
+          done
+          if kill -0 "$daemon_pid" 2>/dev/null; then
+            echo "live-provider daemon did not drain" >&2
+            exit 70
+          fi
+          wait "$daemon_pid"
+          daemon_pid=
+          echo "live provider smoke passed for $LIVE_PROVIDER/$LIVE_MODEL"

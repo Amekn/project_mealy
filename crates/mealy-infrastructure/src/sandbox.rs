@@ -39,6 +39,8 @@ pub struct SandboxRuntimeBinding {
     pub host_path: PathBuf,
     /// Exact absolute path at which the dynamic loader expects that file in the sandbox.
     pub sandbox_path: PathBuf,
+    /// Optional dispatch-time SHA-256 pin for executable-like runtime files.
+    pub identity_digest: Option<String>,
 }
 
 /// Trusted construction parameters for the Linux Bubblewrap adapter.
@@ -132,7 +134,7 @@ impl LinuxBubblewrapExecutor {
     }
 
     fn probe_host_capability(&self) -> Result<(), ExecutorError> {
-        let mut command = self.base_command();
+        let mut command = self.base_command(None);
         command
             .arg("--")
             .arg(SANDBOX_WORKER_PATH)
@@ -184,10 +186,48 @@ impl LinuxBubblewrapExecutor {
                 "this proof adapter does not supply worker environment variables".to_owned(),
             ));
         }
-        if request.allow_process_spawn || request.maximum_processes != 0 {
-            return Err(unsupported(
-                "this proof adapter does not permit worker child processes".to_owned(),
-            ));
+        if request.allow_process_spawn {
+            let command_id = request
+                .normalized_arguments
+                .get("commandId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| canonical_runtime_id(value))
+                .ok_or_else(|| unsupported("process command identity is invalid".to_owned()))?;
+            let sandbox_path = PathBuf::from(format!("/commands/{command_id}"));
+            let command_binding = self
+                .config
+                .runtime_bindings
+                .iter()
+                .find(|binding| {
+                    binding.sandbox_path == sandbox_path && binding.identity_digest.is_some()
+                })
+                .ok_or_else(|| {
+                    unsupported(
+                        "process request exceeds the configured direct-executable boundary"
+                            .to_owned(),
+                    )
+                })?;
+            if command_binding
+                .identity_digest
+                .as_ref()
+                .is_some_and(|digest| {
+                    digest_file(&command_binding.host_path).as_ref() != Ok(digest)
+                })
+            {
+                return Err(ExecutorError::ExecutableIdentityMismatch);
+            }
+            if request.profile != PolicyProfile::WorkspaceWrite
+                || request.maximum_processes > 32
+                || request
+                    .normalized_arguments
+                    .get("operation")
+                    .and_then(serde_json::Value::as_str)
+                    != Some("run_process")
+            {
+                return Err(unsupported(
+                    "process request exceeds the configured direct-executable boundary".to_owned(),
+                ));
+            }
         }
         for mount in request.readable_roots.iter().chain(&request.writable_roots) {
             let host = Path::new(&mount.host_path);
@@ -225,7 +265,7 @@ impl LinuxBubblewrapExecutor {
         Ok(())
     }
 
-    fn base_command(&self) -> Command {
+    fn base_command(&self, selected_command_id: Option<&str>) -> Command {
         let mut command = Command::new(&self.config.bubblewrap_path);
         command.env_clear().args([
             "--unshare-all",
@@ -255,6 +295,11 @@ impl LinuxBubblewrapExecutor {
             .arg(&self.config.worker_path)
             .arg(SANDBOX_WORKER_PATH);
         for binding in &self.config.runtime_bindings {
+            if command_binding_id(binding).is_some()
+                && command_binding_id(binding) != selected_command_id
+            {
+                continue;
+            }
             command
                 .arg("--ro-bind")
                 .arg(&binding.host_path)
@@ -264,7 +309,14 @@ impl LinuxBubblewrapExecutor {
     }
 
     fn command_for_request(&self, request: &ExecutorRequest) -> Command {
-        let mut command = self.base_command();
+        let selected_command_id = request.allow_process_spawn.then(|| {
+            request
+                .normalized_arguments
+                .get("commandId")
+                .and_then(serde_json::Value::as_str)
+                .expect("preflight validates process command identity")
+        });
+        let mut command = self.base_command(selected_command_id);
         let mounts = request
             .readable_roots
             .iter()
@@ -301,6 +353,30 @@ impl LinuxBubblewrapExecutor {
             .stderr(Stdio::piped());
         command
     }
+}
+
+fn command_binding_id(binding: &SandboxRuntimeBinding) -> Option<&str> {
+    binding.identity_digest.as_ref()?;
+    let relative = binding.sandbox_path.strip_prefix("/commands").ok()?;
+    let mut components = relative.components();
+    let id = match components.next()? {
+        std::path::Component::Normal(id) => id.to_str()?,
+        _ => return None,
+    };
+    if components.next().is_none() && canonical_runtime_id(id) {
+        Some(id)
+    } else {
+        None
+    }
+}
+
+fn canonical_runtime_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('.')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 impl SandboxExecutor for LinuxBubblewrapExecutor {
@@ -546,9 +622,16 @@ fn validate_config(config: LinuxBubblewrapConfig) -> Result<ValidatedConfig, Exe
         {
             return Err(unsupported("runtime binding is invalid".to_owned()));
         }
+        let host_path = canonical_regular_file(&binding.host_path)?;
+        if binding.identity_digest.as_ref().is_some_and(|digest| {
+            !is_sha256_digest(digest) || digest_file(&host_path).as_ref() != Ok(digest)
+        }) {
+            return Err(ExecutorError::ExecutableIdentityMismatch);
+        }
         runtime_bindings.push(SandboxRuntimeBinding {
-            host_path: canonical_regular_file(&binding.host_path)?,
+            host_path,
             sandbox_path: binding.sandbox_path,
+            identity_digest: binding.identity_digest,
         });
     }
     runtime_bindings.sort_by(|left, right| left.sandbox_path.cmp(&right.sandbox_path));

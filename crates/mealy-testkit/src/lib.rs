@@ -2,8 +2,9 @@
 
 use mealy_application::{
     CancellationProbe, Clock, IdGenerator, ModelProvider, ProviderCapabilities, ProviderError,
-    ProviderErrorClass, ProviderOutput, ProviderPricing, ProviderRequest, ProviderResponse,
-    ReadOnlyTool, ReadToolDescriptor, ReadToolError, ReadToolOutput, sha256_digest,
+    ProviderErrorClass, ProviderFailureDisposition, ProviderOutput, ProviderPricing,
+    ProviderRequest, ProviderResponse, ReadOnlyTool, ReadToolDescriptor, ReadToolError,
+    ReadToolOutput, sha256_digest,
 };
 use mealy_domain::{
     ApprovalId, ArtifactId, AttemptId, ChannelBindingId, CompactionId, ContextEpochId,
@@ -254,6 +255,7 @@ fn provider_error(
         class,
         message: message.to_owned(),
         retryable,
+        disposition: ProviderFailureDisposition::Known,
     }
 }
 
@@ -397,6 +399,10 @@ impl FixtureReadTool {
 impl ReadOnlyTool for FixtureReadTool {
     fn descriptor(&self) -> ReadToolDescriptor {
         self.descriptor.clone()
+    }
+
+    fn validate_arguments(&self, arguments: &serde_json::Value) -> Result<(), ReadToolError> {
+        parse_resource_id(arguments).map(|_| ())
     }
 
     fn execute(

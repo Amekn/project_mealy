@@ -1,14 +1,14 @@
 use super::SqliteStore;
 use mealy_application::{
-    CompleteRunCommit, HeartbeatCommit, LeaseClaimCommit, LeaseClaimOutcome, LeaseClaimReceipt,
-    ReleaseLeaseCommit, RunCompletionReceipt, RunCompletionStatus, SchedulerStore,
-    SchedulerStoreError, sha256_digest,
+    AGENT_DELEGATE_RESULT_LOCATOR, AGENT_DELEGATE_TOOL_ID, AgentNextAction, CompleteRunCommit,
+    HeartbeatCommit, LeaseClaimCommit, LeaseClaimOutcome, LeaseClaimReceipt, ReleaseLeaseCommit,
+    RunCompletionReceipt, RunCompletionStatus, SchedulerStore, SchedulerStoreError, sha256_digest,
 };
 use mealy_domain::{
     CorrelationId, FencingToken, LeaseFence, LeaseStatus, RunId, TaskId, TurnId, WorkLease,
 };
 use rusqlite::{ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{str::FromStr, time::SystemTime};
 
 impl SchedulerStore for SqliteStore {
@@ -256,19 +256,23 @@ impl SchedulerStore for SqliteStore {
                 params![commit.status.as_str(), row.task_id, row.task_revision],
             )
             .map_err(map_sqlite_error)?;
-        let session_changed = transaction
-            .execute(
-                "UPDATE session SET active_turn_id = NULL, revision = revision + 1, \
-                                    updated_at_ms = MAX(updated_at_ms, ?1) \
-                 WHERE id = ?2 AND active_turn_id = ?3 AND revision = ?4",
-                params![
-                    completed_at_ms,
-                    row.session_id,
-                    row.turn_id,
-                    row.session_revision,
-                ],
-            )
-            .map_err(map_sqlite_error)?;
+        let session_changed = if row.turn_kind == "canonical" {
+            transaction
+                .execute(
+                    "UPDATE session SET active_turn_id = NULL, revision = revision + 1, \
+                                        updated_at_ms = MAX(updated_at_ms, ?1) \
+                     WHERE id = ?2 AND active_turn_id = ?3 AND revision = ?4",
+                    params![
+                        completed_at_ms,
+                        row.session_id,
+                        row.turn_id,
+                        row.session_revision,
+                    ],
+                )
+                .map_err(map_sqlite_error)?
+        } else {
+            1
+        };
         let turn_changed = transaction
             .execute(
                 "UPDATE turn SET status = ?1, revision = revision + 1, completed_at_ms = ?2 \
@@ -292,13 +296,23 @@ impl SchedulerStore for SqliteStore {
             return Err(SchedulerStoreError::StaleFence);
         }
 
+        if row.turn_kind == "delegated" {
+            settle_delegated_child(&transaction, &commit, &row, token, completed_at_ms)?;
+        }
+
         append_completion_events(&transaction, &commit, &row, completed_at_ms, next_token)?;
+        let outbox_topic = if row.turn_kind == "delegated" {
+            "delegation.completed"
+        } else {
+            "session.turn_completed"
+        };
         transaction
             .execute(
                 "INSERT INTO outbox(outbox_id, topic, payload_json, created_at_ms) \
-                 VALUES (?1, 'session.turn_completed', ?2, ?3)",
+                 VALUES (?1, ?2, ?3, ?4)",
                 params![
                     commit.outbox_id.to_string(),
+                    outbox_topic,
                     json!({
                         "session_id": row.session_id,
                         "turn_id": row.turn_id,
@@ -306,6 +320,7 @@ impl SchedulerStore for SqliteStore {
                         "run_id": commit.fence.run_id(),
                         "status": commit.status.as_str(),
                         "summary": commit.summary,
+                        "turn_kind": row.turn_kind,
                     })
                     .to_string(),
                     completed_at_ms,
@@ -329,6 +344,7 @@ impl SchedulerStore for SqliteStore {
 struct CompletionRow {
     task_id: String,
     turn_id: String,
+    turn_kind: String,
     session_id: String,
     run_revision: i64,
     task_revision: i64,
@@ -345,17 +361,22 @@ fn load_completion(
 ) -> Result<CompletionRow, SchedulerStoreError> {
     transaction
         .query_row(
-            "SELECT r.task_id, t.id, t.session_id, r.revision, task.revision, t.revision, \
-                    s.revision, s.principal_id \
+            "SELECT r.task_id, t.id, t.turn_kind, t.session_id, r.revision, task.revision, \
+                    t.revision, s.revision, s.principal_id \
              FROM run r \
              JOIN task ON task.id = r.task_id \
              JOIN turn t ON t.run_id = r.id AND t.task_id = r.task_id \
-             JOIN session s ON s.id = t.session_id AND s.active_turn_id = t.id \
+             JOIN session s ON s.id = t.session_id \
              JOIN work_lease l ON l.run_id = r.id \
              WHERE r.id = ?1 AND r.status = 'running' AND r.current_fencing_token = ?2 \
                AND task.status IN ('running', 'cancelling') AND t.status = 'active' \
                AND l.lease_id = ?3 AND l.owner_id = ?4 AND l.fencing_token = ?2 \
                AND l.state = 'active' AND l.heartbeat_at_ms <= ?5 AND l.expires_at_ms > ?5 \
+               AND ((t.turn_kind = 'canonical' AND s.active_turn_id = t.id) \
+                    OR (t.turn_kind = 'delegated' AND EXISTS(\
+                        SELECT 1 FROM delegation \
+                        WHERE delegation.child_run_id = r.id \
+                          AND delegation.state = 'running'))) \
                AND (?6 <> 'succeeded' OR (task.status = 'running' \
                     AND r.cancellation_requested_at_ms IS NULL \
                     AND (NOT EXISTS(SELECT 1 FROM run_budget_usage WHERE run_id = r.id) \
@@ -373,12 +394,13 @@ fn load_completion(
                 Ok(CompletionRow {
                     task_id: row.get(0)?,
                     turn_id: row.get(1)?,
-                    session_id: row.get(2)?,
-                    run_revision: row.get(3)?,
-                    task_revision: row.get(4)?,
-                    turn_revision: row.get(5)?,
-                    session_revision: row.get(6)?,
-                    principal_id: row.get(7)?,
+                    turn_kind: row.get(2)?,
+                    session_id: row.get(3)?,
+                    run_revision: row.get(4)?,
+                    task_revision: row.get(5)?,
+                    turn_revision: row.get(6)?,
+                    session_revision: row.get(7)?,
+                    principal_id: row.get(8)?,
                 })
             },
         )
@@ -724,6 +746,276 @@ struct IncompleteModelSettlement {
     charged_output_bytes: i64,
 }
 
+struct DelegatedParentCompletion {
+    delegation_id: String,
+    parent_run_id: String,
+    parent_task_id: String,
+    parent_tool_call_id: String,
+    child_task_id: String,
+    correlation_id: String,
+    cancellation_requested: bool,
+}
+
+#[allow(clippy::too_many_lines)]
+fn settle_delegated_child(
+    transaction: &Transaction<'_>,
+    commit: &CompleteRunCommit,
+    row: &CompletionRow,
+    child_token: i64,
+    completed_at_ms: i64,
+) -> Result<(), SchedulerStoreError> {
+    let parent = transaction
+        .query_row(
+            "SELECT delegation.id, delegation.parent_run_id, parent.task_id, \
+                    json_extract(delegation.context_package_json, '$.parentToolCallId'), \
+                    delegation.child_task_id, parent.correlation_id, \
+                    parent.cancellation_requested_at_ms IS NOT NULL \
+             FROM delegation \
+             JOIN run parent ON parent.id = delegation.parent_run_id \
+             JOIN task parent_task ON parent_task.id = parent.task_id \
+             JOIN tool_call tool \
+               ON tool.tool_call_id = json_extract(\
+                    delegation.context_package_json, '$.parentToolCallId') \
+              AND tool.run_id = parent.id AND tool.tool_id = ?1 AND tool.state = 'running' \
+             JOIN run_loop_state loop ON loop.run_id = parent.id \
+               AND loop.next_action = 'dispatch_read_tool' \
+               AND loop.current_tool_call_id = tool.tool_call_id \
+             WHERE delegation.child_run_id = ?2 AND delegation.child_task_id = ?3 \
+               AND delegation.state = 'running' AND parent.status = 'waiting' \
+               AND parent_task.status IN ('waiting', 'cancelling') \
+               AND NOT EXISTS(SELECT 1 FROM work_lease lease \
+                              WHERE lease.run_id = parent.id AND lease.state = 'active')",
+            params![
+                AGENT_DELEGATE_TOOL_ID,
+                commit.fence.run_id().to_string(),
+                row.task_id,
+            ],
+            |result| {
+                Ok(DelegatedParentCompletion {
+                    delegation_id: result.get(0)?,
+                    parent_run_id: result.get(1)?,
+                    parent_task_id: result.get(2)?,
+                    parent_tool_call_id: result.get(3)?,
+                    child_task_id: result.get(4)?,
+                    correlation_id: result.get(5)?,
+                    cancellation_requested: result.get::<_, i64>(6)? != 0,
+                })
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .ok_or_else(|| invariant("delegated child has no waiting parent tool boundary"))?;
+    if parent.child_task_id != row.task_id {
+        return Err(invariant("delegated child task linkage diverged"));
+    }
+    let result = json!({
+        "contractVersion": "mealy.delegation-result.v1",
+        "delegationId": parent.delegation_id,
+        "childTaskId": row.task_id,
+        "childRunId": commit.fence.run_id(),
+        "status": commit.status.as_str(),
+        "summary": commit.summary,
+        "sourceLocator": AGENT_DELEGATE_RESULT_LOCATOR,
+    });
+    let result_json = result.to_string();
+    if result_json.is_empty() || result_json.len() > 64 * 1024 {
+        return Err(invariant(
+            "delegated child result exceeds the parent tool-output bound",
+        ));
+    }
+    let result_digest = sha256_digest(result_json.as_bytes());
+    let result_size = i64::try_from(result_json.len())
+        .map_err(|_| invariant("delegated child result size exceeds SQLite"))?;
+    let delegation_changed = transaction
+        .execute(
+            "UPDATE delegation SET state = ?1, result_json = ?2, result_digest = ?3, \
+                                   result_fencing_token = ?4, completed_at_ms = ?5 \
+             WHERE id = ?6 AND child_run_id = ?7 AND state = 'running'",
+            params![
+                commit.status.as_str(),
+                result_json,
+                result_digest,
+                child_token,
+                completed_at_ms,
+                parent.delegation_id,
+                commit.fence.run_id().to_string(),
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    let tool_changed = transaction
+        .execute(
+            "UPDATE tool_call SET state = 'succeeded', completed_at_ms = ?1, \
+                output_inline = ?2, output_digest = ?3, output_size_bytes = ?4, \
+                output_media_type = 'application/json', output_source_locator = ?5 \
+             WHERE tool_call_id = ?6 AND run_id = ?7 AND state = 'running' \
+               AND started_at_ms + timeout_ms >= ?1",
+            params![
+                completed_at_ms,
+                result_json,
+                result_digest,
+                result_size,
+                AGENT_DELEGATE_RESULT_LOCATOR,
+                parent.parent_tool_call_id,
+                parent.parent_run_id,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    let budget_changed = transaction
+        .execute(
+            "UPDATE run_budget_usage SET revision = revision + 1, \
+                reserved_delegated_runs = reserved_delegated_runs - 1, \
+                used_delegated_runs = used_delegated_runs + 1, \
+                reserved_tool_calls = reserved_tool_calls - 1, \
+                used_tool_calls = used_tool_calls + 1, \
+                used_output_bytes = used_output_bytes + ?1 \
+             WHERE run_id = ?2 AND reserved_delegated_runs >= 1 \
+               AND reserved_tool_calls >= 1 \
+               AND used_output_bytes + reserved_output_bytes + ?1 <= maximum_output_bytes",
+            params![result_size, parent.parent_run_id],
+        )
+        .map_err(map_sqlite_error)?;
+    let loop_changed = transaction
+        .execute(
+            "UPDATE run_loop_state SET revision = revision + 1, \
+                                      next_action = 'compile_after_tool', updated_at_ms = ?1 \
+             WHERE run_id = ?2 AND next_action = 'dispatch_read_tool' \
+               AND current_tool_call_id = ?3",
+            params![
+                completed_at_ms,
+                parent.parent_run_id,
+                parent.parent_tool_call_id,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    let parent_run_changed = transaction
+        .execute(
+            "UPDATE run SET status = 'queued', revision = revision + 1, \
+                            next_attempt_at_ms = NULL, updated_at_ms = MAX(updated_at_ms, ?1) \
+             WHERE id = ?2 AND status = 'waiting' \
+               AND NOT EXISTS(SELECT 1 FROM work_lease lease \
+                              WHERE lease.run_id = run.id AND lease.state = 'active')",
+            params![completed_at_ms, parent.parent_run_id],
+        )
+        .map_err(map_sqlite_error)?;
+    let expected_task_status = if parent.cancellation_requested {
+        "cancelling"
+    } else {
+        "waiting"
+    };
+    let resumed_task_status = if parent.cancellation_requested {
+        "cancelling"
+    } else {
+        "queued"
+    };
+    let parent_task_changed = transaction
+        .execute(
+            "UPDATE task SET status = ?1, revision = revision + 1 \
+             WHERE id = ?2 AND status = ?3",
+            params![
+                resumed_task_status,
+                parent.parent_task_id,
+                expected_task_status,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    if [
+        delegation_changed,
+        tool_changed,
+        budget_changed,
+        loop_changed,
+        parent_run_changed,
+        parent_task_changed,
+    ] != [1, 1, 1, 1, 1, 1]
+    {
+        return Err(invariant(
+            "delegated child result and parent resume were not current together",
+        ));
+    }
+    let correlation_id = parse_id(&parent.correlation_id, "parent correlation ID")?;
+    super::agent::append_agent_event(
+        transaction,
+        commit.delegation_event_id,
+        "delegation",
+        &parent.delegation_id,
+        match commit.status {
+            RunCompletionStatus::Succeeded => "delegation.succeeded",
+            RunCompletionStatus::Failed => "delegation.failed",
+            RunCompletionStatus::Cancelled => "delegation.cancelled",
+        },
+        completed_at_ms,
+        correlation_id,
+        json!({
+            "child_run_id": commit.fence.run_id(),
+            "fencing_token": child_token,
+            "result_digest": result_digest,
+            "status": commit.status.as_str(),
+            "parent_run_id": parent.parent_run_id,
+        }),
+    )
+    .map_err(|error| invariant(format!("delegation event failed: {error}")))?;
+    super::agent::append_agent_event(
+        transaction,
+        commit.parent_tool_event_id,
+        "tool_call",
+        &parent.parent_tool_call_id,
+        "tool.call.succeeded",
+        completed_at_ms,
+        correlation_id,
+        json!({
+            "run_id": parent.parent_run_id,
+            "output_digest": result_digest,
+            "output_size_bytes": result_size,
+            "output_media_type": "application/json",
+            "source_locator": AGENT_DELEGATE_RESULT_LOCATOR,
+            "artifact_id": Value::Null,
+        }),
+    )
+    .map_err(|error| invariant(format!("delegation tool event failed: {error}")))?;
+    super::agent::append_agent_event(
+        transaction,
+        commit.parent_run_event_id,
+        "run",
+        &parent.parent_run_id,
+        "run.delegation_ready",
+        completed_at_ms,
+        correlation_id,
+        json!({
+            "delegation_id": parent.delegation_id,
+            "child_run_id": commit.fence.run_id(),
+            "cancelled_parent": parent.cancellation_requested,
+        }),
+    )
+    .map_err(|error| invariant(format!("parent delegation run event failed: {error}")))?;
+    super::agent::append_agent_event(
+        transaction,
+        commit.parent_task_event_id,
+        "task",
+        &parent.parent_task_id,
+        "task.delegation_ready",
+        completed_at_ms,
+        correlation_id,
+        json!({
+            "delegation_id": parent.delegation_id,
+            "run_id": parent.parent_run_id,
+            "status": resumed_task_status,
+        }),
+    )
+    .map_err(|error| invariant(format!("parent delegation task event failed: {error}")))?;
+    super::agent::append_checkpoint(
+        transaction,
+        parse_id(&parent.parent_run_id, "parent run ID")?,
+        AgentNextAction::CompileAfterTool,
+        None,
+        None,
+        Some(parent.parent_tool_call_id),
+        commit.parent_checkpoint_event_id,
+        completed_at_ms,
+        correlation_id,
+        json!({"reason": "tool_result_committed"}),
+    )
+    .map_err(|error| invariant(format!("parent delegation checkpoint failed: {error}")))
+}
+
 fn append_completion_events(
     transaction: &Transaction<'_>,
     commit: &CompleteRunCommit,
@@ -732,7 +1024,7 @@ fn append_completion_events(
     current_token: i64,
 ) -> Result<(), SchedulerStoreError> {
     let run_id = commit.fence.run_id().to_string();
-    let entries = [
+    let mut entries = vec![
         (
             commit.run_event_id,
             "run",
@@ -760,7 +1052,9 @@ fn append_completion_events(
             completion_event_type("turn", commit.status),
             json!({ "run_id": run_id, "status": commit.status.turn_status() }),
         ),
-        (
+    ];
+    if row.turn_kind == "canonical" {
+        entries.push((
             commit.session_event_id,
             "session",
             row.session_id.as_str(),
@@ -770,8 +1064,8 @@ fn append_completion_events(
                 "run_id": run_id,
                 "status": commit.status.turn_status(),
             }),
-        ),
-    ];
+        ));
+    }
     for (event_id, kind, id, event_type, payload) in entries {
         let sequence = next_sequence(transaction, kind, id)?;
         append_event(
@@ -815,6 +1109,8 @@ struct RunnableRow {
     correlation_id: String,
     current_fencing_token: i64,
     task_status: String,
+    agent_role: String,
+    delegation_id: Option<String>,
 }
 
 fn load_runnable(
@@ -824,11 +1120,15 @@ fn load_runnable(
 ) -> Result<Option<RunnableRow>, SchedulerStoreError> {
     transaction
         .query_row(
-            "SELECT r.id, r.task_id, t.id, r.correlation_id, r.current_fencing_token, task.status \
+            "SELECT r.id, r.task_id, t.id, r.correlation_id, r.current_fencing_token, \
+                    task.status, r.agent_role, delegation.id \
              FROM run r JOIN turn t ON t.run_id = r.id JOIN task ON task.id = r.task_id \
              JOIN session candidate_session ON candidate_session.id = t.session_id \
+             LEFT JOIN delegation ON delegation.child_run_id = r.id \
              WHERE r.status = 'queued' \
                AND task.status IN ('queued', 'running', 'cancelling') \
+               AND ((r.agent_role = 'delegate' AND delegation.state = 'queued') \
+                    OR (r.agent_role <> 'delegate' AND delegation.id IS NULL)) \
                AND (r.next_attempt_at_ms IS NULL OR r.next_attempt_at_ms <= ?1) \
                AND NOT EXISTS(SELECT 1 FROM work_lease l WHERE l.run_id = r.id AND l.state = 'active') \
                AND (SELECT COUNT(*) FROM work_lease active \
@@ -861,6 +1161,8 @@ fn load_runnable(
                     correlation_id: row.get(3)?,
                     current_fencing_token: row.get(4)?,
                     task_status: row.get(5)?,
+                    agent_role: row.get(6)?,
+                    delegation_id: row.get(7)?,
                 })
             },
         )
@@ -904,13 +1206,30 @@ fn transition_claimed_work(
     let run_changed = transaction
         .execute(
             "UPDATE run SET status = 'running', revision = revision + 1, \
-                            current_fencing_token = ?1, updated_at_ms = MAX(updated_at_ms, ?2) \
+                            current_fencing_token = ?1, next_attempt_at_ms = NULL, \
+                            updated_at_ms = MAX(updated_at_ms, ?2) \
              WHERE id = ?3 AND status = 'queued' AND current_fencing_token = ?4",
             params![token, claimed_at_ms, row.run_id, row.current_fencing_token],
         )
         .map_err(map_sqlite_error)?;
     if run_changed != 1 {
         return Err(SchedulerStoreError::Conflict);
+    }
+    if row.agent_role == "delegate" {
+        let delegation_id = row
+            .delegation_id
+            .as_deref()
+            .ok_or_else(|| invariant("delegated run has no delegation contract"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE delegation SET state = 'running' \
+                 WHERE id = ?1 AND child_run_id = ?2 AND state = 'queued'",
+                params![delegation_id, row.run_id],
+            )
+            .map_err(map_sqlite_error)?;
+        if changed != 1 {
+            return Err(SchedulerStoreError::Conflict);
+        }
     }
     match row.task_status.as_str() {
         "queued" => {

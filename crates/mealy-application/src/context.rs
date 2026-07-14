@@ -455,6 +455,14 @@ pub enum ContextError {
     /// The mandatory system baseline alone exceeds the provider budget.
     #[error("system baseline exceeds the context token budget")]
     BaselineExceedsBudget,
+    /// The mandatory baseline and latest authenticated user input cannot fit together.
+    #[error("mandatory context token estimate {actual} exceeds maximum {maximum}")]
+    MandatoryContextExceedsBudget {
+        /// Estimated tokens required by the baseline and mandatory sources.
+        actual: u64,
+        /// Configured maximum.
+        maximum: u64,
+    },
     /// Provider-neutral projection could not be encoded for hashing.
     #[error("context provider projection cannot be encoded")]
     ProjectionEncoding,
@@ -502,7 +510,21 @@ pub fn compile_context(
     if baseline_tokens > token_budget {
         return Err(ContextError::BaselineExceedsBudget);
     }
+    let mandatory_source_tokens = sources
+        .iter()
+        .filter(|source| source.source_type == "user")
+        .fold(0_u64, |total, source| {
+            total.saturating_add(estimate_tokens(&source.message.content))
+        });
+    let mandatory_tokens = baseline_tokens.saturating_add(mandatory_source_tokens);
+    if mandatory_tokens > token_budget {
+        return Err(ContextError::MandatoryContextExceedsBudget {
+            actual: mandatory_tokens,
+            maximum: token_budget,
+        });
+    }
     let mut total = baseline_tokens;
+    let mut mandatory_tokens_remaining = mandatory_source_tokens;
     let mut messages = vec![NormalizedMessage {
         role: MessageRole::System,
         content: epoch.baseline_text.clone(),
@@ -529,12 +551,23 @@ pub fn compile_context(
     for (index, source) in sources.iter().enumerate() {
         let token_estimate = estimate_tokens(&source.message.content);
         let rendered_digest = sha256_digest(source.message.content.as_bytes());
-        let included = total
-            .checked_add(token_estimate)
-            .is_some_and(|candidate| candidate <= token_budget);
+        let mandatory = source.source_type == "user";
+        let included = if mandatory {
+            total
+                .checked_add(token_estimate)
+                .is_some_and(|candidate| candidate <= token_budget)
+        } else {
+            total
+                .checked_add(token_estimate)
+                .and_then(|candidate| candidate.checked_add(mandatory_tokens_remaining))
+                .is_some_and(|candidate| candidate <= token_budget)
+        };
         if included {
             total = total.saturating_add(token_estimate);
             messages.push(source.message.clone());
+        }
+        if mandatory {
+            mandatory_tokens_remaining = mandatory_tokens_remaining.saturating_sub(token_estimate);
         }
         items.push(ContextManifestItem {
             item_id: ids.generate_context_item_id(),
@@ -548,7 +581,9 @@ pub fn compile_context(
             source_locator: source.source_locator.clone(),
             source_content_digest: source.source_content_digest.clone(),
             rendered_content_digest: rendered_digest,
-            inclusion_reason: if included {
+            inclusion_reason: if mandatory {
+                "mandatory latest authenticated user input".to_owned()
+            } else if included {
                 "authorized canonical source within token budget".to_owned()
             } else {
                 "excluded by deterministic token budget".to_owned()
@@ -556,7 +591,9 @@ pub fn compile_context(
             sensitivity: source.sensitivity.clone(),
             token_estimate,
             transformation: "identity".to_owned(),
-            policy_decision: if included {
+            policy_decision: if mandatory {
+                "allow: mandatory owner input".to_owned()
+            } else if included {
                 "allow: owner session context".to_owned()
             } else {
                 "exclude: context budget".to_owned()
@@ -587,7 +624,7 @@ pub fn compile_context(
         turn_id,
         epoch_id: epoch.epoch_id,
         iteration,
-        compiler_version: "mealy.context.v1".to_owned(),
+        compiler_version: "mealy.context.v2".to_owned(),
         provider_residency: provider_residency.to_owned(),
         token_budget,
         total_token_estimate: total,

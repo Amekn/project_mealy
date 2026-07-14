@@ -1,11 +1,15 @@
 //! Public-process proofs for safe mode, operational maintenance, drain, and forensic recovery.
 
+#[cfg(target_os = "linux")]
+use mealy_protocol::SandboxProfileStatusResponse;
 use mealy_protocol::{
     API_VERSION, AdminStatusResponse, BackupResponse, BackupVerificationResponse,
-    ControlTaskRequest, CreateBackupRequest, CreateExportRequest, CreateSessionRequest,
-    CreateSessionResponse, DeliveryMode, DoctorResponse, DrainDaemonRequest, DrainDaemonResponse,
-    ExportKindRequest, ExportResponse, InputAdmissionResponse, LocalConnectionInfo,
-    ReadinessResponse, SubmitInputRequest, TaskControlReceipt, TaskResponse, TaskStatus,
+    ControlTaskRequest, CreateBackupRequest, CreateExportRequest, CreateScheduleRequest,
+    CreateSessionRequest, CreateSessionResponse, DeliveryMode, DoctorResponse, DrainDaemonRequest,
+    DrainDaemonResponse, ExportKindRequest, ExportResponse, InputAdmissionResponse,
+    LocalConnectionInfo, MissedRunPolicyCommand, ReadinessResponse, ScheduleLifecycleRequest,
+    ScheduleOverlapPolicyCommand, ScheduleResponse, ScheduleRunsResponse, ScheduleStatusResponse,
+    SchedulesResponse, SubmitInputRequest, TaskControlReceipt, TaskResponse, TaskStatus,
 };
 use reqwest::{Client, Response, StatusCode};
 use std::{
@@ -39,6 +43,22 @@ impl Daemon {
         Self { child }
     }
 
+    #[cfg(target_os = "linux")]
+    fn spawn_without_ambient_path(home: &Path) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_mealyd"))
+            .arg("--home")
+            .arg(home)
+            .env_clear()
+            .env("PATH", "/nonexistent")
+            .env("RUST_LOG", "error")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("mealyd process should start without ambient PATH");
+        Self { child }
+    }
+
     async fn wait(&mut self) -> ExitStatus {
         wait_for_process(&mut self.child).await
     }
@@ -51,6 +71,40 @@ impl Drop for Daemon {
             let _ = self.child.wait();
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dynamic_runtime_discovery_does_not_resolve_helpers_from_ambient_path() {
+    let home = TempDir::new().expect("temporary daemon home");
+    let client = http_client();
+    let mut daemon = Daemon::spawn_without_ambient_path(home.path());
+    let connection = wait_until_ready(&client, home.path()).await;
+
+    let doctor: DoctorResponse = authorized_get(&client, &connection, "/v1/admin/doctor").await;
+    assert!(doctor.control_plane_ready);
+    assert!(doctor.sandbox_available);
+    let workspace_write = doctor
+        .sandbox_profiles
+        .iter()
+        .find(|profile| profile.profile == "workspace_write")
+        .expect("workspace-write profile");
+    assert_eq!(
+        workspace_write.status,
+        SandboxProfileStatusResponse::Enforceable
+    );
+
+    let _: DrainDaemonResponse = authorized_post(
+        &client,
+        &connection,
+        "/v1/admin/drain",
+        &DrainDaemonRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    assert_eq!(daemon.wait().await.code(), Some(0));
+    assert_eq!(latest_daemon_status(home.path()), "clean");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -76,7 +130,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
         authorized_get(&client, &connection, "/v1/admin/status").await;
     assert!(status.safe_mode);
     assert!(status.admission_open);
-    assert_eq!(status.schema_version, 11);
+    assert_eq!(status.schema_version, 15);
     assert_eq!(status.provider_health, "healthy");
     let doctor: DoctorResponse = authorized_get(&client, &connection, "/v1/admin/doctor").await;
     assert!(doctor.control_plane_ready);
@@ -106,7 +160,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
         },
     )
     .await;
-    assert_eq!(backup.schema_version, 11);
+    assert_eq!(backup.schema_version, 15);
     assert!(backup.secrets_included);
     assert!(Path::new(&backup.path).join("manifest.json").is_file());
 
@@ -122,7 +176,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
     )
     .await;
     assert_eq!(verification.manifest_digest, backup.manifest_digest);
-    assert_eq!(verification.schema_version, 11);
+    assert_eq!(verification.schema_version, 15);
     assert!(verification.identity_verified);
 
     let export: ExportResponse = authorized_post(
@@ -228,6 +282,151 @@ async fn corrupt_database_open_preserves_original_and_sidecars_before_failure() 
             .is_some_and(|text| !text.is_empty())
     );
     assert!(!home.path().join("connection.json").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn recurring_schedule_api_is_revision_fenced_auditable_and_operationally_visible() {
+    let home = TempDir::new().expect("temporary daemon home");
+    let client = http_client();
+    let mut daemon = Daemon::spawn(
+        home.path(),
+        &["--promotion-delay-ms", "60000", "--agent-delay-ms", "60000"],
+    );
+    let connection = wait_until_ready(&client, home.path()).await;
+    let session: CreateSessionResponse = authorized_post(
+        &client,
+        &connection,
+        "/v1/sessions",
+        &CreateSessionRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+
+    let rejected = authorized_post_response(
+        &client,
+        &connection,
+        "/v1/schedules",
+        &CreateScheduleRequest {
+            api_version: API_VERSION.to_owned(),
+            schedule_id: mealy_domain::ScheduleId::new().to_string(),
+            session_id: session.session_id.clone(),
+            name: "unapproved action".to_owned(),
+            prompt: "/run perform an action".to_owned(),
+            cron_expression: "0 0 1 1 *".to_owned(),
+            timezone: "Pacific/Auckland".to_owned(),
+            missed_run_policy: MissedRunPolicyCommand::Latest,
+            overlap_policy: ScheduleOverlapPolicyCommand::SkipIfRunning,
+            misfire_grace_ms: 60_000,
+            allow_approval_required_action: false,
+        },
+    )
+    .await;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    let create_request = CreateScheduleRequest {
+        api_version: API_VERSION.to_owned(),
+        schedule_id: mealy_domain::ScheduleId::new().to_string(),
+        session_id: session.session_id,
+        name: "annual recovery review".to_owned(),
+        prompt: "Review durable recovery evidence.".to_owned(),
+        cron_expression: "0 0 1 1 *".to_owned(),
+        timezone: "Pacific/Auckland".to_owned(),
+        missed_run_policy: MissedRunPolicyCommand::Latest,
+        overlap_policy: ScheduleOverlapPolicyCommand::SkipIfRunning,
+        misfire_grace_ms: 60_000,
+        allow_approval_required_action: false,
+    };
+    let created: ScheduleResponse =
+        authorized_post(&client, &connection, "/v1/schedules", &create_request).await;
+    assert_eq!(created.status, ScheduleStatusResponse::Active);
+    assert_eq!(created.revision, 0);
+    assert!(created.next_due_at_ms.is_some());
+    let duplicate: ScheduleResponse =
+        authorized_post(&client, &connection, "/v1/schedules", &create_request).await;
+    assert_eq!(duplicate, created);
+    let mut conflicting_request = create_request.clone();
+    conflicting_request.name = "conflicting schedule identity reuse".to_owned();
+    let conflict =
+        authorized_post_response(&client, &connection, "/v1/schedules", &conflicting_request).await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let listed: SchedulesResponse = authorized_get(&client, &connection, "/v1/schedules").await;
+    assert_eq!(listed.schedules, vec![created.clone()]);
+    let status: AdminStatusResponse =
+        authorized_get(&client, &connection, "/v1/admin/status").await;
+    assert_eq!(status.active_schedules, 1);
+    assert_eq!(status.paused_schedules, 0);
+    assert_eq!(status.claimed_schedule_runs, 0);
+
+    let paused: ScheduleResponse = authorized_post(
+        &client,
+        &connection,
+        &format!("/v1/schedules/{}/pause", created.schedule_id),
+        &ScheduleLifecycleRequest {
+            api_version: API_VERSION.to_owned(),
+            expected_revision: created.revision,
+        },
+    )
+    .await;
+    assert_eq!(paused.status, ScheduleStatusResponse::Paused);
+    assert_eq!(paused.revision, 1);
+    let stale = authorized_post_response(
+        &client,
+        &connection,
+        &format!("/v1/schedules/{}/resume", created.schedule_id),
+        &ScheduleLifecycleRequest {
+            api_version: API_VERSION.to_owned(),
+            expected_revision: created.revision,
+        },
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+
+    let resumed: ScheduleResponse = authorized_post(
+        &client,
+        &connection,
+        &format!("/v1/schedules/{}/resume", created.schedule_id),
+        &ScheduleLifecycleRequest {
+            api_version: API_VERSION.to_owned(),
+            expected_revision: paused.revision,
+        },
+    )
+    .await;
+    assert_eq!(resumed.status, ScheduleStatusResponse::Active);
+    assert_eq!(resumed.revision, 2);
+    let cancelled: ScheduleResponse = authorized_post(
+        &client,
+        &connection,
+        &format!("/v1/schedules/{}/cancel", created.schedule_id),
+        &ScheduleLifecycleRequest {
+            api_version: API_VERSION.to_owned(),
+            expected_revision: resumed.revision,
+        },
+    )
+    .await;
+    assert_eq!(cancelled.status, ScheduleStatusResponse::Cancelled);
+    assert_eq!(cancelled.revision, 3);
+    assert!(cancelled.next_due_at_ms.is_none());
+    let runs: ScheduleRunsResponse = authorized_get(
+        &client,
+        &connection,
+        &format!("/v1/schedules/{}/runs?limit=10", created.schedule_id),
+    )
+    .await;
+    assert!(runs.runs.is_empty());
+
+    let _: DrainDaemonResponse = authorized_post(
+        &client,
+        &connection,
+        "/v1/admin/drain",
+        &DrainDaemonRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    assert!(daemon.wait().await.success());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

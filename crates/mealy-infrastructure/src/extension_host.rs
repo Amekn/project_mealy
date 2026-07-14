@@ -93,6 +93,7 @@ pub fn inspect_extension_package(
         runtime_bindings.push(SandboxRuntimeBinding {
             host_path: canonical.clone(),
             sandbox_path: PathBuf::from(&runtime.sandbox_path),
+            identity_digest: None,
         });
         runtime_digests.push((canonical, runtime.digest.clone()));
     }

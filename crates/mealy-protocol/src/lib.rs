@@ -171,6 +171,70 @@ pub struct SessionStatusResponse {
     pub latest_cursor: TimelineCursor,
 }
 
+/// One recent session owned by the exact authenticated principal/channel binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummaryResponse {
+    /// Opaque session ID accepted by `chat --session-id`.
+    pub session_id: String,
+    /// Stable lifecycle spelling.
+    pub status: String,
+    /// Canonical optimistic-concurrency revision.
+    pub revision: u64,
+    /// Pending durable inputs.
+    pub pending_inputs: u64,
+    /// Active turn, when present.
+    pub active_turn_id: Option<String>,
+    /// UTC creation time in epoch milliseconds.
+    pub created_at_ms: i64,
+    /// UTC latest update time in epoch milliseconds.
+    pub updated_at_ms: i64,
+}
+
+/// Bounded recent-session discovery response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionsResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Most recently updated exact-binding sessions first.
+    pub sessions: Vec<SessionSummaryResponse>,
+}
+
+/// One bounded canonical-turn match from exact-binding transcript search.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSearchHitResponse {
+    /// Owning session accepted by `chat --session-id`.
+    pub session_id: String,
+    /// Canonical turn identity.
+    pub turn_id: String,
+    /// Canonical task identity accepted by task inspection commands.
+    pub task_id: String,
+    /// Bounded excerpt when the authenticated user side matched.
+    pub user_excerpt: Option<String>,
+    /// Digest of the complete canonical user input.
+    pub user_content_digest: String,
+    /// Bounded excerpt when the committed final assistant side matched.
+    pub assistant_excerpt: Option<String>,
+    /// Digest of the complete final assistant content when present.
+    pub assistant_content_digest: Option<String>,
+    /// UTC canonical turn creation time.
+    pub created_at_ms: i64,
+}
+
+/// Bounded, newest-first transcript search response for one exact authenticated binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSearchResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Literal query used by the storage boundary.
+    pub query: String,
+    /// Matching canonical turns.
+    pub hits: Vec<SessionSearchHitResponse>,
+}
+
 /// Stable transport projection of one task.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -351,6 +415,40 @@ pub struct TaskResponse {
     pub model_attempts: u64,
     /// Number of durable read-tool calls.
     pub tool_calls: u64,
+}
+
+/// Authorized current projection of one durable parent-to-child delegation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Opaque stable delegation ID.
+    pub delegation_id: String,
+    /// Waiting or completed parent run.
+    pub parent_run_id: String,
+    /// Child task visible through the normal task evidence API.
+    pub child_task_id: String,
+    /// Child run visible through timeline and replay evidence.
+    pub child_run_id: String,
+    /// Exact three-way-intersected child authority; never secret values.
+    pub effective_capabilities: serde_json::Value,
+    /// Exact separately enforced child budget.
+    pub child_budget: serde_json::Value,
+    /// Queued, running, succeeded, failed, or cancelled.
+    pub state: String,
+    /// Structured terminal result returned to the parent, when available.
+    pub result: Option<serde_json::Value>,
+}
+
+/// Bounded newest-first owner delegation list.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationsResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Authorized delegations.
+    pub delegations: Vec<DelegationResponse>,
 }
 
 /// Strict idempotent command requesting cooperative task cancellation.
@@ -1591,6 +1689,198 @@ pub struct RevokeWebhookChannelRequest {
     pub expected_revision: u64,
 }
 
+/// Administrative creation of one exact Telegram bot/user/chat binding.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateTelegramChannelRequest {
+    /// Requested semantic API version.
+    pub api_version: String,
+    /// Bot token read from a one-shot environment variable by the CLI.
+    pub bot_token: String,
+    /// Exact Telegram sender user ID allowed to submit updates.
+    pub telegram_user_id: i64,
+    /// Exact Telegram chat ID allowed for inbound and outbound messages.
+    pub telegram_chat_id: i64,
+    /// First update the binding may process; zero for manual-ID setup.
+    #[serde(default)]
+    pub initial_next_update_id: i64,
+}
+
+impl std::fmt::Debug for CreateTelegramChannelRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateTelegramChannelRequest")
+            .field("api_version", &self.api_version)
+            .field("bot_token", &"[REDACTED]")
+            .field("telegram_user_id", &self.telegram_user_id)
+            .field("telegram_chat_id", &self.telegram_chat_id)
+            .field("initial_next_update_id", &self.initial_next_update_id)
+            .finish()
+    }
+}
+
+/// Telegram channel lifecycle exposed to the owner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramChannelStatusResponse {
+    /// Polling, admission, and outbound delivery are active.
+    Active,
+    /// Bot-token authority is terminally revoked.
+    Revoked,
+}
+
+/// Owner-safe Telegram binding projection without bot-token material.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramChannelResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Stable channel binding.
+    pub binding_id: String,
+    /// Dedicated durable conversation session.
+    pub session_id: String,
+    /// Exact allowed Telegram sender.
+    pub telegram_user_id: i64,
+    /// Exact allowed Telegram chat.
+    pub telegram_chat_id: i64,
+    /// Bot user ID verified with `getMe` during setup.
+    pub bot_user_id: i64,
+    /// Bot username verified with `getMe` during setup.
+    pub bot_username: String,
+    /// Current lifecycle.
+    pub status: TelegramChannelStatusResponse,
+    /// First not-yet-terminally-processed update ID.
+    pub next_update_id: i64,
+    /// Optimistic-concurrency revision.
+    pub revision: u64,
+    /// Most recent successful Bot API poll time.
+    pub last_success_at_ms: Option<i64>,
+    /// Most recent failed Bot API poll time.
+    pub last_failure_at_ms: Option<i64>,
+    /// Consecutive poll failures.
+    pub consecutive_failures: u64,
+    /// Stable secret-free last error code.
+    pub last_error_code: Option<String>,
+    /// UTC creation time.
+    pub created_at_ms: i64,
+    /// UTC last lifecycle update time.
+    pub updated_at_ms: i64,
+}
+
+/// Deterministically ordered owner Telegram-channel list.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramChannelsResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Owner-authorized bindings.
+    pub channels: Vec<TelegramChannelResponse>,
+}
+
+/// Optimistic terminal Telegram-channel revocation command.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RevokeTelegramChannelRequest {
+    /// Requested semantic API version.
+    pub api_version: String,
+    /// Exact current channel revision.
+    pub expected_revision: u64,
+}
+
+/// Administrative creation of one exact Discord bot/human/DM binding.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateDiscordChannelRequest {
+    /// Requested semantic API version.
+    pub api_version: String,
+    /// Bot token read from a one-shot environment variable by the CLI.
+    pub bot_token: String,
+    /// Exact Discord human user snowflake allowed to submit messages.
+    pub discord_user_id: String,
+    /// Exact one-to-one Discord DM channel snowflake.
+    pub discord_channel_id: String,
+}
+
+impl std::fmt::Debug for CreateDiscordChannelRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateDiscordChannelRequest")
+            .field("api_version", &self.api_version)
+            .field("bot_token", &"[REDACTED]")
+            .field("discord_user_id", &self.discord_user_id)
+            .field("discord_channel_id", &self.discord_channel_id)
+            .finish()
+    }
+}
+
+/// Discord DM channel lifecycle exposed to the owner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscordChannelStatusResponse {
+    /// Polling, admission, and outbound delivery are active.
+    Active,
+    /// Bot-token authority is terminally revoked.
+    Revoked,
+}
+
+/// Owner-safe Discord DM binding projection without bot-token material.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordChannelResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Stable channel binding.
+    pub binding_id: String,
+    /// Dedicated durable conversation session.
+    pub session_id: String,
+    /// Exact allowed Discord human user snowflake.
+    pub discord_user_id: String,
+    /// Exact one-to-one Discord DM channel snowflake.
+    pub discord_channel_id: String,
+    /// Bot user snowflake verified during setup.
+    pub bot_user_id: String,
+    /// Bot username verified during setup.
+    pub bot_username: String,
+    /// Current lifecycle.
+    pub status: DiscordChannelStatusResponse,
+    /// Last terminally processed message snowflake.
+    pub after_message_id: Option<String>,
+    /// Optimistic-concurrency revision.
+    pub revision: u64,
+    /// Most recent Discord API poll time.
+    pub last_success_at_ms: Option<i64>,
+    /// Most recent failed poll time.
+    pub last_failure_at_ms: Option<i64>,
+    /// Consecutive poll failures.
+    pub consecutive_failures: u64,
+    /// Stable secret-free last error code.
+    pub last_error_code: Option<String>,
+    /// UTC creation time.
+    pub created_at_ms: i64,
+    /// UTC last lifecycle update time.
+    pub updated_at_ms: i64,
+}
+
+/// Deterministically ordered owner Discord-channel list.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordChannelsResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Owner-authorized bindings.
+    pub channels: Vec<DiscordChannelResponse>,
+}
+
+/// Optimistic terminal Discord-channel revocation command.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RevokeDiscordChannelRequest {
+    /// Requested semantic API version.
+    pub api_version: String,
+    /// Exact current channel revision.
+    pub expected_revision: u64,
+}
+
 /// Strict raw-body contract authenticated by the signed webhook ingress.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1639,6 +1929,42 @@ pub struct OperationalFailureResponse {
     pub occurred_at_ms: i64,
 }
 
+/// Secret-free live pressure plus durable cross-restart history for one configured endpoint.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderEndpointStatusResponse {
+    /// Stable wire-protocol adapter identity.
+    pub protocol: String,
+    /// Stable configured provider identity.
+    pub provider_id: String,
+    /// Exact configured model identity.
+    pub model_id: String,
+    /// Owner-declared residency/trust label.
+    pub residency: String,
+    /// Whether the endpoint is literal-loopback local.
+    pub local: bool,
+    /// Whether the endpoint emits bounded non-authoritative text deltas.
+    pub streaming: bool,
+    /// Current process-lifetime health classification.
+    pub health: String,
+    /// Owner-configured routing estimate.
+    pub estimated_latency_ms: u64,
+    /// Cumulative durably dispatched attempt count across retained daemon lifetimes.
+    pub invocation_count: u64,
+    /// Requests currently consuming the endpoint concurrency ceiling.
+    pub in_flight_requests: u64,
+    /// Configured simultaneous request ceiling.
+    pub maximum_concurrent_requests: u64,
+    /// Requests reserved in the current UTC minute window.
+    pub requests_in_current_minute: u64,
+    /// Configured request ceiling per minute.
+    pub requests_per_minute: u64,
+    /// Most recent live or durably committed successful endpoint response in epoch milliseconds.
+    pub last_success_at_ms: Option<i64>,
+    /// Most recent live or durably committed classified endpoint failure in epoch milliseconds.
+    pub last_failure_at_ms: Option<i64>,
+}
+
 /// Authenticated owner operational health projection and bounded gauges.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1677,12 +2003,40 @@ pub struct AdminStatusResponse {
     pub enabled_extensions: u64,
     /// Failed extensions.
     pub failed_extensions: u64,
-    /// Current built-in provider health classification.
+    /// Aggregate primary/fallback provider health classification.
     pub provider_health: String,
+    /// Effective provider identity selected for this daemon lifetime.
+    pub provider_id: String,
+    /// Effective model identity selected for this daemon lifetime.
+    pub provider_model_id: String,
+    /// Effective provider residency label used by routing policy.
+    pub provider_residency: String,
+    /// Whether the effective provider endpoint is local to this host.
+    pub provider_local: bool,
+    /// Primary followed by every explicit fallback endpoint and its independent health.
+    pub provider_endpoints: Vec<ProviderEndpointStatusResponse>,
+    /// Exact model-visible read tools enabled for newly promoted tasks in this daemon lifetime.
+    pub enabled_read_tools: Vec<String>,
+    /// Exact effect tools available only to explicitly selected action-mode tasks.
+    pub enabled_action_tools: Vec<String>,
     /// Current extension-host enforcement health classification.
     pub extension_host_health: String,
     /// Active signed channel bindings.
     pub active_channels: u64,
+    /// Active external channels with consecutive transport failures.
+    pub degraded_channels: u64,
+    /// Reserved remote updates awaiting terminal processing evidence.
+    pub reserved_channel_updates: u64,
+    /// Active recurring agent schedules.
+    pub active_schedules: u64,
+    /// Paused recurring agent schedules.
+    pub paused_schedules: u64,
+    /// Schedule occurrences currently held by a daemon claim.
+    pub claimed_schedule_runs: u64,
+    /// Terminally failed schedule occurrence admissions.
+    pub failed_schedule_runs: u64,
+    /// Policy-skipped schedule occurrences.
+    pub skipped_schedule_runs: u64,
     /// Current `SQLite` database and sidecar bytes.
     pub database_bytes: u64,
     /// Current committed artifact bytes.
@@ -1709,6 +2063,54 @@ pub struct AdminMetricsResponse {
     pub api_version: String,
     /// Gauge name to unsigned value.
     pub gauges: std::collections::BTreeMap<String, u64>,
+}
+
+/// One non-empty UTC-day aggregate of exact settled terminal-run usage.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUsageBucketResponse {
+    /// UTC day start in epoch milliseconds.
+    pub bucket_start_ms: i64,
+    /// UTC day end, clipped to the requested exclusive upper bound.
+    pub bucket_end_ms: i64,
+    /// Terminal root, delegated, or validation runs settled in this bucket.
+    pub completed_runs: u64,
+    /// Successfully completed runs.
+    pub succeeded_runs: u64,
+    /// Failed runs.
+    pub failed_runs: u64,
+    /// Cancelled runs.
+    pub cancelled_runs: u64,
+    /// Settled or conservatively charged provider calls.
+    pub used_model_calls: u64,
+    /// Settled read/effect tool calls.
+    pub used_tool_calls: u64,
+    /// Settled delegated child-run reservations.
+    pub used_delegated_runs: u64,
+    /// Classified provider/tool retries.
+    pub used_retries: u64,
+    /// Recorded provider input tokens.
+    pub used_input_tokens: u64,
+    /// Recorded provider output tokens.
+    pub used_output_tokens: u64,
+    /// Provider-neutral configured-price microunits, not an invoice amount.
+    pub used_cost_microunits: u64,
+    /// Recorded provider/tool output bytes.
+    pub used_output_bytes: u64,
+}
+
+/// Authenticated exact-owner terminal usage grouped by UTC completion day.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUsageReportResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Inclusive requested lower epoch-millisecond bound.
+    pub from_ms: i64,
+    /// Exclusive requested upper epoch-millisecond bound.
+    pub to_ms: i64,
+    /// Ordered non-empty UTC-day buckets; empty days are omitted.
+    pub buckets: Vec<AdminUsageBucketResponse>,
 }
 
 /// Authenticated request to begin bounded graceful drain.
@@ -1812,6 +2214,60 @@ pub struct BackupVerificationResponse {
     pub secrets_included: bool,
     /// Whether decrypted identity is active in the restored canonical registry.
     pub identity_verified: bool,
+}
+
+/// Offline stopped-home backup activation evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupActivationResponse {
+    /// Semantic response version.
+    pub api_version: String,
+    /// Activated immutable backup label.
+    pub name: String,
+    /// Newly active owner-local home.
+    pub home: String,
+    /// Complete pre-activation home retained beside it.
+    pub preserved_home: String,
+    /// Exact approved and activated backup manifest digest.
+    pub manifest_digest: String,
+    /// UTC atomic exchange time in epoch milliseconds.
+    pub activated_at_ms: i64,
+    /// Verified restored `SQLite` schema revision.
+    pub schema_version: u64,
+    /// Manifest-covered file count.
+    pub file_count: u64,
+    /// Manifest-covered aggregate bytes.
+    pub total_bytes: u64,
+    /// Canonical artifacts cross-checked before activation.
+    pub artifact_count: u64,
+}
+
+/// Offline stopped-home activation evidence for a pre-migration snapshot.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationBackupActivationResponse {
+    /// Semantic response version.
+    pub api_version: String,
+    /// Activated immutable migration-backup label.
+    pub migration_backup_name: String,
+    /// Newly active owner-local home.
+    pub home: String,
+    /// Complete migrated home retained beside it.
+    pub preserved_home: String,
+    /// Exact approved and activated migration manifest digest.
+    pub manifest_digest: String,
+    /// UTC atomic exchange time in epoch milliseconds.
+    pub activated_at_ms: i64,
+    /// Restored older state-schema revision.
+    pub from_schema_version: u64,
+    /// State-schema revision of the preserved migrated home.
+    pub to_schema_version: u64,
+    /// Snapshot-manifest file count.
+    pub file_count: u64,
+    /// Snapshot-manifest aggregate bytes.
+    pub total_bytes: u64,
+    /// Canonical artifacts cross-checked and copied before activation.
+    pub artifact_count: u64,
 }
 
 /// Authenticated request for an age-gated artifact retention pass.
@@ -1980,6 +2436,188 @@ pub struct TimelinePageResponse {
     pub has_more: bool,
 }
 
+/// Wire spelling for schedule downtime behavior.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissedRunPolicyCommand {
+    /// Suppress occurrences outside their configured grace window.
+    Skip,
+    /// Coalesce downtime and admit the latest occurrence once.
+    Latest,
+}
+
+/// Wire spelling for same-schedule overlap behavior.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleOverlapPolicyCommand {
+    /// Admit into the destination session's FIFO queue.
+    Queue,
+    /// Suppress while an earlier scheduled input remains pending or active.
+    SkipIfRunning,
+}
+
+/// Strict request to create one recurring agent schedule.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateScheduleRequest {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Client-proposed canonical `UUIDv7` resource identity and durable creation key.
+    pub schedule_id: String,
+    /// Existing owner-authorized destination session.
+    pub session_id: String,
+    /// Bounded owner-visible label.
+    pub name: String,
+    /// Exact input admitted on every fired occurrence.
+    pub prompt: String,
+    /// Canonical five-field cron expression.
+    pub cron_expression: String,
+    /// Canonical IANA time-zone identity.
+    pub timezone: String,
+    /// Explicit daemon-downtime behavior.
+    pub missed_run_policy: MissedRunPolicyCommand,
+    /// Explicit same-schedule overlap behavior.
+    pub overlap_policy: ScheduleOverlapPolicyCommand,
+    /// Inclusive lateness accepted by `skip`.
+    pub misfire_grace_ms: i64,
+    /// Explicit owner opt-in when the prompt begins `/act`, `/edit`, or `/run`.
+    pub allow_approval_required_action: bool,
+}
+
+/// Public schedule lifecycle spelling.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleStatusResponse {
+    /// Due occurrences may be claimed.
+    Active,
+    /// Claims are suspended.
+    Paused,
+    /// Schedule is terminally disabled.
+    Cancelled,
+}
+
+/// Complete owner-authorized schedule projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Stable schedule identity.
+    pub schedule_id: String,
+    /// Destination session.
+    pub session_id: String,
+    /// Owner-visible name.
+    pub name: String,
+    /// Exact scheduled input.
+    pub prompt: String,
+    /// Canonical cron expression.
+    pub cron_expression: String,
+    /// Canonical IANA time zone.
+    pub timezone: String,
+    /// Downtime behavior.
+    pub missed_run_policy: MissedRunPolicyCommand,
+    /// Overlap behavior.
+    pub overlap_policy: ScheduleOverlapPolicyCommand,
+    /// Inclusive skip grace.
+    pub misfire_grace_ms: i64,
+    /// Whether approval-required action prefixes were explicitly authorized.
+    pub allow_approval_required_action: bool,
+    /// Current lifecycle.
+    pub status: ScheduleStatusResponse,
+    /// Exact next cron instant, absent after cancellation.
+    pub next_due_at_ms: Option<i64>,
+    /// Optimistic-concurrency revision.
+    pub revision: u64,
+    /// Creation UTC epoch milliseconds.
+    pub created_at_ms: i64,
+    /// Last update UTC epoch milliseconds.
+    pub updated_at_ms: i64,
+}
+
+/// Stable schedule list response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchedulesResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Definitions in stable creation order.
+    pub schedules: Vec<ScheduleResponse>,
+}
+
+/// Revision-fenced pause, resume, or cancel request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScheduleLifecycleRequest {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Exact revision last rendered to the owner.
+    pub expected_revision: u64,
+}
+
+/// Public occurrence lifecycle spelling.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleRunStatusResponse {
+    /// One daemon lifetime owns the admission attempt.
+    Claimed,
+    /// The deterministic input was accepted or already present.
+    Admitted,
+    /// Misfire or overlap policy suppressed admission.
+    Skipped,
+    /// A terminal bounded admission failure occurred.
+    Failed,
+}
+
+/// Crash-stable action chosen before a schedule occurrence claim.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleRunIntentResponse {
+    /// Admit the deterministic scheduled input.
+    Fire,
+    /// Skip because the latest due instant exceeded grace.
+    SkipMisfire,
+    /// Skip because an earlier occurrence remained active.
+    SkipOverlap,
+}
+
+/// One durable schedule occurrence projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleRunResponse {
+    /// Stable occurrence-run identity.
+    pub schedule_run_id: String,
+    /// Owning schedule.
+    pub schedule_id: String,
+    /// Exact selected cron instant.
+    pub scheduled_for_ms: i64,
+    /// Whether older due occurrences were coalesced.
+    pub coalesced: bool,
+    /// Crash-stable action selected before claim.
+    pub intent: ScheduleRunIntentResponse,
+    /// Current lifecycle.
+    pub status: ScheduleRunStatusResponse,
+    /// Accepted inbox entry when admitted.
+    pub inbox_entry_id: Option<String>,
+    /// Bounded skip/failure reason.
+    pub reason: Option<String>,
+    /// First claim UTC epoch milliseconds.
+    pub created_at_ms: i64,
+    /// Terminal UTC epoch milliseconds.
+    pub completed_at_ms: Option<i64>,
+}
+
+/// Bounded newest-first occurrence history response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleRunsResponse {
+    /// Semantic API version.
+    pub api_version: String,
+    /// Stable schedule identity.
+    pub schedule_id: String,
+    /// Newest-first durable history.
+    pub runs: Vec<ScheduleRunResponse>,
+}
+
 /// Stable error response safe for local clients.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2020,7 +2658,8 @@ pub struct ReadinessResponse {
 mod tests {
     use super::{
         API_VERSION, ArtifactMetadataResponse, CancelTaskRequest, ContextItemDisposition,
-        ContextManifestEvidenceItemResponse, ContextManifestEvidenceResponse, DeliveryMode,
+        ContextManifestEvidenceItemResponse, ContextManifestEvidenceResponse,
+        CreateDiscordChannelRequest, CreateTelegramChannelRequest, DeliveryMode,
         SubmitInputRequest, TimelineCursor,
     };
 
@@ -2036,6 +2675,33 @@ mod tests {
         assert_eq!(value["apiVersion"], API_VERSION);
         assert_eq!(value["idempotencyKey"], "delivery-1");
         assert_eq!(value["deliveryMode"], "interrupt_then_queue");
+    }
+
+    #[test]
+    fn telegram_setup_debug_output_redacts_the_bot_token() {
+        let request = CreateTelegramChannelRequest {
+            api_version: API_VERSION.to_owned(),
+            bot_token: "123456:super-secret-telegram-token".to_owned(),
+            telegram_user_id: 7,
+            telegram_chat_id: 8,
+            initial_next_update_id: 0,
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("super-secret"));
+    }
+
+    #[test]
+    fn discord_setup_debug_output_redacts_the_bot_token() {
+        let request = CreateDiscordChannelRequest {
+            api_version: API_VERSION.to_owned(),
+            bot_token: "discord.super-secret-token".to_owned(),
+            discord_user_id: "7".to_owned(),
+            discord_channel_id: "8".to_owned(),
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("super-secret"));
     }
 
     #[test]

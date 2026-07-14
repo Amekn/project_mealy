@@ -1,3 +1,4 @@
+use crate::agent::RuntimeModelProvider;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use mealy_api::{
     ApiBackend, ArtifactContent, AuthenticatedIdentity, BackendError, SignedWebhookEnvelope,
@@ -9,60 +10,72 @@ use mealy_application::{
     CapabilityRequirement, Clock, CommitCompaction, CompactionStore, CompactionStoreError,
     CompactionView, CompleteExtensionInvocationCommit, CompleteWebhookDeliveryCommit,
     ContextDisposition, ContextManifestEvidence, ContextManifestEvidenceStore,
-    ContextManifestEvidenceStoreError, DisableExtensionCommit, EXTENSION_POLICY_VERSION,
-    EXTENSION_RPC_VERSION, EffectAttemptState, EffectAttemptView, EffectLedgerStore,
-    EffectLedgerStoreError, EffectLedgerView, EffectOutcomeKind, EffectReconciliationOutcome,
-    EnableExtensionCommit, ExtensionDispatchRequest, ExtensionGrant, ExtensionHost,
-    ExtensionHostError, ExtensionInvocationStatus, ExtensionInvocationTerminal,
-    ExtensionInvocationView, ExtensionManifestInspection, ExtensionMountGrant, ExtensionRpcRequest,
-    ExtensionStore, ExtensionStoreError, ExtensionView, IdGenerator, InputAdmissionLimits,
-    InputAdmissionOutcome, InputAdmissionReceipt, InstallExtensionCommit, MEMORY_POLICY_VERSION,
-    MemorySearchQuery, MemorySource, MemoryStore, MemoryStoreError, MemoryView, OperationalStore,
-    OperationalStoreError, OwnershipContext, ProviderCapabilities, ProviderFallbackPolicy,
-    ProviderLocality, ProviderPricing, ProviderRouteCandidate, ProviderRoutingPolicy,
-    ReconcileEffectOutcomeCommit, RegisterWebhookChannelCommit, RequestTaskCancellationCommit,
-    ReserveWebhookDeliveryCommit, ResolveApprovalCommit, RevokeExtensionCommit,
-    RevokeWebhookChannelCommit, SessionStoreError, SessionUseCaseError,
-    StageExtensionManifestCommit, TaskControlAction, TaskControlCommit, TimelineQuery,
-    TimelineStoreError, TimelineUseCaseError, ValidationStore, WEBHOOK_MAXIMUM_CLOCK_SKEW,
+    ContextManifestEvidenceStoreError, CreateScheduleCommit, DelegationStore,
+    DisableExtensionCommit, DiscordChannelBindingView, DiscordChannelStatus, DiscordChannelStore,
+    DiscordChannelStoreError, EXTENSION_POLICY_VERSION, EXTENSION_RPC_VERSION, EffectAttemptState,
+    EffectAttemptView, EffectLedgerStore, EffectLedgerStoreError, EffectLedgerView,
+    EffectOutcomeKind, EffectReconciliationOutcome, EnableExtensionCommit,
+    ExtensionDispatchRequest, ExtensionGrant, ExtensionHost, ExtensionHostError,
+    ExtensionInvocationStatus, ExtensionInvocationTerminal, ExtensionInvocationView,
+    ExtensionManifestInspection, ExtensionMountGrant, ExtensionRpcRequest, ExtensionStore,
+    ExtensionStoreError, ExtensionView, IdGenerator, InputAdmissionLimits, InputAdmissionOutcome,
+    InputAdmissionReceipt, InstallExtensionCommit, MEMORY_POLICY_VERSION, MemorySearchQuery,
+    MemorySource, MemoryStore, MemoryStoreError, MemoryView, ModelProvider, OperationalSnapshot,
+    OperationalStore, OperationalStoreError, OwnershipContext, ProviderCapabilities,
+    ProviderFallbackPolicy, ProviderLocality, ProviderPricing, ProviderRouteCandidate,
+    ProviderRoutingPolicy, ReconcileEffectOutcomeCommit, RegisterDiscordChannelCommit,
+    RegisterTelegramChannelCommit, RegisterWebhookChannelCommit, RequestTaskCancellationCommit,
+    ReserveWebhookDeliveryCommit, ResolveApprovalCommit, RevokeDiscordChannelCommit,
+    RevokeExtensionCommit, RevokeTelegramChannelCommit, RevokeWebhookChannelCommit,
+    ScheduleDefinition, ScheduleRunStatus, ScheduleRunView, ScheduleStatus, ScheduleStore,
+    ScheduleStoreError, ScheduleTransition, ScheduleView, SessionSearchQuery, SessionStoreError,
+    SessionUseCaseError, StageExtensionManifestCommit, TaskControlAction, TaskControlCommit,
+    TelegramChannelBindingView, TelegramChannelStatus, TelegramChannelStore,
+    TelegramChannelStoreError, TimelineQuery, TimelineStoreError, TimelineUseCaseError,
+    TransitionScheduleCommit, ValidationStore, WEBHOOK_MAXIMUM_CLOCK_SKEW,
     WEBHOOK_SIGNATURE_ALGORITHM, WEBHOOK_SIGNATURE_VERSION, WebhookChannelBindingView,
     WebhookChannelStatus, WebhookChannelStore, WebhookChannelStoreError, admit_input,
     canonical_arguments_digest, compaction_source_event_digest, create_session,
-    extension_grant_digest, inspect_extension_manifest, query_session_status, query_timeline,
-    route_provider, sha256_digest, validate_webhook_binding_fields, validate_webhook_timestamp,
+    extension_grant_digest, inspect_extension_manifest, next_schedule_occurrence_ms,
+    query_session_status, query_sessions, query_timeline, route_provider, search_sessions,
+    sha256_digest, validate_webhook_binding_fields, validate_webhook_timestamp,
     verify_webhook_signature, webhook_input_dedupe_key, webhook_signature_digest,
 };
 use mealy_domain::{
     ApprovalDecision, ApprovalId, ApprovalStatus, ArtifactId, AttemptId, ChannelBindingId,
     CompactionCarryForward, CompactionId, CompactionRecord, CompactionSourceRange,
-    ContextManifestId, CorrelationId, EffectId, EffectStatus, ExtensionFilesystemAccess,
-    ExtensionGrantId, ExtensionId, ExtensionInvocationId, ExtensionStatus, MemoryCategory,
-    MemoryConfidence, MemoryId, MemoryMetadata, MemoryNamespace, MemoryPromotionAuthorization,
-    MemoryProvenance, MemoryRetention, MemoryRevisionId, MemorySensitivity, PrincipalId, SessionId,
-    TaskId, ValidationMethod, ValidationOutcome,
+    ContextManifestId, CorrelationId, DelegationId, EffectId, EffectStatus,
+    ExtensionFilesystemAccess, ExtensionGrantId, ExtensionId, ExtensionInvocationId,
+    ExtensionStatus, MemoryCategory, MemoryConfidence, MemoryId, MemoryMetadata, MemoryNamespace,
+    MemoryPromotionAuthorization, MemoryProvenance, MemoryRetention, MemoryRevisionId,
+    MemorySensitivity, PrincipalId, ScheduleId, SessionId, TaskId, ValidationMethod,
+    ValidationOutcome,
 };
 use mealy_infrastructure::{
     ChannelSecretStoreError, FileArtifactBlobStore, FileChannelSecretStore,
-    InstalledExtensionPackage, LinuxBubblewrapExtensionHost, MaintenanceError, SqliteStore,
-    SystemClock, SystemIdGenerator, create_backup as create_complete_backup,
-    create_complete_export, inspect_extension_package, publish_export,
-    verify_backup as verify_complete_backup,
+    FileProviderSecretStore, InstalledExtensionPackage, LinuxBubblewrapExtensionHost,
+    MaintenanceError, ProviderSecretStoreError, SqliteStore, SystemClock, SystemIdGenerator,
+    create_backup as create_complete_backup, create_complete_export, inspect_extension_package,
+    publish_export, verify_backup as verify_complete_backup,
 };
 
 const BUBBLEWRAP_PATH: &str = "/usr/bin/bwrap";
 use mealy_protocol::{
-    API_VERSION, AdminMetricsResponse, AdminStatusResponse, ApprovalDecisionCommand,
-    ApprovalResolutionReceipt, ApprovalResponse, ApprovalStatusResponse, ApprovalSubjectResponse,
-    ArtifactMetadataResponse, BackupResponse, BackupVerificationResponse, CancelTaskRequest,
-    CompactionResponse, ContextItemDisposition, ContextManifestEvidenceItemResponse,
-    ContextManifestEvidenceResponse, ContextMemoryEvidenceResponse,
-    ContextMemorySourceCitationResponse, ControlTaskRequest, CorrectMemoryRequest,
-    CreateBackupRequest, CreateCompactionRequest, CreateExportRequest, CreateSessionResponse,
-    CreateWebhookChannelRequest, CreateWebhookChannelResponse, DaemonRunStatusResponse,
-    DoctorResponse, DrainDaemonRequest, DrainDaemonResponse, EffectAttemptResponse,
-    EffectAttemptStatusResponse, EffectOutcomeEvidenceResponse, EffectOutcomeResponse,
-    EffectReconciliationReceipt, EffectResponse, EffectStatusResponse, EnableExtensionRequest,
-    ExportKindRequest, ExportResponse, ExtensionFilesystemAccessCommand, ExtensionGrantResponse,
+    API_VERSION, AdminMetricsResponse, AdminStatusResponse, AdminUsageBucketResponse,
+    AdminUsageReportResponse, ApprovalDecisionCommand, ApprovalResolutionReceipt, ApprovalResponse,
+    ApprovalStatusResponse, ApprovalSubjectResponse, ArtifactMetadataResponse, BackupResponse,
+    BackupVerificationResponse, CancelTaskRequest, CompactionResponse, ContextItemDisposition,
+    ContextManifestEvidenceItemResponse, ContextManifestEvidenceResponse,
+    ContextMemoryEvidenceResponse, ContextMemorySourceCitationResponse, ControlTaskRequest,
+    CorrectMemoryRequest, CreateBackupRequest, CreateCompactionRequest,
+    CreateDiscordChannelRequest, CreateExportRequest, CreateScheduleRequest, CreateSessionResponse,
+    CreateTelegramChannelRequest, CreateWebhookChannelRequest, CreateWebhookChannelResponse,
+    DaemonRunStatusResponse, DelegationResponse, DelegationsResponse, DiscordChannelResponse,
+    DiscordChannelStatusResponse, DiscordChannelsResponse, DoctorResponse, DrainDaemonRequest,
+    DrainDaemonResponse, EffectAttemptResponse, EffectAttemptStatusResponse,
+    EffectOutcomeEvidenceResponse, EffectOutcomeResponse, EffectReconciliationReceipt,
+    EffectResponse, EffectStatusResponse, EnableExtensionRequest, ExportKindRequest,
+    ExportResponse, ExtensionFilesystemAccessCommand, ExtensionGrantResponse,
     ExtensionInvocationResponse, ExtensionInvocationStatusResponse, ExtensionLifecycleRequest,
     ExtensionManifestRevisionResponse, ExtensionMountGrantCommand, ExtensionResponse,
     ExtensionStatusResponse, ExtensionsResponse, GarbageCollectionResponse, InputAdmissionResponse,
@@ -70,21 +83,30 @@ use mealy_protocol::{
     MemoryIndexRebuildResponse, MemoryLifecycleRequest, MemoryPromotionAuthorizationCommand,
     MemoryResponse, MemoryRetentionCommand, MemoryRevisionResponse, MemorySearchHitResponse,
     MemorySearchResponse, MemorySensitivityCommand, MemorySourceResponse, MemoryStatusResponse,
-    OperationalFailureResponse, PendingApprovalsResponse, PromoteMemoryRequest,
-    ProposeMemoryRequest, RebuildMemoryIndexRequest, ReconcileEffectRequest,
-    ReconciliationOutcomeCommand, ResolveApprovalRequest, RevokeWebhookChannelRequest,
-    RunGarbageCollectionRequest, SandboxProfileResponse, SandboxProfileStatusResponse,
-    SessionStatusResponse, SetMemoryPinRequest, SignedWebhookInputRequest,
-    StageExtensionManifestRequest, SubmitInputRequest, SuccessCriterionResponse, TaskBudgetUsage,
-    TaskCancellationReceipt, TaskControlReceipt, TaskReplayResponse, TaskResponse, TaskRiskClass,
-    TaskStatus, TaskSuccessCriteriaResponse, TaskValidationResponse, TimelineCursor, TimelineEvent,
+    MissedRunPolicyCommand, OperationalFailureResponse, PendingApprovalsResponse,
+    PromoteMemoryRequest, ProposeMemoryRequest, ProviderEndpointStatusResponse,
+    RebuildMemoryIndexRequest, ReconcileEffectRequest, ReconciliationOutcomeCommand,
+    ResolveApprovalRequest, RevokeDiscordChannelRequest, RevokeTelegramChannelRequest,
+    RevokeWebhookChannelRequest, RunGarbageCollectionRequest, SandboxProfileResponse,
+    SandboxProfileStatusResponse, ScheduleLifecycleRequest, ScheduleOverlapPolicyCommand,
+    ScheduleResponse, ScheduleRunIntentResponse, ScheduleRunResponse, ScheduleRunStatusResponse,
+    ScheduleRunsResponse, ScheduleStatusResponse, SchedulesResponse, SessionSearchHitResponse,
+    SessionSearchResponse, SessionStatusResponse, SessionSummaryResponse, SessionsResponse,
+    SetMemoryPinRequest, SignedWebhookInputRequest, StageExtensionManifestRequest,
+    SubmitInputRequest, SuccessCriterionResponse, TaskBudgetUsage, TaskCancellationReceipt,
+    TaskControlReceipt, TaskReplayResponse, TaskResponse, TaskRiskClass, TaskStatus,
+    TaskSuccessCriteriaResponse, TaskValidationResponse, TelegramChannelResponse,
+    TelegramChannelStatusResponse, TelegramChannelsResponse, TimelineCursor, TimelineEvent,
     TimelinePageResponse, ValidationMethodResponse, ValidationOutcomeResponse, VerifyBackupRequest,
     WebhookChannelResponse, WebhookChannelStatusResponse, WebhookChannelsResponse,
 };
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Read,
     net::IpAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{
         Arc, Mutex,
@@ -93,16 +115,22 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::watch;
+use zeroize::Zeroizing;
 
 /// Thread-safe synchronous backend invoked on the API's bounded blocking pool.
 pub struct RuntimeBackend {
     store: Arc<Mutex<SqliteStore>>,
     artifacts: Arc<FileArtifactBlobStore>,
     channel_secrets: Arc<FileChannelSecretStore>,
+    telegram: RuntimeTelegramConfig,
+    discord: RuntimeDiscordConfig,
     home: PathBuf,
     artifact_gc_minimum_age_hours: u64,
     maximum_pending_inputs_per_session: u64,
     extension_invocations: KeyedConcurrencyLimiter,
+    provider: Arc<RuntimeModelProvider>,
+    enabled_read_tools: Vec<String>,
+    enabled_action_tools: Vec<String>,
     sandbox_available: bool,
     safe_mode: bool,
     drain: Arc<DrainController>,
@@ -120,10 +148,38 @@ pub struct RuntimeOperationalConfig {
     pub maximum_pending_inputs_per_session: u64,
     /// Maximum simultaneous invocations for one extension identity.
     pub maximum_extension_invocations: u32,
+    /// Exact model-visible read tools enabled by current validated configuration.
+    pub enabled_read_tools: Vec<String>,
+    /// Exact approval-gated tools available only to explicit action-mode tasks.
+    pub enabled_action_tools: Vec<String>,
     /// Whether the installed host sandbox passed its startup probe.
     pub sandbox_available: bool,
     /// Whether mutation and dispatch must fail closed.
     pub safe_mode: bool,
+}
+
+/// Process-local Telegram credential and Bot API transport dependencies.
+pub struct RuntimeTelegramConfig {
+    /// Credential broker is absent only in query-only safe mode.
+    pub credentials: Option<Arc<FileProviderSecretStore>>,
+    /// Validated Bot API origin; official HTTPS by default or literal-loopback HTTP for tests.
+    pub api_base_url: String,
+}
+
+/// Process-local Discord credential and REST API transport dependencies.
+pub struct RuntimeDiscordConfig {
+    /// Credential broker is absent only in query-only safe mode.
+    pub credentials: Option<Arc<FileProviderSecretStore>>,
+    /// Validated Discord API v10 origin/path, or literal-loopback test endpoint.
+    pub api_base_url: String,
+}
+
+/// Process-local dependencies for all first-party remote channel drivers.
+pub struct RuntimeChannelConfig {
+    /// Telegram Bot API dependencies.
+    pub telegram: RuntimeTelegramConfig,
+    /// Discord REST API dependencies.
+    pub discord: RuntimeDiscordConfig,
 }
 
 /// Idempotent bridge from an authenticated admin command to daemon graceful shutdown.
@@ -164,6 +220,8 @@ impl RuntimeBackend {
         store: Arc<Mutex<SqliteStore>>,
         artifacts: Arc<FileArtifactBlobStore>,
         channel_secrets: Arc<FileChannelSecretStore>,
+        channels: RuntimeChannelConfig,
+        provider: Arc<RuntimeModelProvider>,
         operations: RuntimeOperationalConfig,
         drain: Arc<DrainController>,
     ) -> Self {
@@ -171,12 +229,17 @@ impl RuntimeBackend {
             store,
             artifacts,
             channel_secrets,
+            telegram: channels.telegram,
+            discord: channels.discord,
             home: operations.home,
             artifact_gc_minimum_age_hours: operations.artifact_gc_minimum_age_hours,
             maximum_pending_inputs_per_session: operations.maximum_pending_inputs_per_session,
             extension_invocations: KeyedConcurrencyLimiter::new(
                 operations.maximum_extension_invocations,
             ),
+            provider,
+            enabled_read_tools: operations.enabled_read_tools,
+            enabled_action_tools: operations.enabled_action_tools,
             sandbox_available: operations.sandbox_available,
             safe_mode: operations.safe_mode,
             drain,
@@ -224,6 +287,47 @@ impl RuntimeBackend {
             event_id: receipt.event_id.to_string(),
             cursor: TimelineCursor(receipt.cursor),
         })
+    }
+
+    fn transition_schedule_command(
+        &self,
+        identity: &AuthenticatedIdentity,
+        schedule_id: &str,
+        request: &ScheduleLifecycleRequest,
+        transition: ScheduleTransition,
+    ) -> Result<ScheduleResponse, BackendError> {
+        let ownership = parse_ownership(identity)?;
+        let schedule_id = parse_schedule(schedule_id)?;
+        let transitioned_at_ms = epoch_milliseconds(self.clock.now())?;
+        let mut store = self.lock()?;
+        let resumed_next_due_at_ms = if transition == ScheduleTransition::Resume {
+            let current = store
+                .schedule(ownership, schedule_id)
+                .map_err(map_schedule_store_error)?;
+            Some(
+                next_schedule_occurrence_ms(
+                    &current.cron_expression,
+                    &current.timezone,
+                    transitioned_at_ms,
+                )
+                .map_err(|error| BackendError::InvalidRequest(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let schedule = store
+            .transition_schedule(TransitionScheduleCommit {
+                schedule_id,
+                ownership,
+                expected_revision: request.expected_revision,
+                transition,
+                resumed_next_due_at_ms,
+                event_id: self.ids.generate_event_id(),
+                correlation_id: self.ids.generate_correlation_id(),
+                transitioned_at_ms,
+            })
+            .map_err(map_schedule_store_error)?;
+        Ok(schedule_response(schedule))
     }
 }
 
@@ -286,12 +390,18 @@ impl ApiBackend for RuntimeBackend {
         self.drain.admission_open()
     }
 
+    #[allow(clippy::too_many_lines)]
     fn admin_status(
         &self,
         identity: AuthenticatedIdentity,
     ) -> Result<AdminStatusResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
-        let (snapshot, database_bytes) = {
+        let runtime_endpoints = self.provider.endpoint_statuses();
+        let endpoint_identities = runtime_endpoints
+            .iter()
+            .map(|endpoint| (endpoint.provider_id.clone(), endpoint.model_id.clone()))
+            .collect::<Vec<_>>();
+        let (snapshot, database_bytes, endpoint_history) = {
             let store = self.lock()?;
             (
                 store
@@ -300,12 +410,50 @@ impl ApiBackend for RuntimeBackend {
                 store
                     .database_storage_bytes()
                     .map_err(map_operational_store_error)?,
+                store
+                    .provider_endpoint_history(ownership, &endpoint_identities)
+                    .map_err(map_operational_store_error)?,
             )
         };
+        let endpoint_history = endpoint_history
+            .into_iter()
+            .map(|history| {
+                (
+                    (history.provider_id.clone(), history.model_id.clone()),
+                    history,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let provider_endpoints = runtime_endpoints
+            .into_iter()
+            .map(|endpoint| {
+                let history = endpoint_history
+                    .get(&(endpoint.provider_id.clone(), endpoint.model_id.clone()))
+                    .ok_or(BackendError::Internal)?;
+                Ok(ProviderEndpointStatusResponse {
+                    protocol: endpoint.protocol,
+                    provider_id: endpoint.provider_id,
+                    model_id: endpoint.model_id,
+                    residency: endpoint.residency,
+                    local: endpoint.local,
+                    streaming: endpoint.streaming,
+                    health: endpoint.health,
+                    estimated_latency_ms: endpoint.estimated_latency_ms,
+                    invocation_count: endpoint.invocation_count.max(history.invocation_count),
+                    in_flight_requests: endpoint.in_flight_requests,
+                    maximum_concurrent_requests: endpoint.maximum_concurrent_requests,
+                    requests_in_current_minute: endpoint.requests_in_current_minute,
+                    requests_per_minute: endpoint.requests_per_minute,
+                    last_success_at_ms: endpoint.last_success_at_ms.max(history.last_success_at_ms),
+                    last_failure_at_ms: endpoint.last_failure_at_ms.max(history.last_failure_at_ms),
+                })
+            })
+            .collect::<Result<Vec<_>, BackendError>>()?;
         let artifacts = self
             .artifacts
             .storage_usage()
             .map_err(|error| map_artifact_blob_error(&error))?;
+        let provider = self.provider.capabilities();
         Ok(AdminStatusResponse {
             api_version: API_VERSION.to_owned(),
             start_id: snapshot.start_id.to_string(),
@@ -329,13 +477,27 @@ impl ApiBackend for RuntimeBackend {
             failed_outbox: snapshot.failed_outbox,
             enabled_extensions: snapshot.enabled_extensions,
             failed_extensions: snapshot.failed_extensions,
-            provider_health: "healthy".to_owned(),
+            provider_health: self.provider.health_status().to_owned(),
+            provider_id: provider.provider_id,
+            provider_model_id: provider.model_id,
+            provider_residency: provider.residency,
+            provider_local: provider.local,
+            provider_endpoints,
+            enabled_read_tools: self.enabled_read_tools.clone(),
+            enabled_action_tools: self.enabled_action_tools.clone(),
             extension_host_health: if self.sandbox_available {
                 "healthy".to_owned()
             } else {
                 "unavailable_fail_closed".to_owned()
             },
             active_channels: snapshot.active_channels,
+            degraded_channels: snapshot.degraded_channels,
+            reserved_channel_updates: snapshot.reserved_channel_updates,
+            active_schedules: snapshot.active_schedules,
+            paused_schedules: snapshot.paused_schedules,
+            claimed_schedule_runs: snapshot.claimed_schedule_runs,
+            failed_schedule_runs: snapshot.failed_schedule_runs,
+            skipped_schedule_runs: snapshot.skipped_schedule_runs,
             database_bytes,
             artifact_bytes: artifacts.total_bytes,
             artifact_count: artifacts.blob_count,
@@ -365,6 +527,8 @@ impl ApiBackend for RuntimeBackend {
         let status = self.admin_status(identity)?;
         let gauges = BTreeMap::from([
             ("active_channels".to_owned(), status.active_channels),
+            ("degraded_channels".to_owned(), status.degraded_channels),
+            ("active_schedules".to_owned(), status.active_schedules),
             ("active_leases".to_owned(), status.active_leases),
             ("artifact_bytes".to_owned(), status.artifact_bytes),
             ("artifact_count".to_owned(), status.artifact_count),
@@ -372,20 +536,83 @@ impl ApiBackend for RuntimeBackend {
             ("enabled_extensions".to_owned(), status.enabled_extensions),
             ("failed_extensions".to_owned(), status.failed_extensions),
             ("failed_outbox".to_owned(), status.failed_outbox),
+            (
+                "failed_schedule_runs".to_owned(),
+                status.failed_schedule_runs,
+            ),
+            (
+                "enabled_action_tools".to_owned(),
+                u64::try_from(status.enabled_action_tools.len()).unwrap_or(u64::MAX),
+            ),
+            (
+                "enabled_read_tools".to_owned(),
+                u64::try_from(status.enabled_read_tools.len()).unwrap_or(u64::MAX),
+            ),
             ("nonterminal_runs".to_owned(), status.nonterminal_runs),
             ("pending_approvals".to_owned(), status.pending_approvals),
             ("pending_inputs".to_owned(), status.pending_inputs),
             ("pending_outbox".to_owned(), status.pending_outbox),
+            (
+                "reserved_channel_updates".to_owned(),
+                status.reserved_channel_updates,
+            ),
+            ("paused_schedules".to_owned(), status.paused_schedules),
+            (
+                "claimed_schedule_runs".to_owned(),
+                status.claimed_schedule_runs,
+            ),
             ("provider_healthy".to_owned(), 1),
             (
                 "extension_host_healthy".to_owned(),
                 u64::from(status.extension_host_health == "healthy"),
             ),
             ("unknown_effects".to_owned(), status.unknown_effects),
+            (
+                "skipped_schedule_runs".to_owned(),
+                status.skipped_schedule_runs,
+            ),
         ]);
         Ok(AdminMetricsResponse {
             api_version: API_VERSION.to_owned(),
             gauges,
+        })
+    }
+
+    fn admin_usage(
+        &self,
+        identity: AuthenticatedIdentity,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<AdminUsageReportResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let report = self
+            .lock()?
+            .completed_usage_report(ownership, from_ms, to_ms)
+            .map_err(map_operational_store_error)?;
+        Ok(AdminUsageReportResponse {
+            api_version: API_VERSION.to_owned(),
+            from_ms: report.from_ms,
+            to_ms: report.to_ms,
+            buckets: report
+                .buckets
+                .into_iter()
+                .map(|bucket| AdminUsageBucketResponse {
+                    bucket_start_ms: bucket.bucket_start_ms,
+                    bucket_end_ms: bucket.bucket_end_ms,
+                    completed_runs: bucket.completed_runs,
+                    succeeded_runs: bucket.succeeded_runs,
+                    failed_runs: bucket.failed_runs,
+                    cancelled_runs: bucket.cancelled_runs,
+                    used_model_calls: bucket.used_model_calls,
+                    used_tool_calls: bucket.used_tool_calls,
+                    used_delegated_runs: bucket.used_delegated_runs,
+                    used_retries: bucket.used_retries,
+                    used_input_tokens: bucket.used_input_tokens,
+                    used_output_tokens: bucket.used_output_tokens,
+                    used_cost_microunits: bucket.used_cost_microunits,
+                    used_output_bytes: bucket.used_output_bytes,
+                })
+                .collect(),
         })
     }
 
@@ -406,10 +633,11 @@ impl ApiBackend for RuntimeBackend {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn doctor(&self, identity: AuthenticatedIdentity) -> Result<DoctorResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let store = self.lock()?;
-        store
+        let snapshot = store
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
         store
@@ -419,8 +647,7 @@ impl ApiBackend for RuntimeBackend {
             .artifacts
             .storage_usage()
             .map_err(|error| map_artifact_blob_error(&error))?;
-        let config_path = self.home.join("config.json");
-        let config_ready = config_path.is_file();
+        let config_ready = self.home.join("config.json").is_file();
         let home_private = private_home_permissions(&self.home);
         let mut checks = BTreeMap::from([
             (
@@ -438,6 +665,7 @@ impl ApiBackend for RuntimeBackend {
                     "failed: config.json is missing".to_owned()
                 },
             ),
+            ("channels".to_owned(), channel_doctor_check(&snapshot)),
             (
                 "home_permissions".to_owned(),
                 if home_private {
@@ -446,6 +674,7 @@ impl ApiBackend for RuntimeBackend {
                     "failed: state directory permissions are not owner-private".to_owned()
                 },
             ),
+            ("schedules".to_owned(), schedule_doctor_check(&snapshot)),
             (
                 "sqlite".to_owned(),
                 format!(
@@ -458,13 +687,13 @@ impl ApiBackend for RuntimeBackend {
         ]);
         checks.insert(
             "sandbox".to_owned(),
-            if self.sandbox_available {
-                "ok: Linux Bubblewrap observe/workspace-write proof passed".to_owned()
-            } else {
-                "degraded: sandbox profiles fail closed on this host/install".to_owned()
-            },
+            sandbox_doctor_check(self.sandbox_available),
         );
         checks.insert("provider_routing".to_owned(), provider_routing_check()?);
+        checks.insert(
+            "configured_provider".to_owned(),
+            configured_provider_check(&self.provider),
+        );
         let enforceable = if self.sandbox_available {
             SandboxProfileStatusResponse::Enforceable
         } else {
@@ -709,6 +938,70 @@ impl ApiBackend for RuntimeBackend {
         })
     }
 
+    fn sessions(
+        &self,
+        identity: AuthenticatedIdentity,
+        limit: usize,
+    ) -> Result<SessionsResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let sessions = query_sessions(&*self.lock()?, ownership, limit)
+            .map_err(|error| map_timeline_error(&error))?
+            .into_iter()
+            .map(|session| {
+                Ok(SessionSummaryResponse {
+                    session_id: session.session_id.to_string(),
+                    status: session.status,
+                    revision: session.revision,
+                    pending_inputs: session.pending_inputs,
+                    active_turn_id: session.active_turn_id.map(|id| id.to_string()),
+                    created_at_ms: epoch_milliseconds(session.created_at)?,
+                    updated_at_ms: epoch_milliseconds(session.updated_at)?,
+                })
+            })
+            .collect::<Result<Vec<_>, BackendError>>()?;
+        Ok(SessionsResponse {
+            api_version: API_VERSION.to_owned(),
+            sessions,
+        })
+    }
+
+    fn search_sessions(
+        &self,
+        identity: AuthenticatedIdentity,
+        query: String,
+        limit: usize,
+    ) -> Result<SessionSearchResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let hits = search_sessions(
+            &*self.lock()?,
+            &SessionSearchQuery {
+                ownership,
+                query: query.clone(),
+                limit,
+            },
+        )
+        .map_err(|error| map_timeline_error(&error))?
+        .into_iter()
+        .map(|hit| {
+            Ok(SessionSearchHitResponse {
+                session_id: hit.session_id.to_string(),
+                turn_id: hit.turn_id.to_string(),
+                task_id: hit.task_id.to_string(),
+                user_excerpt: hit.user_excerpt,
+                user_content_digest: hit.user_content_digest,
+                assistant_excerpt: hit.assistant_excerpt,
+                assistant_content_digest: hit.assistant_content_digest,
+                created_at_ms: epoch_milliseconds(hit.created_at)?,
+            })
+        })
+        .collect::<Result<Vec<_>, BackendError>>()?;
+        Ok(SessionSearchResponse {
+            api_version: API_VERSION.to_owned(),
+            query,
+            hits,
+        })
+    }
+
     fn submit_input(
         &self,
         identity: AuthenticatedIdentity,
@@ -763,6 +1056,153 @@ impl ApiBackend for RuntimeBackend {
             pending_inputs: status.pending_inputs,
             active_turn_id: status.active_turn_id.map(|id| id.to_string()),
             latest_cursor: TimelineCursor(status.latest_cursor.0),
+        })
+    }
+
+    fn create_schedule(
+        &self,
+        identity: AuthenticatedIdentity,
+        request: CreateScheduleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let schedule_id = parse_schedule(&request.schedule_id)?;
+        if schedule_id.to_string() != request.schedule_id
+            || schedule_id.as_uuid().get_version_num() != 7
+        {
+            return Err(BackendError::InvalidRequest(
+                "schedule ID must be a canonical UUIDv7".to_owned(),
+            ));
+        }
+        let session_id = parse_session(&request.session_id)?;
+        let missed_run_policy = missed_policy_from_command(request.missed_run_policy);
+        let overlap_policy = overlap_policy_from_command(request.overlap_policy);
+        mealy_application::validate_schedule_definition(ScheduleDefinition {
+            name: &request.name,
+            prompt: &request.prompt,
+            cron_expression: &request.cron_expression,
+            timezone: &request.timezone,
+            misfire_grace_ms: request.misfire_grace_ms,
+            approval_required_actions_allowed: request.allow_approval_required_action,
+        })
+        .map_err(|error| BackendError::InvalidRequest(error.to_string()))?;
+        let created_at_ms = epoch_milliseconds(self.clock.now())?;
+        let next_due_at_ms =
+            next_schedule_occurrence_ms(&request.cron_expression, &request.timezone, created_at_ms)
+                .map_err(|error| BackendError::InvalidRequest(error.to_string()))?;
+        let schedule = self
+            .lock()?
+            .create_schedule(CreateScheduleCommit {
+                schedule_id,
+                ownership,
+                session_id,
+                name: request.name,
+                prompt: request.prompt,
+                cron_expression: request.cron_expression,
+                timezone: request.timezone,
+                missed_run_policy,
+                overlap_policy,
+                misfire_grace_ms: request.misfire_grace_ms,
+                approval_required_actions_allowed: request.allow_approval_required_action,
+                next_due_at_ms,
+                event_id: self.ids.generate_event_id(),
+                correlation_id: self.ids.generate_correlation_id(),
+                created_at_ms,
+            })
+            .map_err(map_schedule_store_error)?;
+        Ok(schedule_response(schedule))
+    }
+
+    fn schedules(
+        &self,
+        identity: AuthenticatedIdentity,
+    ) -> Result<SchedulesResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let schedules = self
+            .lock()?
+            .schedules(ownership)
+            .map_err(map_schedule_store_error)?
+            .into_iter()
+            .map(schedule_response)
+            .collect();
+        Ok(SchedulesResponse {
+            api_version: API_VERSION.to_owned(),
+            schedules,
+        })
+    }
+
+    fn schedule(
+        &self,
+        identity: AuthenticatedIdentity,
+        schedule_id: String,
+    ) -> Result<ScheduleResponse, BackendError> {
+        let schedule = self
+            .lock()?
+            .schedule(parse_ownership(&identity)?, parse_schedule(&schedule_id)?)
+            .map_err(map_schedule_store_error)?;
+        Ok(schedule_response(schedule))
+    }
+
+    fn pause_schedule(
+        &self,
+        identity: AuthenticatedIdentity,
+        schedule_id: String,
+        request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        self.transition_schedule_command(
+            &identity,
+            &schedule_id,
+            &request,
+            ScheduleTransition::Pause,
+        )
+    }
+
+    fn resume_schedule(
+        &self,
+        identity: AuthenticatedIdentity,
+        schedule_id: String,
+        request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        self.transition_schedule_command(
+            &identity,
+            &schedule_id,
+            &request,
+            ScheduleTransition::Resume,
+        )
+    }
+
+    fn cancel_schedule(
+        &self,
+        identity: AuthenticatedIdentity,
+        schedule_id: String,
+        request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        self.transition_schedule_command(
+            &identity,
+            &schedule_id,
+            &request,
+            ScheduleTransition::Cancel,
+        )
+    }
+
+    fn schedule_runs(
+        &self,
+        identity: AuthenticatedIdentity,
+        schedule_id: String,
+        limit: usize,
+    ) -> Result<ScheduleRunsResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let schedule_id = parse_schedule(&schedule_id)?;
+        let runs = self
+            .lock()?
+            .schedule_runs(ownership, schedule_id, limit)
+            .map_err(map_schedule_store_error)?
+            .into_iter()
+            .map(schedule_run_response)
+            .collect();
+        Ok(ScheduleRunsResponse {
+            api_version: API_VERSION.to_owned(),
+            schedule_id: schedule_id.to_string(),
+            runs,
         })
     }
 
@@ -1327,6 +1767,10 @@ impl ApiBackend for RuntimeBackend {
         if view.revision != request.expected_revision {
             return Err(BackendError::Conflict);
         }
+        validate_extension_mount_roots(
+            &self.home,
+            request.mounts.iter().map(|mount| mount.host_path.as_str()),
+        )?;
         let package = inspect_current_extension_package(&view)?;
         let issued_at = self.clock.now();
         let grant = build_extension_grant(
@@ -1447,6 +1891,10 @@ impl ApiBackend for RuntimeBackend {
             return Err(BackendError::Conflict);
         }
         let grant = view.active_grant.clone().ok_or(BackendError::Internal)?;
+        validate_extension_mount_roots(
+            &self.home,
+            grant.mounts.iter().map(|mount| mount.host_path.as_str()),
+        )?;
         let grant_digest = view
             .active_grant_digest
             .clone()
@@ -1636,6 +2084,296 @@ impl ApiBackend for RuntimeBackend {
         Ok(webhook_channel_response(revoked))
     }
 
+    fn create_telegram_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        request: CreateTelegramChannelRequest,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let credentials = self
+            .telegram
+            .credentials
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?;
+        let token = Zeroizing::new(request.bot_token);
+        validate_telegram_bot_token(&token)?;
+        if request.telegram_user_id <= 0
+            || request.telegram_chat_id == 0
+            || request.initial_next_update_id < 0
+        {
+            return Err(BackendError::InvalidRequest(
+                "Telegram user and chat IDs are invalid".to_owned(),
+            ));
+        }
+        let setup_client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| BackendError::Unavailable)?;
+        let bot = verify_telegram_bot(&setup_client, &self.telegram.api_base_url, &token)?;
+        let binding_id = self.ids.generate_channel_binding_id();
+        let session_id = self.ids.generate_session_id();
+        let token_secret_id = format!("telegram.{binding_id}");
+        let token_digest = sha256_digest(token.as_bytes());
+        mealy_application::validate_telegram_binding(
+            request.telegram_user_id,
+            request.telegram_chat_id,
+            bot.id,
+            &bot.username,
+            &token_secret_id,
+            &token_digest,
+        )
+        .map_err(map_telegram_store_error)?;
+        credentials
+            .put(&token_secret_id, &token)
+            .map_err(|error| map_telegram_secret_error(&error))?;
+        let commit = RegisterTelegramChannelCommit {
+            administrative_ownership: ownership,
+            binding_id,
+            session_id,
+            telegram_user_id: request.telegram_user_id,
+            telegram_chat_id: request.telegram_chat_id,
+            initial_next_update_id: request.initial_next_update_id,
+            bot_user_id: bot.id,
+            bot_username: bot.username,
+            token_secret_id: token_secret_id.clone(),
+            token_digest,
+            session_event_id: self.ids.generate_event_id(),
+            binding_event_id: self.ids.generate_event_id(),
+            correlation_id: self.ids.generate_correlation_id(),
+            created_at: self.clock.now(),
+        };
+        let view = match self.lock()?.register_telegram_channel(commit) {
+            Ok(view) => view,
+            Err(error) => {
+                let _ = credentials.remove(&token_secret_id);
+                return Err(map_telegram_store_error(error));
+            }
+        };
+        Ok(telegram_channel_response(view))
+    }
+
+    fn telegram_channels(
+        &self,
+        identity: AuthenticatedIdentity,
+    ) -> Result<TelegramChannelsResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let channels = self
+            .lock()?
+            .telegram_channels(ownership)
+            .map_err(map_telegram_store_error)?
+            .into_iter()
+            .map(telegram_channel_response)
+            .collect();
+        Ok(TelegramChannelsResponse {
+            api_version: API_VERSION.to_owned(),
+            channels,
+        })
+    }
+
+    fn telegram_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        binding_id: String,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        let view = self
+            .lock()?
+            .telegram_channel(
+                parse_ownership(&identity)?,
+                parse_channel_binding(&binding_id)?,
+            )
+            .map_err(map_telegram_store_error)?;
+        Ok(telegram_channel_response(view))
+    }
+
+    fn revoke_telegram_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        binding_id: String,
+        request: RevokeTelegramChannelRequest,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let binding_id = parse_channel_binding(&binding_id)?;
+        let current = self
+            .lock()?
+            .telegram_channel(ownership, binding_id)
+            .map_err(map_telegram_store_error)?;
+        if current.status != TelegramChannelStatus::Active
+            || current.revision != request.expected_revision
+        {
+            return Err(BackendError::Conflict);
+        }
+        self.telegram
+            .credentials
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .remove(&current.token_secret_id)
+            .map_err(|error| map_telegram_secret_error(&error))?;
+        let revoked = self
+            .lock()?
+            .revoke_telegram_channel(RevokeTelegramChannelCommit {
+                administrative_ownership: ownership,
+                binding_id,
+                expected_revision: request.expected_revision,
+                event_id: self.ids.generate_event_id(),
+                correlation_id: self.ids.generate_correlation_id(),
+                revoked_at: self.clock.now(),
+            })
+            .map_err(map_telegram_store_error)?;
+        Ok(telegram_channel_response(revoked))
+    }
+
+    fn create_discord_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        request: CreateDiscordChannelRequest,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let credentials = self
+            .discord
+            .credentials
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?;
+        let token = Zeroizing::new(request.bot_token);
+        validate_discord_bot_token(&token)?;
+        if !mealy_application::validate_discord_snowflake(&request.discord_user_id)
+            || !mealy_application::validate_discord_snowflake(&request.discord_channel_id)
+        {
+            return Err(BackendError::InvalidRequest(
+                "Discord user or DM channel snowflake is invalid".to_owned(),
+            ));
+        }
+        let setup_client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| BackendError::Unavailable)?;
+        let verified = verify_discord_dm(
+            &setup_client,
+            &self.discord.api_base_url,
+            &token,
+            &request.discord_user_id,
+            &request.discord_channel_id,
+        )?;
+        let binding_id = self.ids.generate_channel_binding_id();
+        let session_id = self.ids.generate_session_id();
+        let token_secret_id = format!("discord.{binding_id}");
+        let token_digest = sha256_digest(token.as_bytes());
+        mealy_application::validate_discord_binding(
+            &request.discord_user_id,
+            &request.discord_channel_id,
+            &verified.bot_user_id,
+            &verified.bot_username,
+            &token_secret_id,
+            &token_digest,
+        )
+        .map_err(map_discord_store_error)?;
+        credentials
+            .put(&token_secret_id, &token)
+            .map_err(|error| map_discord_secret_error(&error))?;
+        let commit = RegisterDiscordChannelCommit {
+            administrative_ownership: ownership,
+            binding_id,
+            session_id,
+            discord_user_id: request.discord_user_id,
+            discord_channel_id: request.discord_channel_id,
+            // A verified empty DM still receives an explicit lower-bound cursor. Discord
+            // snowflakes are positive, so `1` prevents the first poll from becoming an
+            // unbounded/history-relative request if messages race setup completion.
+            initial_after_message_id: verified.latest_message_id.or_else(|| Some("1".to_owned())),
+            bot_user_id: verified.bot_user_id,
+            bot_username: verified.bot_username,
+            token_secret_id: token_secret_id.clone(),
+            token_digest,
+            session_event_id: self.ids.generate_event_id(),
+            binding_event_id: self.ids.generate_event_id(),
+            correlation_id: self.ids.generate_correlation_id(),
+            created_at: self.clock.now(),
+        };
+        let view = match self.lock()?.register_discord_channel(commit) {
+            Ok(view) => view,
+            Err(error) => {
+                let _ = credentials.remove(&token_secret_id);
+                return Err(map_discord_store_error(error));
+            }
+        };
+        Ok(discord_channel_response(view))
+    }
+
+    fn discord_channels(
+        &self,
+        identity: AuthenticatedIdentity,
+    ) -> Result<DiscordChannelsResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let channels = self
+            .lock()?
+            .discord_channels(ownership)
+            .map_err(map_discord_store_error)?
+            .into_iter()
+            .map(discord_channel_response)
+            .collect();
+        Ok(DiscordChannelsResponse {
+            api_version: API_VERSION.to_owned(),
+            channels,
+        })
+    }
+
+    fn discord_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        binding_id: String,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        let view = self
+            .lock()?
+            .discord_channel(
+                parse_ownership(&identity)?,
+                parse_channel_binding(&binding_id)?,
+            )
+            .map_err(map_discord_store_error)?;
+        Ok(discord_channel_response(view))
+    }
+
+    fn revoke_discord_channel(
+        &self,
+        identity: AuthenticatedIdentity,
+        binding_id: String,
+        request: RevokeDiscordChannelRequest,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let binding_id = parse_channel_binding(&binding_id)?;
+        let current = self
+            .lock()?
+            .discord_channel(ownership, binding_id)
+            .map_err(map_discord_store_error)?;
+        if current.status != DiscordChannelStatus::Active
+            || current.revision != request.expected_revision
+        {
+            return Err(BackendError::Conflict);
+        }
+        self.discord
+            .credentials
+            .as_ref()
+            .ok_or(BackendError::Unavailable)?
+            .remove(&current.token_secret_id)
+            .map_err(|error| map_discord_secret_error(&error))?;
+        let revoked = self
+            .lock()?
+            .revoke_discord_channel(RevokeDiscordChannelCommit {
+                administrative_ownership: ownership,
+                binding_id,
+                expected_revision: request.expected_revision,
+                event_id: self.ids.generate_event_id(),
+                correlation_id: self.ids.generate_correlation_id(),
+                revoked_at: self.clock.now(),
+            })
+            .map_err(map_discord_store_error)?;
+        Ok(discord_channel_response(revoked))
+    }
+
     fn receive_signed_webhook(
         &self,
         binding_id: String,
@@ -1811,6 +2549,39 @@ impl ApiBackend for RuntimeBackend {
             }),
             model_attempts: task.model_attempts,
             tool_calls: task.tool_calls,
+        })
+    }
+
+    fn delegation(
+        &self,
+        identity: AuthenticatedIdentity,
+        delegation_id: String,
+    ) -> Result<DelegationResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let delegation_id = parse_delegation(&delegation_id)?;
+        let view = self
+            .lock()?
+            .delegation(ownership, delegation_id)
+            .map_err(|error| map_agent_error(&error))?;
+        delegation_response(view)
+    }
+
+    fn delegations(
+        &self,
+        identity: AuthenticatedIdentity,
+        limit: usize,
+    ) -> Result<DelegationsResponse, BackendError> {
+        let ownership = parse_ownership(&identity)?;
+        let views = self
+            .lock()?
+            .delegations(ownership, limit)
+            .map_err(|error| map_agent_error(&error))?;
+        Ok(DelegationsResponse {
+            api_version: API_VERSION.to_owned(),
+            delegations: views
+                .into_iter()
+                .map(delegation_response)
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
@@ -2066,6 +2837,24 @@ fn input_admission_response(
     })
 }
 
+fn delegation_response(
+    view: mealy_application::DelegationView,
+) -> Result<DelegationResponse, BackendError> {
+    Ok(DelegationResponse {
+        api_version: API_VERSION.to_owned(),
+        delegation_id: view.delegation_id.to_string(),
+        parent_run_id: view.parent_run_id.to_string(),
+        child_task_id: view.child_task_id.to_string(),
+        child_run_id: view.child_run_id.to_string(),
+        effective_capabilities: serde_json::to_value(view.effective_capabilities)
+            .map_err(|_| BackendError::Internal)?,
+        child_budget: serde_json::to_value(view.child_budget)
+            .map_err(|_| BackendError::Internal)?,
+        state: view.state,
+        result: view.result,
+    })
+}
+
 fn webhook_channel_response(view: WebhookChannelBindingView) -> WebhookChannelResponse {
     WebhookChannelResponse {
         api_version: API_VERSION.to_owned(),
@@ -2081,6 +2870,346 @@ fn webhook_channel_response(view: WebhookChannelBindingView) -> WebhookChannelRe
         created_at_ms: view.created_at_ms,
         updated_at_ms: view.updated_at_ms,
     }
+}
+
+fn telegram_channel_response(view: TelegramChannelBindingView) -> TelegramChannelResponse {
+    TelegramChannelResponse {
+        api_version: API_VERSION.to_owned(),
+        binding_id: view.binding_id.to_string(),
+        session_id: view.session_id.to_string(),
+        telegram_user_id: view.telegram_user_id,
+        telegram_chat_id: view.telegram_chat_id,
+        bot_user_id: view.bot_user_id,
+        bot_username: view.bot_username,
+        status: match view.status {
+            TelegramChannelStatus::Active => TelegramChannelStatusResponse::Active,
+            TelegramChannelStatus::Revoked => TelegramChannelStatusResponse::Revoked,
+        },
+        next_update_id: view.next_update_id,
+        revision: view.revision,
+        last_success_at_ms: view.last_success_at_ms,
+        last_failure_at_ms: view.last_failure_at_ms,
+        consecutive_failures: view.consecutive_failures,
+        last_error_code: view.last_error_code,
+        created_at_ms: view.created_at_ms,
+        updated_at_ms: view.updated_at_ms,
+    }
+}
+
+fn discord_channel_response(view: DiscordChannelBindingView) -> DiscordChannelResponse {
+    DiscordChannelResponse {
+        api_version: API_VERSION.to_owned(),
+        binding_id: view.binding_id.to_string(),
+        session_id: view.session_id.to_string(),
+        discord_user_id: view.discord_user_id,
+        discord_channel_id: view.discord_channel_id,
+        bot_user_id: view.bot_user_id,
+        bot_username: view.bot_username,
+        status: match view.status {
+            DiscordChannelStatus::Active => DiscordChannelStatusResponse::Active,
+            DiscordChannelStatus::Revoked => DiscordChannelStatusResponse::Revoked,
+        },
+        after_message_id: view.after_message_id,
+        revision: view.revision,
+        last_success_at_ms: view.last_success_at_ms,
+        last_failure_at_ms: view.last_failure_at_ms,
+        consecutive_failures: view.consecutive_failures,
+        last_error_code: view.last_error_code,
+        created_at_ms: view.created_at_ms,
+        updated_at_ms: view.updated_at_ms,
+    }
+}
+
+#[derive(Deserialize)]
+struct TelegramApiEnvelope<T> {
+    ok: bool,
+    result: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct TelegramBotIdentity {
+    id: i64,
+    is_bot: bool,
+    username: Option<String>,
+}
+
+struct VerifiedTelegramBot {
+    id: i64,
+    username: String,
+}
+
+pub(crate) fn validate_telegram_bot_token(token: &str) -> Result<(), BackendError> {
+    let Some((bot_id, secret)) = token.split_once(':') else {
+        return Err(invalid_telegram_token());
+    };
+    if token.len() < 16
+        || token.len() > 256
+        || bot_id.is_empty()
+        || !bot_id.bytes().all(|byte| byte.is_ascii_digit())
+        || bot_id.parse::<i64>().ok().is_none_or(|value| value <= 0)
+        || secret.len() < 16
+        || !secret
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid_telegram_token());
+    }
+    Ok(())
+}
+
+fn verify_telegram_bot(
+    client: &reqwest::blocking::Client,
+    api_base_url: &str,
+    token: &str,
+) -> Result<VerifiedTelegramBot, BackendError> {
+    const MAXIMUM_GET_ME_RESPONSE_BYTES: u64 = 64 * 1024;
+    validate_telegram_api_base_url(api_base_url)?;
+    let url = format!("{}/bot{token}/getMe", api_base_url.trim_end_matches('/'));
+    let response = client
+        .post(url)
+        .send()
+        .map_err(|_| BackendError::Unavailable)?;
+    if !response.status().is_success() {
+        return if matches!(response.status().as_u16(), 400 | 401 | 404) {
+            Err(invalid_telegram_token())
+        } else {
+            Err(BackendError::Unavailable)
+        };
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAXIMUM_GET_ME_RESPONSE_BYTES)
+    {
+        return Err(BackendError::Unavailable);
+    }
+    let mut body = Vec::new();
+    response
+        .take(MAXIMUM_GET_ME_RESPONSE_BYTES + 1)
+        .read_to_end(&mut body)
+        .map_err(|_| BackendError::Unavailable)?;
+    if u64::try_from(body.len()).unwrap_or(u64::MAX) > MAXIMUM_GET_ME_RESPONSE_BYTES {
+        return Err(BackendError::Unavailable);
+    }
+    let envelope: TelegramApiEnvelope<TelegramBotIdentity> =
+        serde_json::from_slice(&body).map_err(|_| BackendError::Unavailable)?;
+    let bot = envelope
+        .ok
+        .then_some(envelope.result)
+        .flatten()
+        .filter(|bot| bot.is_bot && bot.id > 0)
+        .ok_or_else(invalid_telegram_token)?;
+    let username = bot.username.ok_or_else(invalid_telegram_token)?;
+    Ok(VerifiedTelegramBot {
+        id: bot.id,
+        username,
+    })
+}
+
+pub(crate) fn validate_telegram_api_base_url(value: &str) -> Result<(), BackendError> {
+    let url = reqwest::Url::parse(value).map_err(|_| BackendError::Unavailable)?;
+    let scheme_allowed = match url.scheme() {
+        "https" => true,
+        "http" => url
+            .host_str()
+            .and_then(|host| host.parse::<IpAddr>().ok())
+            .is_some_and(|address| address.is_loopback()),
+        _ => false,
+    };
+    if url.cannot_be_a_base()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.host_str().is_none()
+        || !scheme_allowed
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(BackendError::Unavailable);
+    }
+    Ok(())
+}
+
+fn invalid_telegram_token() -> BackendError {
+    BackendError::InvalidRequest(
+        "Telegram bot token is invalid or getMe did not verify a bot identity".to_owned(),
+    )
+}
+
+#[derive(Deserialize)]
+struct DiscordApiUser {
+    id: String,
+    username: String,
+    #[serde(default)]
+    bot: bool,
+}
+
+#[derive(Deserialize)]
+struct DiscordApiChannel {
+    id: String,
+    #[serde(rename = "type")]
+    channel_type: u8,
+    #[serde(default)]
+    recipients: Vec<DiscordApiUser>,
+}
+
+#[derive(Deserialize)]
+struct DiscordApiMessageIdentity {
+    id: String,
+    channel_id: String,
+}
+
+struct VerifiedDiscordDm {
+    bot_user_id: String,
+    bot_username: String,
+    latest_message_id: Option<String>,
+}
+
+pub(crate) fn validate_discord_bot_token(token: &str) -> Result<(), BackendError> {
+    if token.len() < 20
+        || token.len() > 256
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(invalid_discord_binding());
+    }
+    Ok(())
+}
+
+fn verify_discord_dm(
+    client: &reqwest::blocking::Client,
+    api_base_url: &str,
+    token: &str,
+    expected_user_id: &str,
+    expected_channel_id: &str,
+) -> Result<VerifiedDiscordDm, BackendError> {
+    const USER_AGENT: &str = "DiscordBot (https://github.com/Amekn/project_mealy, 0.1.0)";
+    validate_discord_api_base_url(api_base_url)?;
+    let authorization = format!("Bot {token}");
+    let base = api_base_url.trim_end_matches('/');
+    let bot: DiscordApiUser = read_discord_setup_json(
+        client
+            .get(format!("{base}/users/@me"))
+            .header(reqwest::header::AUTHORIZATION, &authorization)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .map_err(|_| BackendError::Unavailable)?,
+        64 * 1024,
+    )?;
+    if !bot.bot
+        || !mealy_application::validate_discord_snowflake(&bot.id)
+        || bot.id == expected_user_id
+        || bot.username.is_empty()
+        || bot.username.len() > 64
+        || bot.username.trim() != bot.username
+        || bot.username.chars().any(char::is_control)
+    {
+        return Err(invalid_discord_binding());
+    }
+    let channel: DiscordApiChannel = read_discord_setup_json(
+        client
+            .get(format!("{base}/channels/{expected_channel_id}"))
+            .header(reqwest::header::AUTHORIZATION, &authorization)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .map_err(|_| BackendError::Unavailable)?,
+        128 * 1024,
+    )?;
+    let recipient_valid = matches!(
+        channel.recipients.as_slice(),
+        [recipient]
+            if recipient.id == expected_user_id
+                && !recipient.bot
+                && mealy_application::validate_discord_snowflake(&recipient.id)
+    );
+    if channel.channel_type != 1
+        || channel.id != expected_channel_id
+        || !recipient_valid
+        || !mealy_application::validate_discord_snowflake(&channel.id)
+    {
+        return Err(invalid_discord_binding());
+    }
+    let latest: Vec<DiscordApiMessageIdentity> = read_discord_setup_json(
+        client
+            .get(format!(
+                "{base}/channels/{expected_channel_id}/messages?limit=1"
+            ))
+            .header(reqwest::header::AUTHORIZATION, authorization)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .map_err(|_| BackendError::Unavailable)?,
+        128 * 1024,
+    )?;
+    if latest.len() > 1
+        || latest.iter().any(|message| {
+            message.channel_id != expected_channel_id
+                || !mealy_application::validate_discord_snowflake(&message.id)
+        })
+    {
+        return Err(invalid_discord_binding());
+    }
+    Ok(VerifiedDiscordDm {
+        bot_user_id: bot.id,
+        bot_username: bot.username,
+        latest_message_id: latest.into_iter().next().map(|message| message.id),
+    })
+}
+
+fn read_discord_setup_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+    maximum_bytes: u64,
+) -> Result<T, BackendError> {
+    match response.status().as_u16() {
+        200..=299 => {}
+        400 | 401 | 403 | 404 => return Err(invalid_discord_binding()),
+        _ => return Err(BackendError::Unavailable),
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum_bytes)
+    {
+        return Err(BackendError::Unavailable);
+    }
+    let mut body = Vec::new();
+    response
+        .take(maximum_bytes + 1)
+        .read_to_end(&mut body)
+        .map_err(|_| BackendError::Unavailable)?;
+    if u64::try_from(body.len()).unwrap_or(u64::MAX) > maximum_bytes {
+        return Err(BackendError::Unavailable);
+    }
+    serde_json::from_slice(&body).map_err(|_| BackendError::Unavailable)
+}
+
+pub(crate) fn validate_discord_api_base_url(value: &str) -> Result<(), BackendError> {
+    let url = reqwest::Url::parse(value).map_err(|_| BackendError::Unavailable)?;
+    let official = url.scheme() == "https"
+        && url.host_str() == Some("discord.com")
+        && url.port().is_none()
+        && matches!(url.path(), "/api/v10" | "/api/v10/");
+    let loopback_test = url.scheme() == "http"
+        && url
+            .host_str()
+            .and_then(|host| host.parse::<IpAddr>().ok())
+            .is_some_and(|address| address.is_loopback())
+        && matches!(url.path(), "" | "/");
+    if url.cannot_be_a_base()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !(official || loopback_test)
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(BackendError::Unavailable);
+    }
+    Ok(())
+}
+
+fn invalid_discord_binding() -> BackendError {
+    BackendError::InvalidRequest(
+        "Discord token, bot identity, human recipient, or one-to-one DM channel did not verify"
+            .to_owned(),
+    )
 }
 
 fn validate_webhook_callback_url(value: &str) -> Result<(), BackendError> {
@@ -2190,6 +3319,33 @@ fn build_extension_grant(
         issued_by_principal_id: ownership.principal_id(),
         issued_at_ms,
     })
+}
+
+fn validate_extension_mount_roots<'a>(
+    home: &Path,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> Result<(), BackendError> {
+    let home = fs::canonicalize(home).map_err(|_| BackendError::Internal)?;
+    for root in roots {
+        let requested = Path::new(root);
+        let canonical = fs::canonicalize(requested).map_err(|_| {
+            BackendError::InvalidRequest("extension mount root is unavailable".to_owned())
+        })?;
+        let metadata = fs::symlink_metadata(requested).map_err(|_| {
+            BackendError::InvalidRequest("extension mount root is unavailable".to_owned())
+        })?;
+        if canonical != requested
+            || metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+            || canonical.starts_with(&home)
+            || home.starts_with(&canonical)
+        {
+            return Err(BackendError::InvalidRequest(
+                "extension mount root is redirected or overlaps private daemon state".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn extension_rpc_request(
@@ -2376,6 +3532,16 @@ fn parse_session(value: &str) -> Result<SessionId, BackendError> {
         .map_err(|_| BackendError::InvalidRequest("invalid session ID".to_owned()))
 }
 
+fn parse_delegation(value: &str) -> Result<DelegationId, BackendError> {
+    DelegationId::from_str(value)
+        .map_err(|_| BackendError::InvalidRequest("invalid delegation ID".to_owned()))
+}
+
+fn parse_schedule(value: &str) -> Result<ScheduleId, BackendError> {
+    ScheduleId::from_str(value)
+        .map_err(|_| BackendError::InvalidRequest("invalid schedule ID".to_owned()))
+}
+
 fn parse_task(value: &str) -> Result<TaskId, BackendError> {
     TaskId::from_str(value).map_err(|_| BackendError::InvalidRequest("invalid task ID".to_owned()))
 }
@@ -2418,6 +3584,99 @@ fn parse_memory_revision(value: &str) -> Result<MemoryRevisionId, BackendError> 
 fn parse_compaction(value: &str) -> Result<CompactionId, BackendError> {
     CompactionId::from_str(value)
         .map_err(|_| BackendError::InvalidRequest("invalid compaction ID".to_owned()))
+}
+
+const fn missed_policy_from_command(
+    value: MissedRunPolicyCommand,
+) -> mealy_application::MissedRunPolicy {
+    match value {
+        MissedRunPolicyCommand::Skip => mealy_application::MissedRunPolicy::Skip,
+        MissedRunPolicyCommand::Latest => mealy_application::MissedRunPolicy::Latest,
+    }
+}
+
+const fn missed_policy_response(
+    value: mealy_application::MissedRunPolicy,
+) -> MissedRunPolicyCommand {
+    match value {
+        mealy_application::MissedRunPolicy::Skip => MissedRunPolicyCommand::Skip,
+        mealy_application::MissedRunPolicy::Latest => MissedRunPolicyCommand::Latest,
+    }
+}
+
+const fn overlap_policy_from_command(
+    value: ScheduleOverlapPolicyCommand,
+) -> mealy_application::ScheduleOverlapPolicy {
+    match value {
+        ScheduleOverlapPolicyCommand::Queue => mealy_application::ScheduleOverlapPolicy::Queue,
+        ScheduleOverlapPolicyCommand::SkipIfRunning => {
+            mealy_application::ScheduleOverlapPolicy::SkipIfRunning
+        }
+    }
+}
+
+const fn overlap_policy_response(
+    value: mealy_application::ScheduleOverlapPolicy,
+) -> ScheduleOverlapPolicyCommand {
+    match value {
+        mealy_application::ScheduleOverlapPolicy::Queue => ScheduleOverlapPolicyCommand::Queue,
+        mealy_application::ScheduleOverlapPolicy::SkipIfRunning => {
+            ScheduleOverlapPolicyCommand::SkipIfRunning
+        }
+    }
+}
+
+fn schedule_response(view: ScheduleView) -> ScheduleResponse {
+    ScheduleResponse {
+        api_version: API_VERSION.to_owned(),
+        schedule_id: view.schedule_id.to_string(),
+        session_id: view.session_id.to_string(),
+        name: view.name,
+        prompt: view.prompt,
+        cron_expression: view.cron_expression,
+        timezone: view.timezone,
+        missed_run_policy: missed_policy_response(view.missed_run_policy),
+        overlap_policy: overlap_policy_response(view.overlap_policy),
+        misfire_grace_ms: view.misfire_grace_ms,
+        allow_approval_required_action: view.approval_required_actions_allowed,
+        status: match view.status {
+            ScheduleStatus::Active => ScheduleStatusResponse::Active,
+            ScheduleStatus::Paused => ScheduleStatusResponse::Paused,
+            ScheduleStatus::Cancelled => ScheduleStatusResponse::Cancelled,
+        },
+        next_due_at_ms: view.next_due_at_ms,
+        revision: view.revision,
+        created_at_ms: view.created_at_ms,
+        updated_at_ms: view.updated_at_ms,
+    }
+}
+
+fn schedule_run_response(view: ScheduleRunView) -> ScheduleRunResponse {
+    ScheduleRunResponse {
+        schedule_run_id: view.schedule_run_id.to_string(),
+        schedule_id: view.schedule_id.to_string(),
+        scheduled_for_ms: view.scheduled_for_ms,
+        coalesced: view.coalesced,
+        intent: match view.intent {
+            mealy_application::ScheduleRunIntent::Fire => ScheduleRunIntentResponse::Fire,
+            mealy_application::ScheduleRunIntent::SkipMisfire => {
+                ScheduleRunIntentResponse::SkipMisfire
+            }
+            mealy_application::ScheduleRunIntent::SkipOverlap => {
+                ScheduleRunIntentResponse::SkipOverlap
+            }
+        },
+        status: match view.status {
+            ScheduleRunStatus::Claimed => ScheduleRunStatusResponse::Claimed,
+            ScheduleRunStatus::Admitted => ScheduleRunStatusResponse::Admitted,
+            ScheduleRunStatus::Skipped => ScheduleRunStatusResponse::Skipped,
+            ScheduleRunStatus::Failed => ScheduleRunStatusResponse::Failed,
+        },
+        inbox_entry_id: view.inbox_entry_id.map(|id| id.to_string()),
+        reason: view.reason,
+        created_at_ms: view.created_at_ms,
+        completed_at_ms: view.completed_at_ms,
+    }
 }
 
 fn approval_response(view: ApprovalRequestView) -> Result<ApprovalResponse, BackendError> {
@@ -2837,6 +4096,10 @@ fn map_timeline_error(error: &TimelineUseCaseError) -> BackendError {
         TimelineUseCaseError::Store(TimelineStoreError::CursorAhead) => {
             BackendError::TimelineCursorAhead
         }
+        TimelineUseCaseError::Store(TimelineStoreError::InvalidSearch)
+        | TimelineUseCaseError::InvalidSearchQuery => {
+            BackendError::InvalidRequest("invalid session transcript search".to_owned())
+        }
         TimelineUseCaseError::Store(TimelineStoreError::Unavailable(_)) => {
             BackendError::Unavailable
         }
@@ -2857,7 +4120,10 @@ fn map_agent_error(error: &AgentStoreError) -> BackendError {
         | AgentStoreError::Cancelled
         | AgentStoreError::BudgetExceeded(_) => BackendError::Conflict,
         AgentStoreError::Unavailable(_) => BackendError::Unavailable,
-        AgentStoreError::InvariantViolation(_) => BackendError::Internal,
+        AgentStoreError::InvariantViolation(message) => {
+            tracing::error!(error = %message, "agent store invariant violation");
+            BackendError::Internal
+        }
     }
 }
 
@@ -2963,6 +4229,42 @@ fn map_webhook_store_error(error: WebhookChannelStoreError) -> BackendError {
     }
 }
 
+fn map_telegram_store_error(error: TelegramChannelStoreError) -> BackendError {
+    match error {
+        TelegramChannelStoreError::NotFound => BackendError::NotFound,
+        TelegramChannelStoreError::Revoked | TelegramChannelStoreError::Conflict => {
+            BackendError::Conflict
+        }
+        TelegramChannelStoreError::InvalidContract(message) => {
+            BackendError::InvalidRequest(message)
+        }
+        TelegramChannelStoreError::Unavailable(_) => BackendError::Unavailable,
+        TelegramChannelStoreError::InvariantViolation(_) => BackendError::Internal,
+    }
+}
+
+fn map_discord_store_error(error: DiscordChannelStoreError) -> BackendError {
+    match error {
+        DiscordChannelStoreError::NotFound => BackendError::NotFound,
+        DiscordChannelStoreError::Revoked | DiscordChannelStoreError::Conflict => {
+            BackendError::Conflict
+        }
+        DiscordChannelStoreError::InvalidContract(message) => BackendError::InvalidRequest(message),
+        DiscordChannelStoreError::Unavailable(_) => BackendError::Unavailable,
+        DiscordChannelStoreError::InvariantViolation(_) => BackendError::Internal,
+    }
+}
+
+fn map_schedule_store_error(error: ScheduleStoreError) -> BackendError {
+    match error {
+        ScheduleStoreError::NotFound | ScheduleStoreError::Unauthorized => BackendError::NotFound,
+        ScheduleStoreError::Conflict => BackendError::Conflict,
+        ScheduleStoreError::InvalidContract(message) => BackendError::InvalidRequest(message),
+        ScheduleStoreError::Unavailable(_) => BackendError::Unavailable,
+        ScheduleStoreError::InvariantViolation(_) => BackendError::Internal,
+    }
+}
+
 fn map_channel_secret_error(error: &ChannelSecretStoreError) -> BackendError {
     match error {
         ChannelSecretStoreError::Conflict => BackendError::Conflict,
@@ -2971,6 +4273,21 @@ fn map_channel_secret_error(error: &ChannelSecretStoreError) -> BackendError {
         | ChannelSecretStoreError::NotFound
         | ChannelSecretStoreError::UnsafeStorage => BackendError::Internal,
     }
+}
+
+fn map_telegram_secret_error(error: &ProviderSecretStoreError) -> BackendError {
+    match error {
+        ProviderSecretStoreError::Conflict => BackendError::Conflict,
+        ProviderSecretStoreError::Io { .. } => BackendError::Unavailable,
+        ProviderSecretStoreError::InvalidSecretId
+        | ProviderSecretStoreError::InvalidSecret
+        | ProviderSecretStoreError::NotFound
+        | ProviderSecretStoreError::UnsafeStorage => BackendError::Internal,
+    }
+}
+
+fn map_discord_secret_error(error: &ProviderSecretStoreError) -> BackendError {
+    map_telegram_secret_error(error)
 }
 
 fn map_operational_store_error(error: OperationalStoreError) -> BackendError {
@@ -3062,6 +4379,7 @@ fn map_maintenance_error(error: &MaintenanceError) -> BackendError {
         | MaintenanceError::InvalidPassphrase
         | MaintenanceError::PassphraseRequired
         | MaintenanceError::UnexpectedPassphrase
+        | MaintenanceError::ActivationRequiresSecrets
         | MaintenanceError::InvalidSecretArchive
         | MaintenanceError::CryptographicFailure
         | MaintenanceError::UnsafePath(_)
@@ -3072,7 +4390,8 @@ fn map_maintenance_error(error: &MaintenanceError) -> BackendError {
         MaintenanceError::AlreadyExists(_) => BackendError::Conflict,
         MaintenanceError::Io(_)
         | MaintenanceError::Store(_)
-        | MaintenanceError::MissingComponent(_) => BackendError::Unavailable,
+        | MaintenanceError::MissingComponent(_)
+        | MaintenanceError::UnsupportedActivation => BackendError::Unavailable,
         MaintenanceError::Overflow
         | MaintenanceError::InvalidTime
         | MaintenanceError::InvalidMigrationVersion
@@ -3085,6 +4404,39 @@ fn denied_sandbox_profile(profile: &str, detail: &str) -> SandboxProfileResponse
         profile: profile.to_owned(),
         status: SandboxProfileStatusResponse::Denied,
         detail: detail.to_owned(),
+    }
+}
+
+fn sandbox_doctor_check(available: bool) -> String {
+    if available {
+        "ok: Linux Bubblewrap observe/workspace-write proof passed".to_owned()
+    } else {
+        "degraded: sandbox profiles fail closed on this host/install".to_owned()
+    }
+}
+
+fn schedule_doctor_check(snapshot: &OperationalSnapshot) -> String {
+    format!(
+        "ok: {} active, {} paused, {} claimed, {} failed, {} policy-skipped occurrence(s)",
+        snapshot.active_schedules,
+        snapshot.paused_schedules,
+        snapshot.claimed_schedule_runs,
+        snapshot.failed_schedule_runs,
+        snapshot.skipped_schedule_runs,
+    )
+}
+
+fn channel_doctor_check(snapshot: &OperationalSnapshot) -> String {
+    if snapshot.degraded_channels == 0 && snapshot.reserved_channel_updates == 0 {
+        format!(
+            "ok: {} active external channel(s)",
+            snapshot.active_channels
+        )
+    } else {
+        format!(
+            "attention: {} active, {} degraded, {} reserved update(s); inspect channel status",
+            snapshot.active_channels, snapshot.degraded_channels, snapshot.reserved_channel_updates,
+        )
     }
 }
 
@@ -3115,6 +4467,45 @@ fn provider_routing_check() -> Result<String, BackendError> {
         "ok: explicit fallback retained equal trust and excluded the lower-trust provider"
             .to_owned(),
     )
+}
+
+fn configured_provider_check(provider: &RuntimeModelProvider) -> String {
+    provider
+        .endpoint_statuses()
+        .into_iter()
+        .enumerate()
+        .map(|(index, endpoint)| {
+            let repair = match endpoint.health.as_str() {
+                "healthy" => "none",
+                "configured_unprobed" => {
+                    "run one bounded test turn or re-activate the provider without --skip-connectivity-test"
+                }
+                "rate_limited" => {
+                    "wait for the upstream reset and reduce configured concurrency/rate pressure if persistent"
+                }
+                "degraded" => {
+                    "inspect recent provider failures, then verify endpoint DNS, TLS, and availability"
+                }
+                "unhealthy" => {
+                    "stop the daemon, repair endpoint/model/credential configuration, and run the activation connectivity test"
+                }
+                _ => "inspect durable failures before admitting additional work",
+            };
+            format!(
+                "{} {}: protocol {} provider {} model {} residency {} locality {} calls {}; repair: {}",
+                if index == 0 { "primary" } else { "fallback" },
+                endpoint.health,
+                endpoint.protocol,
+                endpoint.provider_id,
+                endpoint.model_id,
+                endpoint.residency,
+                if endpoint.local { "local" } else { "remote" },
+                endpoint.invocation_count,
+                repair,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn provider_doctor_candidate(
@@ -3169,17 +4560,21 @@ fn private_home_permissions(home: &std::path::Path) -> bool {
 mod tests {
     use super::{
         ApiBackend, AuthenticatedIdentity, BackendError, DrainController, KeyedConcurrencyLimiter,
-        RuntimeBackend, RuntimeOperationalConfig, map_artifact_blob_error,
+        RuntimeBackend, RuntimeChannelConfig, RuntimeDiscordConfig, RuntimeOperationalConfig,
+        RuntimeTelegramConfig, map_artifact_blob_error, validate_extension_mount_roots,
     };
+    use crate::agent::RuntimeModelProvider;
     use mealy_application::{
-        ArtifactBlobStore, ArtifactBlobStoreError, estimate_tokens, sha256_digest,
+        ArtifactBlobStore, ArtifactBlobStoreError, ProviderConfig, estimate_tokens, sha256_digest,
     };
     use mealy_domain::{
         ArtifactId, ChannelBindingId, ContextEpochId, ContextItemId, ContextManifestId,
         CorrelationId, EventId, InboxEntryId, OutboxId, PrincipalId, RunId, SessionId, TaskId,
         TurnId,
     };
-    use mealy_infrastructure::{FileArtifactBlobStore, FileChannelSecretStore, SqliteStore};
+    use mealy_infrastructure::{
+        FileArtifactBlobStore, FileChannelSecretStore, FileProviderSecretStore, SqliteStore,
+    };
     use mealy_protocol::{
         ContextItemDisposition, CorrectMemoryRequest, MemoryCategoryCommand,
         MemoryLifecycleRequest, MemoryPromotionAuthorizationCommand, MemoryRetentionCommand,
@@ -3192,6 +4587,7 @@ mod tests {
         fs, io,
         path::PathBuf,
         sync::{Arc, Mutex},
+        time::Duration,
     };
     use tempfile::TempDir;
 
@@ -3207,6 +4603,45 @@ mod tests {
         assert!(limiter.try_acquire("extension-b".to_owned()).is_some());
         drop(first);
         assert!(limiter.try_acquire("extension-a".to_owned()).is_some());
+    }
+
+    #[test]
+    fn extension_mounts_cannot_expose_private_daemon_state() {
+        let parent = tempfile::tempdir().expect("home parent");
+        let home = parent.path().join("mealy-home");
+        fs::create_dir(&home).expect("daemon home");
+        let private_child = home.join("provider-secrets");
+        fs::create_dir(&private_child).expect("private child");
+        let outside = tempfile::tempdir().expect("outside mount");
+        assert!(
+            validate_extension_mount_roots(
+                &home,
+                [outside.path().to_str().expect("outside mount UTF-8")]
+            )
+            .is_ok()
+        );
+        for denied in [parent.path(), home.as_path(), private_child.as_path()] {
+            assert!(
+                validate_extension_mount_roots(
+                    &home,
+                    [denied.to_str().expect("denied mount UTF-8")]
+                )
+                .is_err()
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            let redirected = parent.path().join("redirected-mount");
+            std::os::unix::fs::symlink(outside.path(), &redirected).expect("mount symlink");
+            assert!(
+                validate_extension_mount_roots(
+                    &home,
+                    [redirected.to_str().expect("redirected mount UTF-8")]
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -3594,6 +5029,16 @@ mod tests {
                 FileChannelSecretStore::new(home.path().join("channel-secrets"))
                     .expect("open channel secret broker"),
             );
+            let provider = Arc::new(
+                RuntimeModelProvider::from_config(
+                    &ProviderConfig::BuiltinFixture,
+                    None,
+                    Duration::ZERO,
+                    1,
+                    600,
+                )
+                .expect("fixture provider"),
+            );
             let (drain_sender, _drain_receiver) = tokio::sync::watch::channel(false);
             let drain = Arc::new(DrainController::new(
                 drain_sender,
@@ -3607,11 +5052,30 @@ mod tests {
                     Arc::new(Mutex::new(store)),
                     artifacts,
                     channel_secrets,
+                    RuntimeChannelConfig {
+                        telegram: RuntimeTelegramConfig {
+                            credentials: Some(Arc::new(
+                                FileProviderSecretStore::new(backend_home.join("provider-secrets"))
+                                    .expect("open Telegram credential broker"),
+                            )),
+                            api_base_url: "http://127.0.0.1:9".to_owned(),
+                        },
+                        discord: RuntimeDiscordConfig {
+                            credentials: Some(Arc::new(
+                                FileProviderSecretStore::new(backend_home.join("provider-secrets"))
+                                    .expect("open Discord credential broker"),
+                            )),
+                            api_base_url: "http://127.0.0.1:9".to_owned(),
+                        },
+                    },
+                    provider,
                     RuntimeOperationalConfig {
                         home: backend_home,
                         artifact_gc_minimum_age_hours: 24,
                         maximum_pending_inputs_per_session: 1_024,
                         maximum_extension_invocations: 1,
+                        enabled_read_tools: vec!["fixture.read".to_owned()],
+                        enabled_action_tools: Vec::new(),
                         sandbox_available: false,
                         safe_mode: false,
                     },

@@ -13,6 +13,7 @@ mod channel;
 mod compaction;
 mod context;
 mod delegation;
+mod discord;
 mod effects;
 mod extension;
 mod memory;
@@ -20,8 +21,10 @@ mod operations;
 mod outbox;
 mod promotion;
 mod recovery;
+mod schedule;
 mod scheduler;
 mod sessions;
+mod telegram;
 mod timeline;
 mod validation;
 
@@ -36,10 +39,14 @@ const MIGRATION_0008: &str = include_str!("../migrations/0008_validation_delegat
 const MIGRATION_0009: &str = include_str!("../migrations/0009_memory_compaction.sql");
 const MIGRATION_0010: &str = include_str!("../migrations/0010_extension_boundary.sql");
 const MIGRATION_0011: &str = include_str!("../migrations/0011_operational_hardening.sql");
+const MIGRATION_0012: &str = include_str!("../migrations/0012_agent_schedules.sql");
+const MIGRATION_0013: &str = include_str!("../migrations/0013_telegram_channel.sql");
+const MIGRATION_0014: &str = include_str!("../migrations/0014_discord_dm_channel.sql");
+const MIGRATION_0015: &str = include_str!("../migrations/0015_usage_reporting.sql");
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SYNCHRONOUS_POLICY: &str = "FULL";
 /// Latest canonical schema revision understood by this binary.
-pub const LATEST_SCHEMA_VERSION: i64 = 11;
+pub const LATEST_SCHEMA_VERSION: i64 = 15;
 
 /// SQLite-backed transition store.
 pub struct SqliteStore {
@@ -189,6 +196,38 @@ impl SqliteStore {
             transaction.execute_batch(MIGRATION_0011)?;
             transaction.execute(
                 "INSERT INTO schema_version(version, applied_at_ms) VALUES (11, ?1)",
+                [applied_at_ms],
+            )?;
+            existing_version = 11;
+        }
+        if existing_version == 11 {
+            transaction.execute_batch(MIGRATION_0012)?;
+            transaction.execute(
+                "INSERT INTO schema_version(version, applied_at_ms) VALUES (12, ?1)",
+                [applied_at_ms],
+            )?;
+            existing_version = 12;
+        }
+        if existing_version == 12 {
+            transaction.execute_batch(MIGRATION_0013)?;
+            transaction.execute(
+                "INSERT INTO schema_version(version, applied_at_ms) VALUES (13, ?1)",
+                [applied_at_ms],
+            )?;
+            existing_version = 13;
+        }
+        if existing_version == 13 {
+            transaction.execute_batch(MIGRATION_0014)?;
+            transaction.execute(
+                "INSERT INTO schema_version(version, applied_at_ms) VALUES (14, ?1)",
+                [applied_at_ms],
+            )?;
+            existing_version = 14;
+        }
+        if existing_version == 14 {
+            transaction.execute_batch(MIGRATION_0015)?;
+            transaction.execute(
+                "INSERT INTO schema_version(version, applied_at_ms) VALUES (15, ?1)",
                 [applied_at_ms],
             )?;
         }
@@ -368,6 +407,24 @@ impl SqliteStore {
         if !foreign_keys {
             return Err(StoreError::NotReady(
                 "foreign-key enforcement is disabled".to_owned(),
+            ));
+        }
+        let usage_index = self
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema \
+                 WHERE type = 'index' AND tbl_name = 'run' \
+                   AND name = 'run_terminal_completion_idx'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if usage_index.as_deref().is_none_or(|sql| {
+            !sql.contains("ON run(completed_at_ms, id)")
+                || !sql.contains("status IN ('succeeded', 'failed', 'cancelled')")
+        }) {
+            return Err(StoreError::NotReady(
+                "terminal usage-report index is missing or malformed".to_owned(),
             ));
         }
         let quick_check = self
@@ -614,9 +671,9 @@ fn count(connection: &Connection, table: &str) -> Result<u64, StoreError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        JournalRecord, MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004,
-        MIGRATION_0005, MIGRATION_0006, MIGRATION_0007, MIGRATION_0008, MIGRATION_0009,
-        MIGRATION_0010, OutboxRecord, SqliteStore, StoreError, TaskMutation,
+        JournalRecord, LATEST_SCHEMA_VERSION, MIGRATION_0001, MIGRATION_0002, MIGRATION_0003,
+        MIGRATION_0004, MIGRATION_0005, MIGRATION_0006, MIGRATION_0007, MIGRATION_0008,
+        MIGRATION_0009, MIGRATION_0010, OutboxRecord, SqliteStore, StoreError, TaskMutation,
         ensure_initial_journal_envelope, ensure_phase_one_run_columns,
     };
     use mealy_domain::{CorrelationId, EventId, OutboxId, PrincipalId, TaskId, TaskState};
@@ -1284,7 +1341,7 @@ mod tests {
                 row.get(0)
             })
             .expect("read upgraded version");
-        assert_eq!(version, 11);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let foreign_key_violations: i64 = store
             .connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -1499,7 +1556,7 @@ mod tests {
                 row.get(0)
             })
             .expect("read upgraded version");
-        assert_eq!(version, 11);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let foreign_key_violations: i64 = store
             .connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -1683,7 +1740,7 @@ mod tests {
                 row.get(0)
             })
             .expect("read upgraded version");
-        assert_eq!(version, 11);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let foreign_key_violations: i64 = store
             .connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -1778,7 +1835,7 @@ mod tests {
                 row.get(0)
             })
             .expect("load v9 schema version");
-        assert_eq!(version, 11);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let lexical_rows: i64 = store
             .connection
             .query_row("SELECT COUNT(*) FROM memory_fts", [], |row| row.get(0))
@@ -1911,7 +1968,7 @@ mod tests {
                 row.get(0)
             })
             .expect("load v10 schema version");
-        assert_eq!(version, 11);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let foreign_key_violations: i64 = store
             .connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -2027,10 +2084,55 @@ mod tests {
             )
             .expect("query daemon lifetime table");
         assert!(daemon_table);
-        assert_eq!(store.schema_version().expect("schema version"), 11);
+        assert_eq!(
+            store.schema_version().expect("schema version"),
+            u64::try_from(LATEST_SCHEMA_VERSION).expect("nonnegative schema version")
+        );
         store
             .verify_storage_integrity()
             .expect("upgraded integrity");
+    }
+
+    #[test]
+    fn usage_reporting_upgrade_installs_only_the_terminal_completion_index() {
+        let store = SqliteStore::open_in_memory(NOW).expect("current in-memory store");
+        store
+            .connection
+            .execute_batch(
+                "DROP INDEX run_terminal_completion_idx;
+                 DELETE FROM schema_version WHERE version = 15;",
+            )
+            .expect("construct exact v14 predecessor");
+        let connection = store.connection;
+        let upgraded = SqliteStore::from_connection(connection, NOW + 1, false)
+            .expect("upgrade v14 usage schema");
+        assert_eq!(
+            upgraded.schema_version().expect("schema version"),
+            u64::try_from(LATEST_SCHEMA_VERSION).expect("nonnegative schema version")
+        );
+        let index_sql: String = upgraded
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema \
+                 WHERE type = 'index' AND name = 'run_terminal_completion_idx'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("terminal completion index");
+        assert!(index_sql.contains("ON run(completed_at_ms, id)"));
+        assert!(index_sql.contains("status IN ('succeeded', 'failed', 'cancelled')"));
+        upgraded
+            .verify_storage_integrity()
+            .expect("upgraded integrity");
+        upgraded
+            .connection
+            .execute("DROP INDEX run_terminal_completion_idx", [])
+            .expect("tamper usage index");
+        assert!(matches!(
+            upgraded.readiness_check(),
+            Err(StoreError::NotReady(message))
+                if message == "terminal usage-report index is missing or malformed"
+        ));
     }
 
     #[test]
@@ -2523,7 +2625,7 @@ mod tests {
             error,
             StoreError::NewerSchema {
                 found: 99,
-                supported: 11
+                supported: LATEST_SCHEMA_VERSION
             }
         ));
         let connection =

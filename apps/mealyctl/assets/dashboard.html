@@ -1,0 +1,2605 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mealy Operations</title>
+  <style nonce="__MEALY_DASHBOARD_NONCE__">
+    :root {
+      --ink: #f7f4ed;
+      --muted: #a9adad;
+      --faint: #747b7c;
+      --canvas: #091111;
+      --surface: #101b1a;
+      --surface-2: #142321;
+      --line: #263735;
+      --mint: #8ff0c3;
+      --mint-dark: #183f32;
+      --amber: #f3c981;
+      --amber-dark: #49391c;
+      --red: #ff938b;
+      --red-dark: #4c2421;
+      --blue: #91c9ff;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% -10%, rgba(71, 167, 127, .22), transparent 34rem),
+        radial-gradient(circle at 100% 5%, rgba(50, 116, 128, .18), transparent 30rem),
+        var(--canvas);
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+
+    .shell {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0 64px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 10px 2px 26px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 14px; }
+
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(143, 240, 195, .4);
+      border-radius: 13px;
+      color: var(--mint);
+      background: linear-gradient(145deg, rgba(143, 240, 195, .16), rgba(143, 240, 195, .03));
+      box-shadow: inset 0 0 22px rgba(143, 240, 195, .05);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -.04em;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 18px; letter-spacing: -.02em; }
+    .eyebrow { margin-top: 4px; color: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+
+    .top-actions { display: flex; align-items: center; gap: 12px; }
+
+    .live-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(16, 27, 26, .82);
+      font-size: 12px;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+    .dot.ok { background: var(--mint); box-shadow: 0 0 13px rgba(143, 240, 195, .75); }
+    .dot.bad { background: var(--red); box-shadow: 0 0 13px rgba(255, 147, 139, .55); }
+
+    .refresh {
+      min-height: 38px;
+      padding: 0 16px;
+      border: 1px solid rgba(143, 240, 195, .4);
+      border-radius: 10px;
+      color: #092016;
+      background: var(--mint);
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    .refresh:hover { filter: brightness(1.05); }
+    .refresh:disabled { cursor: progress; opacity: .6; }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(280px, .75fr);
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .hero-main, .hero-side, .panel, .metric {
+      border: 1px solid var(--line);
+      background: linear-gradient(155deg, rgba(20, 35, 33, .96), rgba(13, 23, 22, .96));
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      min-height: 214px;
+      padding: 30px;
+      border-radius: 20px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero-main::after {
+      content: "";
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      right: -75px;
+      top: -95px;
+      border: 1px solid rgba(143, 240, 195, .1);
+      border-radius: 50%;
+      box-shadow: 0 0 0 36px rgba(143, 240, 195, .025), 0 0 0 72px rgba(143, 240, 195, .015);
+      pointer-events: none;
+    }
+
+    .kicker { color: var(--mint); font-size: 12px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+    .hero h2 { max-width: 760px; margin-top: 14px; font-size: clamp(27px, 4vw, 45px); line-height: 1.05; letter-spacing: -.045em; }
+    .hero-copy { max-width: 720px; margin-top: 16px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+
+    .hero-side {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 25px;
+      border-radius: 20px;
+    }
+
+    .label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .provider-name { margin-top: 12px; font-size: 21px; font-weight: 750; letter-spacing: -.025em; overflow-wrap: anywhere; }
+    .provider-meta { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .stamp { margin-top: 24px; color: var(--faint); font-size: 12px; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .metric { padding: 20px; border-radius: 15px; box-shadow: none; }
+    .metric-value { margin-top: 15px; font-size: 29px; font-weight: 790; letter-spacing: -.04em; }
+    .metric-note { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel { grid-column: span 6; border-radius: 17px; overflow: hidden; }
+    .panel.wide { grid-column: span 8; }
+    .panel.narrow { grid-column: span 4; }
+    .panel.full { grid-column: 1 / -1; }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 19px 21px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel h3 { font-size: 14px; letter-spacing: -.01em; }
+    .panel-subtitle { margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .count { color: var(--muted); font-size: 12px; }
+    .panel-body { min-height: 92px; padding: 8px 21px 16px; }
+
+    .list { list-style: none; margin: 0; padding: 0; }
+    .item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(38, 55, 53, .72);
+    }
+    .item:last-child { border-bottom: 0; }
+    .item-title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .item-meta { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .item-side { color: var(--muted); font-size: 12px; text-align: right; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      min-height: 25px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, .025);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .badge.ok { color: var(--mint); border-color: rgba(143, 240, 195, .28); background: rgba(24, 63, 50, .72); }
+    .badge.warn { color: var(--amber); border-color: rgba(243, 201, 129, .28); background: rgba(73, 57, 28, .72); }
+    .badge.bad { color: var(--red); border-color: rgba(255, 147, 139, .28); background: rgba(76, 36, 33, .72); }
+    .badge.info { color: var(--blue); border-color: rgba(145, 201, 255, .28); background: rgba(24, 49, 68, .72); }
+
+    .checks { padding-top: 7px; }
+    .check {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr);
+      gap: 11px;
+      padding: 11px 0;
+      border-bottom: 1px solid rgba(38, 55, 53, .72);
+    }
+    .check:last-child { border-bottom: 0; }
+    .check-indicator { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--mint); }
+    .check-indicator.warn { background: var(--amber); }
+    .check-indicator.bad { background: var(--red); }
+    .check-name { color: var(--ink); font-size: 12px; font-weight: 700; }
+    .check-detail { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 13px; }
+    .chip { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(255, 255, 255, .02); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .empty { padding: 25px 0 12px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+
+    .conversation-panel .panel-body { padding: 0; }
+    .conversation-layout {
+      display: grid;
+      grid-template-columns: minmax(210px, .38fr) minmax(0, 1.62fr);
+      min-height: 510px;
+    }
+    .session-rail {
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: rgba(7, 15, 14, .32);
+    }
+    .session-picker { display: grid; gap: 8px; }
+    .session-choice {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+    .session-choice:hover { border-color: var(--line); background: rgba(255, 255, 255, .025); }
+    .session-choice.selected { border-color: rgba(143, 240, 195, .3); color: var(--ink); background: rgba(24, 63, 50, .5); }
+    .session-choice-title { display: block; overflow: hidden; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .session-choice-meta { display: block; margin-top: 5px; color: var(--faint); font-size: 10px; }
+    .conversation-main { display: grid; grid-template-rows: auto minmax(250px, 1fr) auto; min-width: 0; }
+    .conversation-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 55px;
+      padding: 10px 17px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .conversation-id { overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .timeline {
+      max-height: 560px;
+      padding: 10px 18px 18px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .timeline-event {
+      display: grid;
+      grid-template-columns: 9px minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 13px 0;
+      border-bottom: 1px solid rgba(38, 55, 53, .6);
+    }
+    .timeline-event:last-child { border-bottom: 0; }
+    .event-dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
+    .event-dot.ok { background: var(--mint); }
+    .event-dot.warn { background: var(--amber); }
+    .event-dot.bad { background: var(--red); }
+    .event-title { font-size: 12px; font-weight: 720; overflow-wrap: anywhere; }
+    .event-copy { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .event-time { color: var(--faint); font-size: 10px; white-space: nowrap; }
+    .composer { padding: 15px 17px 17px; border-top: 1px solid var(--line); background: rgba(7, 15, 14, .3); }
+    .composer textarea {
+      width: 100%;
+      min-height: 92px;
+      resize: vertical;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--ink);
+      background: rgba(9, 17, 17, .9);
+      line-height: 1.5;
+    }
+    .composer textarea::placeholder { color: var(--faint); }
+    .composer-actions, .command-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+    .composer-actions { justify-content: space-between; margin-top: 10px; }
+    .command-actions { margin-top: 10px; }
+    .delivery-mode {
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+    .action {
+      min-height: 36px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--ink);
+      background: var(--surface-2);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 720;
+    }
+    .action:hover { filter: brightness(1.12); }
+    .action:disabled { cursor: progress; opacity: .48; }
+    .action.primary { border-color: rgba(143, 240, 195, .35); color: #092016; background: var(--mint); }
+    .action.danger { border-color: rgba(255, 147, 139, .35); color: var(--red); background: rgba(76, 36, 33, .55); }
+    .action.approve { border-color: rgba(143, 240, 195, .3); color: var(--mint); background: rgba(24, 63, 50, .55); }
+    .action.deny { border-color: rgba(243, 201, 129, .3); color: var(--amber); background: rgba(73, 57, 28, .5); }
+    .approval-subject { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+    .approval-digest { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .command-note { color: var(--faint); font-size: 10px; line-height: 1.45; }
+
+    .recovery-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, .62fr) minmax(0, 1.38fr);
+      gap: 20px;
+      padding-top: 18px;
+    }
+    .recovery-controls { min-width: 0; }
+    .recovery-fields { display: grid; gap: 13px; }
+    .recovery-field { display: grid; gap: 7px; }
+    .recovery-field input, .recovery-field textarea, .recovery-field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--ink);
+      background: rgba(9, 17, 17, .9);
+    }
+    .recovery-field input, .recovery-field select { min-height: 38px; padding: 0 10px; }
+    .recovery-field textarea { min-height: 125px; padding: 10px; resize: vertical; line-height: 1.45; }
+    .recovery-field input::placeholder, .recovery-field textarea::placeholder { color: var(--faint); }
+    .evidence-output {
+      min-height: 220px;
+      max-height: 540px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: rgba(5, 11, 11, .7);
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .reconciliation-controls { display: grid; gap: 12px; margin-top: 15px; }
+    .schedule-history { margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .schedule-history-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 4px; }
+    .memory-layout { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr); gap: 20px; padding-top: 18px; }
+    .memory-controls { display: grid; gap: 12px; }
+    .memory-list { max-height: 620px; margin-top: 12px; overflow-y: auto; }
+    .memory-editor { display: grid; gap: 12px; margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .memory-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .extension-layout { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr); gap: 20px; padding-top: 18px; }
+    .extension-list { max-height: 680px; margin-top: 12px; overflow-y: auto; }
+    .grant-review { display: grid; gap: 13px; margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .grant-options { display: grid; gap: 8px; }
+    .grant-option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .grant-option input { margin-top: 2px; }
+    .mount-row { display: grid; grid-template-columns: auto minmax(110px, .42fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+    .mount-row input[type="text"], .mount-row select { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: rgba(9, 17, 17, .9); }
+    .usage-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .usage-cell { padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(9, 17, 17, .55); }
+    .usage-value { margin-top: 5px; color: var(--ink); font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin-top: 22px;
+      padding: 0 3px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .error-banner {
+      display: none;
+      margin-bottom: 18px;
+      padding: 14px 17px;
+      border: 1px solid rgba(255, 147, 139, .35);
+      border-radius: 12px;
+      color: var(--red);
+      background: rgba(76, 36, 33, .62);
+      font-size: 13px;
+    }
+    .error-banner.visible { display: block; }
+
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .panel, .panel.wide, .panel.narrow { grid-column: 1 / -1; }
+      .conversation-layout { grid-template-columns: 1fr; }
+      .recovery-layout { grid-template-columns: 1fr; }
+      .memory-layout { grid-template-columns: 1fr; }
+      .extension-layout { grid-template-columns: 1fr; }
+      .session-rail { border-right: 0; border-bottom: 1px solid var(--line); }
+      .session-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1440px); padding-top: 14px; }
+      .topbar { align-items: flex-start; }
+      .top-actions { flex-direction: column-reverse; align-items: stretch; }
+      .live-state { display: none; }
+      .hero-main, .hero-side { padding: 22px; }
+      .metrics { grid-template-columns: 1fr; }
+      .item { grid-template-columns: 1fr; gap: 8px; }
+      .item-side { text-align: left; }
+      .footer { flex-direction: column; }
+      .session-picker { grid-template-columns: 1fr; }
+      .conversation-status { align-items: flex-start; flex-direction: column; }
+      .composer-actions { align-items: stretch; flex-direction: column; }
+      .delivery-mode, .action { width: 100%; }
+      .memory-form-grid { grid-template-columns: 1fr; }
+      .mount-row { grid-template-columns: auto 1fr; }
+      .mount-row input[type="text"] { grid-column: 1 / -1; }
+      .usage-summary { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">M</div>
+        <div>
+          <h1>Mealy Operations</h1>
+          <p class="eyebrow">Temporary interactive console</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="live-state" aria-live="polite"><span id="live-dot" class="dot"></span><span id="live-label">Connecting</span></div>
+        <button id="refresh" class="refresh" type="button">Refresh snapshot</button>
+      </div>
+    </header>
+
+    <div id="error" class="error-banner" role="alert"></div>
+
+    <section class="hero" aria-labelledby="overview-heading">
+      <div class="hero-main">
+        <p class="kicker">Control plane</p>
+        <h2 id="overview-heading">Durable work, visible at a glance.</h2>
+        <p id="overview-copy" class="hero-copy">Loading the authenticated operational projection from the local daemon.</p>
+      </div>
+      <div class="hero-side">
+        <div>
+          <p class="label">Effective provider</p>
+          <p id="provider-name" class="provider-name">—</p>
+          <p id="provider-meta" class="provider-meta">Waiting for daemon status</p>
+        </div>
+        <p id="snapshot-time" class="stamp">No snapshot yet</p>
+      </div>
+    </section>
+
+    <section class="metrics" aria-label="Operational summary">
+      <article class="metric"><p class="label">Daemon</p><p id="metric-daemon" class="metric-value">—</p><p id="metric-daemon-note" class="metric-note">Readiness and admission</p></article>
+      <article class="metric"><p class="label">Active work</p><p id="metric-work" class="metric-value">—</p><p class="metric-note">Pending inputs, runs, leases, and approvals</p></article>
+      <article class="metric"><p class="label">Attention</p><p id="metric-attention" class="metric-value">—</p><p class="metric-note">Unknown effects, failed delivery, and degraded adapters</p></article>
+      <article class="metric"><p class="label">Stored evidence</p><p id="metric-storage" class="metric-value">—</p><p id="metric-storage-note" class="metric-note">Database and artifact content</p></article>
+    </section>
+
+    <section class="grid">
+      <article class="panel full conversation-panel">
+        <header class="panel-head">
+          <div><h3>Conversation</h3><p class="panel-subtitle">Durable input, live evidence, and cooperative task control</p></div>
+          <button id="new-session" class="action primary" type="button">New session</button>
+        </header>
+        <div class="panel-body conversation-layout">
+          <aside class="session-rail" aria-label="Recent conversation sessions">
+            <div id="conversation-sessions" class="session-picker"></div>
+          </aside>
+          <div class="conversation-main">
+            <div class="conversation-status">
+              <span id="conversation-id" class="conversation-id">Select or create a session</span>
+              <span id="conversation-state">No live timeline</span>
+            </div>
+            <div id="timeline" class="timeline" aria-live="polite"><p class="empty">Choose a session to load its durable event timeline.</p></div>
+            <div class="composer">
+              <label class="label" for="prompt">Message</label>
+              <textarea id="prompt" maxlength="16384" placeholder="Ask Mealy to reason, research, or perform a governed task…" disabled></textarea>
+              <div class="composer-actions">
+                <div class="command-actions">
+                  <label class="label" for="delivery-mode">Delivery</label>
+                  <select id="delivery-mode" class="delivery-mode" disabled>
+                    <option value="queue">Queue</option>
+                    <option value="steer_at_boundary">Steer at safe boundary</option>
+                    <option value="interrupt_then_queue">Interrupt, then queue</option>
+                  </select>
+                </div>
+                <div class="command-actions">
+                  <button id="cancel-task" class="action danger" type="button" disabled>Cancel active task</button>
+                  <button id="send-input" class="action primary" type="button" disabled>Send</button>
+                </div>
+              </div>
+              <p class="command-note">Commands are durably idempotent. Ambiguous retries reuse the same delivery key until the exact command is acknowledged.</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel wide">
+        <header class="panel-head"><div><h3>Provider endpoints</h3><p class="panel-subtitle">Live pressure and durable dispatch history</p></div><span id="provider-count" class="count">0 endpoints</span></header>
+        <div class="panel-body"><ul id="providers" class="list"></ul></div>
+      </article>
+
+      <article class="panel narrow">
+        <header class="panel-head"><div><h3>Doctor</h3><p class="panel-subtitle">Host and policy conformance</p></div><span id="doctor-state" class="badge">Unknown</span></header>
+        <div id="doctor-checks" class="panel-body checks"></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head"><div><h3>Recent sessions</h3><p class="panel-subtitle">Newest exact-binding conversations</p></div><span id="session-count" class="count">0 sessions</span></header>
+        <div class="panel-body"><ul id="sessions" class="list"></ul></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head"><div><h3>Pending approvals</h3><p class="panel-subtitle">Review and resolve digest-bound effect subjects</p></div><span id="approval-count" class="count">0 pending</span></header>
+        <div class="panel-body"><ul id="approvals" class="list"></ul></div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>30-day settled usage</h3><p class="panel-subtitle">Exact owner-scoped terminal runs grouped by UTC completion day</p></div><span id="usage-history-state" class="badge">Not loaded</span></header>
+        <div class="panel-body recovery-layout">
+          <div class="recovery-controls">
+            <div class="usage-summary">
+              <div class="usage-cell"><span class="label">Configured-price cost</span><p id="usage-history-cost" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Recorded tokens</span><p id="usage-history-tokens" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Terminal runs</span><p id="usage-history-runs" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Calls and retries</span><p id="usage-history-calls" class="usage-value">—</p></div>
+            </div>
+            <p class="command-note">Each root, delegated, and validation run is attributed in full to its UTC completion day after reservations settle. Empty days are omitted. Cost microunits use the configured provider-neutral pricing snapshot and are budget evidence, not a provider invoice.</p>
+          </div>
+          <pre id="usage-history-detail" class="evidence-output">Waiting for the first authenticated snapshot.</pre>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Task usage and cost</h3><p class="panel-subtitle">Exact provider-neutral settlement and active reservation evidence</p></div><span id="task-usage-state" class="badge">Not loaded</span></header>
+        <div class="panel-body recovery-layout">
+          <div class="recovery-controls">
+            <div class="recovery-fields">
+              <label class="recovery-field"><span class="label">Task ID</span><input id="task-usage-id" type="text" maxlength="36" autocomplete="off" spellcheck="false" placeholder="UUID from the conversation timeline"></label>
+            </div>
+            <div class="command-actions"><button id="load-task-usage" class="action" type="button">Load exact usage</button></div>
+            <div class="usage-summary">
+              <div class="usage-cell"><span class="label">Settled/charged cost</span><p id="task-used-cost" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Active cost reservation</span><p id="task-reserved-cost" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Recorded tokens</span><p id="task-used-tokens" class="usage-value">—</p></div>
+              <div class="usage-cell"><span class="label">Calls and retries</span><p id="task-call-usage" class="usage-value">—</p></div>
+            </div>
+            <p class="command-note">Microunits use the operator-configured provider-neutral pricing snapshot. They are durable routing/budget evidence, not a provider invoice; unsupported fixed, media, search, reasoning, cache, tax, credit, or upstream billing axes are not guessed.</p>
+          </div>
+          <pre id="task-usage-detail" class="evidence-output">Choose a task from a timeline or enter its exact UUID. Terminal tasks must have zero active reservations.</pre>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Effect recovery</h3><p class="panel-subtitle">Inspect immutable dispatch evidence and reconcile only externally proven outcomes</p></div><span id="effect-recovery-state" class="badge">Not loaded</span></header>
+        <div class="panel-body recovery-layout">
+          <div class="recovery-controls">
+            <div class="recovery-fields">
+              <label class="recovery-field"><span class="label">Effect ID</span><input id="effect-id" type="text" maxlength="36" autocomplete="off" spellcheck="false" placeholder="UUID from an approval or timeline event"></label>
+              <label class="recovery-field"><span class="label">Attempt ID (optional for inspection)</span><input id="attempt-id" type="text" maxlength="36" autocomplete="off" spellcheck="false" placeholder="UUID from an effect dispatch event"></label>
+            </div>
+            <div class="command-actions"><button id="load-effect" class="action" type="button">Load exact evidence</button></div>
+            <p class="command-note">Reading does not change state. Reconciliation is enabled only when the loaded effect and exact attempt are both outcome_unknown and identity-linked.</p>
+          </div>
+          <div>
+            <pre id="effect-detail" class="evidence-output">Choose an effect from a timeline or approval, or enter its exact UUID.</pre>
+            <div class="reconciliation-controls">
+              <label class="recovery-field"><span class="label">Externally established outcome</span><select id="reconcile-outcome" disabled><option value="succeeded">Succeeded</option><option value="failed">Failed</option></select></label>
+              <label class="recovery-field"><span class="label">External evidence JSON object</span><textarea id="reconcile-evidence" maxlength="32768" disabled placeholder='{"operatorObservation":"approved destination digest matched"}'></textarea></label>
+              <div class="command-actions"><button id="reconcile-effect" class="action danger" type="button" disabled>Reconcile exact unknown attempt</button></div>
+              <p class="command-note">This is a durable owner conclusion, not a retry. Evidence is retained: never paste credentials or secret values. Verify the filesystem or external receipt independently; preserved quarantine entries are evidence and are never cleaned automatically.</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Schedules</h3><p class="panel-subtitle">Inspect exact definitions, durable occurrence history, and revision-fenced lifecycle</p></div><span id="schedule-count" class="count">0 schedules</span></header>
+        <div class="panel-body recovery-layout">
+          <div>
+            <div class="recovery-fields">
+              <label class="recovery-field"><span class="label">Destination session ID</span><input id="schedule-session" type="text" maxlength="36" autocomplete="off" spellcheck="false" placeholder="Select a conversation session or enter its UUID"></label>
+              <label class="recovery-field"><span class="label">Name</span><input id="schedule-name" type="text" maxlength="128" autocomplete="off" placeholder="Daily evidence review"></label>
+              <label class="recovery-field"><span class="label">Exact recurring prompt (48 KiB dashboard limit)</span><textarea id="schedule-prompt" maxlength="49152" placeholder="Review the latest durable evidence and summarize blockers."></textarea></label>
+              <label class="recovery-field"><span class="label">Five-field cron expression</span><input id="schedule-cron" type="text" maxlength="256" autocomplete="off" spellcheck="false" value="0 9 * * *"></label>
+              <label class="recovery-field"><span class="label">IANA time zone</span><input id="schedule-timezone" type="text" maxlength="128" autocomplete="off" spellcheck="false" value="Pacific/Auckland"></label>
+              <div class="memory-form-grid">
+                <label class="recovery-field"><span class="label">Downtime policy</span><select id="schedule-missed-policy"><option value="latest" selected>Latest due once</option><option value="skip">Skip beyond grace</option></select></label>
+                <label class="recovery-field"><span class="label">Overlap policy</span><select id="schedule-overlap-policy"><option value="skip_if_running" selected>Skip if running</option><option value="queue">Queue</option></select></label>
+                <label class="recovery-field"><span class="label">Misfire grace (milliseconds)</span><input id="schedule-misfire-grace" type="number" min="0" max="86400000" step="1" value="60000"></label>
+                <label class="command-note"><input id="schedule-allow-actions" type="checkbox"> Explicitly allow `/act`, `/edit`, `/manage`, or `/run` prompts</label>
+              </div>
+            </div>
+            <div class="command-actions"><button id="create-schedule" class="action primary" type="button">Create durable schedule</button></div>
+            <p class="command-note">Creation generates one canonical UUIDv7 before dispatch and retains it across an ambiguous retry. The canonical store returns the existing immutable definition for an exact replay and conflicts if that ID is reused with different semantics.</p>
+            <ul id="schedules" class="list schedule-history"></ul>
+          </div>
+          <div>
+            <pre id="schedule-detail" class="evidence-output">Choose a schedule to load its exact definition and newest durable occurrence history.</pre>
+            <div class="command-actions">
+              <button id="pause-schedule" class="action deny" type="button" disabled>Pause</button>
+              <button id="resume-schedule" class="action approve" type="button" disabled>Resume</button>
+              <button id="cancel-schedule" class="action danger" type="button" disabled>Cancel permanently</button>
+            </div>
+            <p class="command-note">Lifecycle commands bind the exact rendered revision. They are never retried automatically: after an ambiguous response, reload the schedule and verify its status before deciding what to do.</p>
+            <div class="schedule-history">
+              <div class="schedule-history-head"><span class="label">Newest occurrence history</span><span id="schedule-run-count" class="count">0 runs</span></div>
+              <ul id="schedule-runs" class="list"><li class="empty">No schedule selected.</li></ul>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Governed memory</h3><p class="panel-subtitle">Owner-scoped proposal, review, correction, retention, and scrubbing</p></div><span id="memory-count" class="count">0 memories</span></header>
+        <div class="panel-body memory-layout">
+          <div>
+            <div class="memory-controls">
+              <label class="recovery-field"><span class="label">Exact memory namespace</span><input id="memory-workspace" type="text" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="mealy://assistant/no-workspace"></label>
+              <label class="recovery-field"><span class="label">Lexical search</span><input id="memory-query" type="search" maxlength="4096" autocomplete="off" placeholder="Search active cited memories"></label>
+              <label class="recovery-field"><span class="label">Maximum search sensitivity</span><select id="memory-maximum-sensitivity"><option value="public">Public</option><option value="internal">Internal</option><option value="private" selected>Private</option><option value="restricted">Restricted</option></select></label>
+              <label class="command-note"><input id="memory-include-deleted" type="checkbox"> Include scrubbed tombstones in namespace list</label>
+              <div class="command-actions"><button id="load-memories" class="action" type="button">Load namespace</button><button id="search-memories" class="action" type="button">Search active</button></div>
+            </div>
+            <ul id="memories" class="list memory-list"><li class="empty">Load the ordinary chat namespace or enter another exact owner namespace.</li></ul>
+          </div>
+          <div>
+            <pre id="memory-detail" class="evidence-output">Choose a memory to inspect its complete immutable revision and provenance history.</pre>
+            <div class="command-actions">
+              <button id="activate-memory" class="action approve" type="button" disabled>Activate reviewed proposal</button>
+              <button id="pin-memory" class="action" type="button" disabled>Pin</button>
+              <button id="unpin-memory" class="action" type="button" disabled>Unpin</button>
+              <button id="expire-memory" class="action deny" type="button" disabled>Expire</button>
+              <button id="reject-memory" class="action deny" type="button" disabled>Reject proposal</button>
+              <button id="delete-memory" class="action danger" type="button" disabled>Delete and scrub</button>
+            </div>
+            <p class="command-note">Activation always records an explicit owner approval for the exact proposed revision. Delete scrubs content but retains digest/lifecycle tombstones. Every existing-memory command binds the rendered revision and is re-read after ambiguity.</p>
+            <div class="memory-editor">
+              <span class="label">Propose new or correct loaded active memory</span>
+              <label class="recovery-field"><span class="label">Exact content (48 KiB dashboard limit)</span><textarea id="memory-content" maxlength="49152" placeholder="Store durable owner knowledge, never a raw credential or bearer token."></textarea></label>
+              <div class="memory-form-grid">
+                <label class="recovery-field"><span class="label">Category</span><select id="memory-category"><option value="preference">Preference</option><option value="fact" selected>Fact</option><option value="goal">Goal</option><option value="decision">Decision</option><option value="constraint">Constraint</option><option value="identity">Identity</option><option value="credential">Credential reference</option><option value="health">Health</option><option value="financial">Financial</option><option value="third_party_private">Third-party private</option></select></label>
+                <label class="recovery-field"><span class="label">Confidence basis points</span><input id="memory-confidence" type="number" min="0" max="10000" step="1" value="8000"></label>
+                <label class="recovery-field"><span class="label">Sensitivity</span><select id="memory-sensitivity"><option value="public">Public</option><option value="internal">Internal</option><option value="private" selected>Private</option><option value="restricted">Restricted</option></select></label>
+                <label class="recovery-field"><span class="label">Retention</span><select id="memory-retention"><option value="session">Session</option><option value="standard" selected>Standard</option><option value="pinned">Pinned</option><option value="policy_hold">Policy hold</option></select></label>
+              </div>
+              <div class="command-actions"><button id="propose-memory" class="action primary" type="button">Propose new</button><button id="correct-memory" class="action" type="button" disabled>Correct loaded active</button></div>
+              <p class="command-note">Proposal does not activate retrieval. The adapter creates one digest-bound owner provenance locator from a stable browser command key. Credential-category content must be a reference only—never paste the secret itself.</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Extensions</h3><p class="panel-subtitle">Inspect data-only manifests and issue exact revision-fenced authority transitions</p></div><span id="extension-count" class="count">Not loaded</span></header>
+        <div class="panel-body extension-layout">
+          <div>
+            <div class="command-actions"><button id="load-extensions" class="action" type="button">Load extension inventory</button></div>
+            <p class="command-note">Inventory and detail reads require this page's exact Origin because manifests and grants can reveal sensitive capability, path, destination, and secret-reference metadata.</p>
+            <ul id="extensions" class="list extension-list"><li class="empty">Load the exact owner extension inventory.</li></ul>
+          </div>
+          <div>
+            <pre id="extension-detail" class="evidence-output">Choose an extension to inspect its current data-only manifest, immutable manifest history, health evidence, and active grant.</pre>
+            <div class="command-actions">
+              <button id="enable-extension" class="action approve" type="button" disabled>Review and enable</button>
+              <button id="disable-extension" class="action deny" type="button" disabled>Disable authority</button>
+              <button id="revoke-extension" class="action danger" type="button" disabled>Revoke permanently</button>
+            </div>
+            <p class="command-note">Every transition preflights the exact rendered revision and reconciles an already-completed identical result before dispatch. Ambiguity is re-read, never blindly retried. Revoke is terminal.</p>
+            <div id="extension-grant-review" class="grant-review">
+              <span class="label">Least-authority enable grant</span>
+              <p class="command-note">The required read-only health capability is selected automatically. Select only the additional capability and manifest-requested authority that you have reviewed.</p>
+              <div><span class="label">Capabilities</span><div id="extension-capabilities" class="grant-options"></div></div>
+              <div><span class="label">Filesystem mappings</span><div id="extension-mounts" class="grant-options"></div></div>
+              <div><span class="label">Network destinations</span><div id="extension-network" class="grant-options"></div></div>
+              <div><span class="label">Opaque secret references (never values)</span><div id="extension-secrets" class="grant-options"></div></div>
+              <label class="grant-option"><input id="extension-process-spawn" type="checkbox" disabled><span>Allow manifest-declared child-process creation</span></label>
+              <p class="command-note">Install/stage, package filesystem paths, upgrades, and arbitrary extension invocation remain on the reviewed CLI. Never enter a raw credential here: only choose an already-declared opaque reference.</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Enabled tools</h3><p class="panel-subtitle">Current model-visible and explicit-action contracts</p></div><span id="tool-count" class="count">0 tools</span></header>
+        <div class="panel-body"><div id="tools" class="chips"></div></div>
+      </article>
+
+      <article class="panel full">
+        <header class="panel-head"><div><h3>Recent failures</h3><p class="panel-subtitle">Bounded secret-free operational classifications</p></div><span id="failure-count" class="count">0 failures</span></header>
+        <div class="panel-body"><ul id="failures" class="list"></ul></div>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <p>This console exposes a fixed allowlist: operational snapshots, exact 30-day and per-task usage/cost, session input/control, exact approvals, keyed schedule creation/lifecycle, effect recovery, governed-memory administration, and extension inventory/detail/enable/disable/revoke. Extension install/stage/invoke, configuration, credential values, provider-invoice inference, and arbitrary daemon proxying remain unavailable.</p>
+      <p>Close the terminal command to destroy this dashboard capability. Data is never cached by this server.</p>
+    </footer>
+  </main>
+
+  <script nonce="__MEALY_DASHBOARD_NONCE__">
+    "use strict";
+    const DASHBOARD_TOKEN = "__MEALY_DASHBOARD_TOKEN__";
+    const refreshButton = document.getElementById("refresh");
+    const errorBanner = document.getElementById("error");
+    const newSessionButton = document.getElementById("new-session");
+    const promptInput = document.getElementById("prompt");
+    const deliveryMode = document.getElementById("delivery-mode");
+    const sendInputButton = document.getElementById("send-input");
+    const cancelTaskButton = document.getElementById("cancel-task");
+    const taskUsageIdInput = document.getElementById("task-usage-id");
+    const loadTaskUsageButton = document.getElementById("load-task-usage");
+    const taskUsageDetail = document.getElementById("task-usage-detail");
+    const effectIdInput = document.getElementById("effect-id");
+    const attemptIdInput = document.getElementById("attempt-id");
+    const loadEffectButton = document.getElementById("load-effect");
+    const effectDetail = document.getElementById("effect-detail");
+    const effectRecoveryState = document.getElementById("effect-recovery-state");
+    const reconcileOutcome = document.getElementById("reconcile-outcome");
+    const reconcileEvidence = document.getElementById("reconcile-evidence");
+    const reconcileEffectButton = document.getElementById("reconcile-effect");
+    const scheduleDetail = document.getElementById("schedule-detail");
+    const scheduleRuns = document.getElementById("schedule-runs");
+    const scheduleSession = document.getElementById("schedule-session");
+    const scheduleName = document.getElementById("schedule-name");
+    const schedulePrompt = document.getElementById("schedule-prompt");
+    const scheduleCron = document.getElementById("schedule-cron");
+    const scheduleTimezone = document.getElementById("schedule-timezone");
+    const scheduleMissedPolicy = document.getElementById("schedule-missed-policy");
+    const scheduleOverlapPolicy = document.getElementById("schedule-overlap-policy");
+    const scheduleMisfireGrace = document.getElementById("schedule-misfire-grace");
+    const scheduleAllowActions = document.getElementById("schedule-allow-actions");
+    const createScheduleButton = document.getElementById("create-schedule");
+    const pauseScheduleButton = document.getElementById("pause-schedule");
+    const resumeScheduleButton = document.getElementById("resume-schedule");
+    const cancelScheduleButton = document.getElementById("cancel-schedule");
+    const memoryWorkspace = document.getElementById("memory-workspace");
+    const memoryQuery = document.getElementById("memory-query");
+    const memoryMaximumSensitivity = document.getElementById("memory-maximum-sensitivity");
+    const memoryIncludeDeleted = document.getElementById("memory-include-deleted");
+    const loadMemoriesButton = document.getElementById("load-memories");
+    const searchMemoriesButton = document.getElementById("search-memories");
+    const memoryDetail = document.getElementById("memory-detail");
+    const memoryContent = document.getElementById("memory-content");
+    const memoryCategory = document.getElementById("memory-category");
+    const memoryConfidence = document.getElementById("memory-confidence");
+    const memorySensitivity = document.getElementById("memory-sensitivity");
+    const memoryRetention = document.getElementById("memory-retention");
+    const proposeMemoryButton = document.getElementById("propose-memory");
+    const correctMemoryButton = document.getElementById("correct-memory");
+    const activateMemoryButton = document.getElementById("activate-memory");
+    const pinMemoryButton = document.getElementById("pin-memory");
+    const unpinMemoryButton = document.getElementById("unpin-memory");
+    const expireMemoryButton = document.getElementById("expire-memory");
+    const rejectMemoryButton = document.getElementById("reject-memory");
+    const deleteMemoryButton = document.getElementById("delete-memory");
+    const loadExtensionsButton = document.getElementById("load-extensions");
+    const extensionDetail = document.getElementById("extension-detail");
+    const extensionCapabilities = document.getElementById("extension-capabilities");
+    const extensionMounts = document.getElementById("extension-mounts");
+    const extensionNetwork = document.getElementById("extension-network");
+    const extensionSecrets = document.getElementById("extension-secrets");
+    const extensionProcessSpawn = document.getElementById("extension-process-spawn");
+    const enableExtensionButton = document.getElementById("enable-extension");
+    const disableExtensionButton = document.getElementById("disable-extension");
+    const revokeExtensionButton = document.getElementById("revoke-extension");
+    let refreshing = false;
+    let conversationRefreshing = false;
+    let selectedSessionId = null;
+    let timelineCursor = 0;
+    let timelineEvents = [];
+    let activeTaskId = null;
+    let loadedTaskUsage = null;
+    let taskUsageLoading = false;
+    let pendingInputCommand = null;
+    let loadedEffect = null;
+    let loadedAttempt = null;
+    let pendingReconciliationCommand = null;
+    let loadedSchedule = null;
+    let loadedScheduleRuns = [];
+    let scheduleCommandInProgress = false;
+    let scheduleSessionTouched = false;
+    let pendingScheduleCreate = null;
+    let loadedMemory = null;
+    let loadedMemories = [];
+    let memoryCommandInProgress = false;
+    let memoryWorkspaceTouched = false;
+    let pendingMemoryProposal = null;
+    let pendingMemoryCorrection = null;
+    let loadedExtensions = [];
+    let loadedExtension = null;
+    let extensionCommandInProgress = false;
+    const commandKeys = new Map();
+
+    function element(tag, className, text) {
+      const value = document.createElement(tag);
+      if (className) value.className = className;
+      if (text !== undefined && text !== null) value.textContent = String(text);
+      return value;
+    }
+
+    function asNumber(value) {
+      return Number.isFinite(Number(value)) ? Number(value) : 0;
+    }
+
+    function formatCount(value) {
+      return new Intl.NumberFormat().format(asNumber(value));
+    }
+
+    function formatBytes(value) {
+      let bytes = asNumber(value);
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let unit = 0;
+      while (bytes >= 1024 && unit < units.length - 1) { bytes /= 1024; unit += 1; }
+      const digits = unit === 0 || bytes >= 10 ? 0 : 1;
+      return `${bytes.toFixed(digits)} ${units[unit]}`;
+    }
+
+    function formatMicrounits(value) {
+      const microunits = asNumber(value);
+      return `${formatCount(microunits)} µunits · ${(microunits / 1000000).toFixed(6)} configured units`;
+    }
+
+    function formatTime(value) {
+      const milliseconds = asNumber(value);
+      if (!milliseconds) return "—";
+      const date = new Date(milliseconds);
+      return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+    }
+
+    function classify(value) {
+      const normalized = String(value || "").toLowerCase();
+      if (["ready", "healthy", "ok", "active", "succeeded", "enforceable"].some(term => normalized.includes(term))) return "ok";
+      if (["failed", "error", "denied", "degraded", "unavailable", "unknown"].some(term => normalized.includes(term))) return "bad";
+      if (["pending", "paused", "warning", "attention", "rate_limited"].some(term => normalized.includes(term))) return "warn";
+      return "info";
+    }
+
+    function badge(text, classification) {
+      return element("span", `badge ${classification || classify(text)}`, text || "unknown");
+    }
+
+    function emptyList(target, message) {
+      target.replaceChildren(element("li", "empty", message));
+    }
+
+    function commandKey(scope) {
+      if (commandKeys.has(scope)) return commandKeys.get(scope);
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const key = `dashboard-${Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("")}`;
+      commandKeys.set(scope, key);
+      return key;
+    }
+
+    function clearCommandKey(scope) {
+      commandKeys.delete(scope);
+    }
+
+    function showError(error, fallback) {
+      errorBanner.textContent = error instanceof Error ? error.message : fallback;
+      errorBanner.classList.add("visible");
+    }
+
+    function clearError() {
+      errorBanner.classList.remove("visible");
+    }
+
+    async function requestJson(path, options) {
+      const headers = {
+        "X-Mealy-Dashboard": DASHBOARD_TOKEN,
+        "Accept": "application/json",
+        ...(options && options.body ? { "Content-Type": "application/json" } : {})
+      };
+      const response = await fetch(path, {
+        method: options && options.method ? options.method : "GET",
+        body: options ? options.body : undefined,
+        cache: "no-store",
+        credentials: "omit",
+        headers
+      });
+      let payload = null;
+      try { payload = await response.json(); } catch (_) { /* Fail with the bounded generic status below. */ }
+      if (!response.ok) {
+        const message = payload && typeof payload.message === "string"
+          ? payload.message
+          : `Dashboard operation unavailable (${response.status})`;
+        throw new Error(message);
+      }
+      if (!payload || payload.apiVersion !== "v1") throw new Error("Dashboard protocol mismatch");
+      return payload;
+    }
+
+    function postJson(path, body) {
+      return requestJson(path, { method: "POST", body: JSON.stringify(body) });
+    }
+
+    function validEntityId(value) {
+      return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+    }
+
+    function validSessionId(value) {
+      return validEntityId(value);
+    }
+
+    function clearPendingReconciliation() {
+      if (pendingReconciliationCommand) clearCommandKey(pendingReconciliationCommand.scope);
+      pendingReconciliationCommand = null;
+      reconcileEffectButton.textContent = "Reconcile exact unknown attempt";
+    }
+
+    function updateRecoveryControls() {
+      const linked = loadedEffect && loadedAttempt && loadedAttempt.effectId === loadedEffect.effectId;
+      const eligible = Boolean(linked && loadedEffect.status === "outcome_unknown" && loadedAttempt.status === "outcome_unknown");
+      reconcileOutcome.disabled = !eligible;
+      reconcileEvidence.disabled = !eligible;
+      reconcileEffectButton.disabled = !eligible;
+      const state = loadedEffect ? String(loadedEffect.status || "unknown") : "Not loaded";
+      effectRecoveryState.className = `badge ${loadedEffect ? classify(state) : ""}`;
+      effectRecoveryState.textContent = eligible ? "Reconciliation required" : state;
+    }
+
+    function renderEffectEvidence() {
+      if (!loadedEffect) {
+        effectDetail.textContent = "Choose an effect from a timeline or approval, or enter its exact UUID.";
+      } else {
+        effectDetail.textContent = JSON.stringify({
+          effect: loadedEffect,
+          attempt: loadedAttempt
+        }, null, 2);
+      }
+      updateRecoveryControls();
+    }
+
+    async function selectEffectEvidence(effectId, attemptId) {
+      if (!validEntityId(effectId)) return;
+      effectIdInput.value = effectId;
+      attemptIdInput.value = validEntityId(attemptId) ? attemptId : "";
+      clearPendingReconciliation();
+      document.getElementById("effect-recovery-state").scrollIntoView({ behavior: "smooth", block: "center" });
+      await loadEffectEvidence();
+    }
+
+    async function loadEffectEvidence() {
+      const effectId = effectIdInput.value.trim();
+      const attemptId = attemptIdInput.value.trim();
+      if (!validEntityId(effectId) || (attemptId && !validEntityId(attemptId))) {
+        showError(new Error("Enter canonical effect and optional attempt UUIDs."), "Effect evidence identifiers are invalid.");
+        return;
+      }
+      loadEffectButton.disabled = true;
+      loadEffectButton.textContent = "Loading…";
+      clearPendingReconciliation();
+      clearError();
+      try {
+        const effect = await requestJson(`/api/effects/${encodeURIComponent(effectId)}`);
+        const attempt = attemptId ? await requestJson(`/api/effect-attempts/${encodeURIComponent(attemptId)}`) : null;
+        if (attempt && attempt.effectId !== effect.effectId) throw new Error("The attempt does not belong to the loaded effect.");
+        loadedEffect = effect;
+        loadedAttempt = attempt;
+        effectIdInput.value = effect.effectId;
+        if (attempt) attemptIdInput.value = attempt.attemptId;
+        renderEffectEvidence();
+      } catch (error) {
+        loadedEffect = null;
+        loadedAttempt = null;
+        renderEffectEvidence();
+        showError(error, "The exact effect evidence is unavailable.");
+      } finally {
+        loadEffectButton.disabled = false;
+        loadEffectButton.textContent = "Load exact evidence";
+      }
+    }
+
+    function parseReconciliationEvidence() {
+      let evidence;
+      try { evidence = JSON.parse(reconcileEvidence.value); }
+      catch (_) { throw new Error("External evidence must be valid JSON."); }
+      if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) || Object.keys(evidence).length === 0) {
+        throw new Error("External evidence must be a non-empty JSON object.");
+      }
+      const encoded = JSON.stringify(evidence);
+      if (new TextEncoder().encode(encoded).length > 32768) throw new Error("External evidence exceeds the 32 KiB canonical limit.");
+      return { evidence, encoded };
+    }
+
+    async function reconcileUnknownEffect() {
+      if (!loadedEffect || !loadedAttempt || loadedAttempt.effectId !== loadedEffect.effectId) return;
+      if (loadedEffect.status !== "outcome_unknown" || loadedAttempt.status !== "outcome_unknown") return;
+      let parsed;
+      try { parsed = parseReconciliationEvidence(); }
+      catch (error) { showError(error, "External reconciliation evidence is invalid."); return; }
+      const outcome = reconcileOutcome.value;
+      if (outcome !== "succeeded" && outcome !== "failed") return;
+      const review = `Reconcile this exact unknown attempt as ${outcome.toUpperCase()}?\n\nEffect: ${loadedEffect.effectId}\nAttempt: ${loadedAttempt.attemptId}\nRevision: ${loadedEffect.revision}\nTool: ${loadedEffect.toolId || "unknown"}\nTargets: ${(loadedEffect.targetResources || []).join(", ") || "none"}\nEvidence bytes: ${new TextEncoder().encode(parsed.encoded).length}\n\nThis durable conclusion will not retry the operation. Verify the evidence JSON in the form before continuing.`;
+      if (!window.confirm(review)) return;
+      const fingerprint = `${loadedEffect.effectId}:${loadedAttempt.attemptId}:${loadedEffect.revision}:${outcome}:${parsed.encoded}`;
+      if (!pendingReconciliationCommand || pendingReconciliationCommand.fingerprint !== fingerprint) {
+        clearPendingReconciliation();
+        const scope = `reconcile:${loadedEffect.effectId}:${loadedAttempt.attemptId}:${loadedEffect.revision}:${Date.now()}`;
+        pendingReconciliationCommand = { scope, fingerprint, idempotencyKey: commandKey(scope) };
+      }
+      reconcileEffectButton.disabled = true;
+      reconcileEffectButton.textContent = "Reconciling…";
+      clearError();
+      try {
+        await postJson(`/api/effects/${encodeURIComponent(loadedEffect.effectId)}/attempts/${encodeURIComponent(loadedAttempt.attemptId)}/reconcile`, {
+          apiVersion: "v1",
+          idempotencyKey: pendingReconciliationCommand.idempotencyKey,
+          expectedEffectRevision: loadedEffect.revision,
+          outcome,
+          evidence: parsed.evidence
+        });
+        clearCommandKey(pendingReconciliationCommand.scope);
+        pendingReconciliationCommand = null;
+        reconcileEffectButton.textContent = "Reconciliation recorded";
+        await loadEffectEvidence();
+        await refresh();
+        await refreshConversation(false);
+      } catch (error) {
+        reconcileEffectButton.textContent = "Retry same reconciliation";
+        showError(error, "The reconciliation was not acknowledged; retry will use the same delivery key.");
+        updateRecoveryControls();
+      }
+    }
+
+    function timelineDetail(event) {
+      const payload = event && typeof event.payload === "object" && event.payload ? event.payload : {};
+      if (event.eventType === "run.succeeded" && typeof payload.summary === "string") return payload.summary.slice(0, 8000);
+      if (typeof payload.tool_id === "string") return `Tool: ${payload.tool_id}`;
+      if (typeof payload.error_class === "string") return `Error class: ${payload.error_class}`;
+      if (typeof payload.reason === "string") return `Reason: ${payload.reason}`;
+      if (typeof payload.status === "string") return `Status: ${payload.status}`;
+      if (typeof payload.delivery_mode === "string") return `Delivery: ${payload.delivery_mode}`;
+      if (typeof payload.capability_scope === "string") return `Capability: ${payload.capability_scope}`;
+      return `${event.aggregateKind || "event"} · ${String(event.aggregateId || "").slice(0, 18)} · cursor ${formatCount(event.cursor)}`;
+    }
+
+    function renderTimeline() {
+      const target = document.getElementById("timeline");
+      if (!selectedSessionId) {
+        target.replaceChildren(element("p", "empty", "Choose a session to load its durable event timeline."));
+        return;
+      }
+      if (!timelineEvents.length) {
+        target.replaceChildren(element("p", "empty", "This session has no retained events after the selected cursor."));
+        return;
+      }
+      const nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
+      target.replaceChildren(...timelineEvents.map(event => {
+        const row = element("div", "timeline-event");
+        row.append(element("span", `event-dot ${classify(event.eventType)}`));
+        const copy = element("div");
+        copy.append(element("p", "event-title", event.eventType || "timeline event"));
+        const detail = timelineDetail(event);
+        if (detail) copy.append(element("p", "event-copy", detail));
+        const side = element("div", "item-side");
+        side.append(element("span", "event-time", formatTime(event.occurredAtMs)));
+        const payload = event && typeof event.payload === "object" && event.payload ? event.payload : {};
+        const effectId = event.aggregateKind === "effect" && validEntityId(event.aggregateId) ? event.aggregateId : null;
+        const taskId = event.aggregateKind === "task" && validEntityId(event.aggregateId) ? event.aggregateId : null;
+        const attemptId = validEntityId(payload.attempt_id) ? payload.attempt_id : validEntityId(payload.attemptId) ? payload.attemptId : null;
+        if (effectId) {
+          const inspect = element("button", "action", "Inspect effect");
+          inspect.type = "button";
+          inspect.addEventListener("click", () => { void selectEffectEvidence(effectId, attemptId); });
+          side.append(inspect);
+        }
+        if (taskId && event.eventType === "task.created") {
+          const inspectUsage = element("button", "action", "Inspect usage");
+          inspectUsage.type = "button";
+          inspectUsage.addEventListener("click", () => { void selectTaskUsageEvidence(taskId); });
+          side.append(inspectUsage);
+        }
+        row.append(copy, side);
+        return row;
+      }));
+      if (nearBottom) target.scrollTop = target.scrollHeight;
+    }
+
+    function renderTaskUsage() {
+      const usage = loadedTaskUsage && loadedTaskUsage.usage ? loadedTaskUsage.usage : null;
+      const state = document.getElementById("task-usage-state");
+      state.textContent = loadedTaskUsage ? `${loadedTaskUsage.status || "unknown"} · revision ${formatCount(loadedTaskUsage.revision)}` : "Not loaded";
+      state.className = `badge ${loadedTaskUsage ? classify(loadedTaskUsage.status) : "info"}`;
+      document.getElementById("task-used-cost").textContent = usage ? formatMicrounits(usage.usedCostMicrounits) : "—";
+      document.getElementById("task-reserved-cost").textContent = usage ? formatMicrounits(usage.reservedCostMicrounits) : "—";
+      document.getElementById("task-used-tokens").textContent = usage
+        ? `${formatCount(asNumber(usage.usedInputTokens) + asNumber(usage.usedOutputTokens))} total · ${formatCount(usage.usedInputTokens)} in / ${formatCount(usage.usedOutputTokens)} out`
+        : "—";
+      document.getElementById("task-call-usage").textContent = usage
+        ? `${formatCount(usage.usedModelCalls)} model · ${formatCount(usage.usedToolCalls)} tool · ${formatCount(usage.usedRetries)} retries`
+        : "—";
+      taskUsageDetail.textContent = loadedTaskUsage
+        ? JSON.stringify(loadedTaskUsage, null, 2)
+        : "Choose a task from a timeline or enter its exact UUID. Terminal tasks must have zero active reservations.";
+      loadTaskUsageButton.disabled = taskUsageLoading;
+    }
+
+    function renderUsageHistory(report) {
+      const buckets = report && Array.isArray(report.buckets) ? report.buckets : [];
+      const totals = buckets.reduce((total, bucket) => {
+        total.completedRuns += asNumber(bucket.completedRuns);
+        total.succeededRuns += asNumber(bucket.succeededRuns);
+        total.failedRuns += asNumber(bucket.failedRuns);
+        total.cancelledRuns += asNumber(bucket.cancelledRuns);
+        total.modelCalls += asNumber(bucket.usedModelCalls);
+        total.toolCalls += asNumber(bucket.usedToolCalls);
+        total.delegatedRuns += asNumber(bucket.usedDelegatedRuns);
+        total.retries += asNumber(bucket.usedRetries);
+        total.inputTokens += asNumber(bucket.usedInputTokens);
+        total.outputTokens += asNumber(bucket.usedOutputTokens);
+        total.costMicrounits += asNumber(bucket.usedCostMicrounits);
+        return total;
+      }, {
+        completedRuns: 0, succeededRuns: 0, failedRuns: 0, cancelledRuns: 0,
+        modelCalls: 0, toolCalls: 0, delegatedRuns: 0, retries: 0,
+        inputTokens: 0, outputTokens: 0, costMicrounits: 0
+      });
+      const state = document.getElementById("usage-history-state");
+      state.textContent = totals.completedRuns
+        ? `${formatCount(totals.completedRuns)} terminal runs · ${formatCount(buckets.length)} active UTC days`
+        : "No terminal runs";
+      state.className = `badge ${totals.failedRuns ? "warn" : "ok"}`;
+      document.getElementById("usage-history-cost").textContent = formatMicrounits(totals.costMicrounits);
+      document.getElementById("usage-history-tokens").textContent = `${formatCount(totals.inputTokens + totals.outputTokens)} total · ${formatCount(totals.inputTokens)} in / ${formatCount(totals.outputTokens)} out`;
+      document.getElementById("usage-history-runs").textContent = `${formatCount(totals.succeededRuns)} succeeded · ${formatCount(totals.failedRuns)} failed · ${formatCount(totals.cancelledRuns)} cancelled`;
+      document.getElementById("usage-history-calls").textContent = `${formatCount(totals.modelCalls)} model · ${formatCount(totals.toolCalls)} tool · ${formatCount(totals.delegatedRuns)} delegated · ${formatCount(totals.retries)} retries`;
+      const detail = document.getElementById("usage-history-detail");
+      if (!buckets.length) {
+        detail.textContent = `No terminal run usage was settled between ${formatTime(report && report.fromMs)} and ${formatTime(report && report.toMs)}.`;
+        return;
+      }
+      detail.textContent = buckets.map(bucket => {
+        const day = new Date(asNumber(bucket.bucketStartMs)).toISOString().slice(0, 10);
+        const tokens = asNumber(bucket.usedInputTokens) + asNumber(bucket.usedOutputTokens);
+        return `${day} UTC · ${formatCount(bucket.completedRuns)} runs (${formatCount(bucket.succeededRuns)} succeeded / ${formatCount(bucket.failedRuns)} failed / ${formatCount(bucket.cancelledRuns)} cancelled) · ${formatCount(tokens)} tokens · ${formatCount(bucket.usedModelCalls)} model / ${formatCount(bucket.usedToolCalls)} tool calls · ${formatCount(bucket.usedCostMicrounits)} µunits`;
+      }).join("\n");
+    }
+
+    async function loadTaskUsage() {
+      const taskId = taskUsageIdInput.value.trim();
+      if (!validEntityId(taskId) || taskId !== taskUsageIdInput.value) {
+        showError(new Error("Enter one exact canonical task UUID."), "The task identifier is invalid.");
+        return;
+      }
+      if (taskUsageLoading) return;
+      taskUsageLoading = true;
+      loadTaskUsageButton.textContent = "Loading…";
+      renderTaskUsage();
+      clearError();
+      try {
+        const task = await postJson(`/api/tasks/${encodeURIComponent(taskId)}/usage`, { apiVersion: "v1" });
+        if (task.taskId !== taskId) throw new Error("Task usage identity mismatch");
+        loadedTaskUsage = task;
+        renderTaskUsage();
+      } catch (error) {
+        loadedTaskUsage = null;
+        renderTaskUsage();
+        showError(error, "The exact task usage evidence is unavailable.");
+      } finally {
+        taskUsageLoading = false;
+        loadTaskUsageButton.textContent = "Load exact usage";
+        renderTaskUsage();
+      }
+    }
+
+    async function selectTaskUsageEvidence(taskId) {
+      if (!validEntityId(taskId)) return;
+      taskUsageIdInput.value = taskId;
+      taskUsageDetail.scrollIntoView({ behavior: "smooth", block: "center" });
+      await loadTaskUsage();
+    }
+
+    function updateConversationControls(status) {
+      const selected = Boolean(selectedSessionId);
+      promptInput.disabled = !selected;
+      deliveryMode.disabled = !selected;
+      sendInputButton.disabled = !selected;
+      cancelTaskButton.disabled = !selected || !activeTaskId;
+      document.getElementById("conversation-id").textContent = selectedSessionId || "Select or create a session";
+      if (!selected) {
+        document.getElementById("conversation-state").textContent = "No live timeline";
+      } else if (status) {
+        document.getElementById("conversation-state").textContent = `${formatCount(status.pendingInputs)} pending · revision ${formatCount(status.revision)}${status.activeTurnId ? " · active" : ""}`;
+      }
+    }
+
+    async function selectSession(sessionId) {
+      if (!validSessionId(sessionId)) return;
+      const changed = selectedSessionId !== sessionId;
+      selectedSessionId = sessionId;
+      if (!scheduleSessionTouched) scheduleSession.value = sessionId;
+      if (changed) {
+        timelineCursor = 0;
+        timelineEvents = [];
+        activeTaskId = null;
+        if (pendingInputCommand) clearCommandKey(pendingInputCommand.scope);
+        pendingInputCommand = null;
+      }
+      document.querySelectorAll(".session-choice").forEach(choice => {
+        choice.classList.toggle("selected", choice.dataset.sessionId === selectedSessionId);
+      });
+      updateConversationControls(null);
+      renderTimeline();
+      await refreshConversation(changed);
+    }
+
+    async function refreshConversation(reset) {
+      if (!selectedSessionId || conversationRefreshing || document.hidden) return;
+      const sessionId = selectedSessionId;
+      conversationRefreshing = true;
+      try {
+        if (reset) {
+          timelineCursor = 0;
+          timelineEvents = [];
+          activeTaskId = null;
+        }
+        const payload = await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/timeline?after=${timelineCursor}&limit=200`);
+        if (selectedSessionId !== sessionId) return;
+        const page = payload.timeline || {};
+        const incoming = Array.isArray(page.events) ? page.events : [];
+        const seen = new Set(timelineEvents.map(event => event.eventId));
+        for (const event of incoming) {
+          if (event && typeof event.eventId === "string" && !seen.has(event.eventId)) {
+            timelineEvents.push(event);
+            seen.add(event.eventId);
+          }
+        }
+        if (incoming.length) timelineCursor = asNumber(incoming[incoming.length - 1].cursor);
+        else if (!page.hasMore) timelineCursor = Math.max(timelineCursor, asNumber(page.highWatermark));
+        if (timelineEvents.length > 500) timelineEvents = timelineEvents.slice(-500);
+        if (validSessionId(payload.activeTaskId)) activeTaskId = payload.activeTaskId;
+        if (!payload.status || !payload.status.activeTurnId) activeTaskId = null;
+        updateConversationControls(payload.status || null);
+        renderTimeline();
+      } catch (error) {
+        showError(error, "The selected conversation is unavailable.");
+      } finally {
+        conversationRefreshing = false;
+      }
+    }
+
+    async function createSession() {
+      newSessionButton.disabled = true;
+      clearError();
+      try {
+        const response = await postJson("/api/sessions", { apiVersion: "v1" });
+        if (!validSessionId(response.sessionId)) throw new Error("Session creation returned an invalid identifier");
+        await refresh();
+        await selectSession(response.sessionId);
+        promptInput.focus();
+      } catch (error) {
+        showError(error, "A new session could not be created.");
+      } finally {
+        newSessionButton.disabled = false;
+      }
+    }
+
+    async function submitInput() {
+      if (!selectedSessionId) return;
+      const content = promptInput.value;
+      const mode = deliveryMode.value;
+      if (!content.trim()) {
+        showError(new Error("Enter a non-blank message before sending."), "The message is invalid.");
+        return;
+      }
+      if (new TextEncoder().encode(content).length > 16384) {
+        showError(new Error("The message exceeds the 16 KiB dashboard limit."), "The message is too large.");
+        return;
+      }
+      if (!pendingInputCommand || pendingInputCommand.sessionId !== selectedSessionId || pendingInputCommand.content !== content || pendingInputCommand.deliveryMode !== mode) {
+        const scope = `input:${selectedSessionId}:${Date.now()}:${content.length}`;
+        pendingInputCommand = {
+          sessionId: selectedSessionId,
+          content,
+          deliveryMode: mode,
+          scope,
+          idempotencyKey: commandKey(scope)
+        };
+      }
+      sendInputButton.disabled = true;
+      sendInputButton.textContent = "Sending…";
+      clearError();
+      try {
+        await postJson(`/api/sessions/${encodeURIComponent(selectedSessionId)}/inputs`, {
+          apiVersion: "v1",
+          idempotencyKey: pendingInputCommand.idempotencyKey,
+          deliveryMode: pendingInputCommand.deliveryMode,
+          content: pendingInputCommand.content
+        });
+        clearCommandKey(pendingInputCommand.scope);
+        pendingInputCommand = null;
+        promptInput.value = "";
+        sendInputButton.textContent = "Send";
+        await refreshConversation(false);
+        await refresh();
+      } catch (error) {
+        sendInputButton.textContent = "Retry same input";
+        showError(error, "The input result is ambiguous; retry will use the same delivery key.");
+      } finally {
+        sendInputButton.disabled = !selectedSessionId;
+      }
+    }
+
+    async function cancelActiveTask() {
+      if (!activeTaskId) return;
+      const taskId = activeTaskId;
+      const reason = "Cancelled from the temporary Mealy dashboard.";
+      if (!window.confirm(`Request cooperative cancellation of task ${taskId}?\n\nReason: ${reason}`)) return;
+      const scope = `cancel:${taskId}`;
+      cancelTaskButton.disabled = true;
+      clearError();
+      try {
+        await postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {
+          apiVersion: "v1",
+          idempotencyKey: commandKey(scope),
+          reason
+        });
+        clearCommandKey(scope);
+        await refreshConversation(false);
+        await refresh();
+      } catch (error) {
+        showError(error, "Task cancellation was not acknowledged; retry will use the same delivery key.");
+      } finally {
+        cancelTaskButton.disabled = !activeTaskId;
+      }
+    }
+
+    async function resolveApproval(approval, decision, buttons) {
+      const subject = approval.subject || {};
+      const verb = decision === "approve" ? "APPROVE" : "DENY";
+      const targets = Array.isArray(subject.targetResources) ? subject.targetResources.join(", ") : "none";
+      const review = `${verb} exact ${subject.toolId || "effect"} subject?\n\nCapability: ${subject.capabilityScope || "unknown"}\nTargets: ${targets}\nSubject digest: ${approval.subjectDigest || "missing"}`;
+      if (!window.confirm(review)) return;
+      const scope = `approval:${approval.approvalId}:${approval.subjectDigest}:${decision}`;
+      buttons.forEach(button => { button.disabled = true; });
+      clearError();
+      try {
+        await postJson(`/api/approvals/${encodeURIComponent(approval.approvalId)}/resolve`, {
+          apiVersion: "v1",
+          idempotencyKey: commandKey(scope),
+          expectedSubjectDigest: approval.subjectDigest,
+          decision
+        });
+        clearCommandKey(scope);
+        await refresh();
+        await refreshConversation(false);
+      } catch (error) {
+        showError(error, "The approval decision was not acknowledged; retry will use the same delivery key.");
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    }
+
+    function uuidV7() {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      let timestamp = BigInt(Date.now());
+      for (let index = 5; index >= 0; index -= 1) {
+        bytes[index] = Number(timestamp & 255n);
+        timestamp >>= 8n;
+      }
+      bytes[6] = (bytes[6] & 15) | 112;
+      bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+
+    function scheduleCreateValues() {
+      const sessionId = scheduleSession.value;
+      const name = scheduleName.value;
+      const prompt = schedulePrompt.value;
+      const cronExpression = scheduleCron.value;
+      const timezone = scheduleTimezone.value;
+      const misfireGraceMs = Number(scheduleMisfireGrace.value);
+      const exactText = (value, maximum) => Boolean(value && value.trim() === value && new TextEncoder().encode(value).length <= maximum && !/[\u0000-\u001f\u007f]/.test(value));
+      if (!validEntityId(sessionId)) throw new Error("Enter one exact canonical destination session UUID.");
+      if (!exactText(name, 128)) throw new Error("Schedule name must be unpadded, control-free, and at most 128 bytes.");
+      const promptBytes = new TextEncoder().encode(prompt).length;
+      if (!prompt || promptBytes > 49152 || prompt.includes("\u0000")) throw new Error("Schedule prompt must contain 1–49,152 UTF-8 bytes and no NUL.");
+      if (!exactText(cronExpression, 256)) throw new Error("Enter one unpadded, control-free five-field cron expression.");
+      if (!exactText(timezone, 128)) throw new Error("Enter one exact unpadded IANA time-zone identity.");
+      if (!Number.isSafeInteger(misfireGraceMs) || misfireGraceMs < 0 || misfireGraceMs > 86400000) throw new Error("Misfire grace must be an integer from 0 through 86,400,000 milliseconds.");
+      const allowApprovalRequiredAction = scheduleAllowActions.checked;
+      if (/^\/(act|edit|manage|run)(?:\s|$)/.test(prompt) && !allowApprovalRequiredAction) {
+        throw new Error("This prompt begins with an approval-required action command; explicitly opt in or change the prompt.");
+      }
+      return {
+        sessionId,
+        name,
+        prompt,
+        promptBytes,
+        cronExpression,
+        timezone,
+        missedRunPolicy: scheduleMissedPolicy.value,
+        overlapPolicy: scheduleOverlapPolicy.value,
+        misfireGraceMs,
+        allowApprovalRequiredAction
+      };
+    }
+
+    function scheduleMatchesDraft(schedule, values, scheduleId) {
+      return Boolean(schedule
+        && schedule.scheduleId === scheduleId
+        && schedule.sessionId === values.sessionId
+        && schedule.name === values.name
+        && schedule.prompt === values.prompt
+        && schedule.cronExpression === values.cronExpression
+        && schedule.timezone === values.timezone
+        && schedule.missedRunPolicy === values.missedRunPolicy
+        && schedule.overlapPolicy === values.overlapPolicy
+        && asNumber(schedule.misfireGraceMs) === values.misfireGraceMs
+        && Boolean(schedule.allowApprovalRequiredAction) === values.allowApprovalRequiredAction);
+    }
+
+    function clearPendingScheduleCreate() {
+      pendingScheduleCreate = null;
+      createScheduleButton.textContent = "Create durable schedule";
+    }
+
+    async function createDurableSchedule() {
+      let values;
+      try { values = scheduleCreateValues(); }
+      catch (error) { showError(error, "The schedule definition is invalid."); return; }
+      const fingerprint = JSON.stringify(values);
+      if (!pendingScheduleCreate || pendingScheduleCreate.fingerprint !== fingerprint) {
+        pendingScheduleCreate = { fingerprint, scheduleId: uuidV7() };
+      }
+      const scheduleId = pendingScheduleCreate.scheduleId;
+      const review = `CREATE this exact durable schedule?\n\nSchedule ID / creation key: ${scheduleId}\nSession: ${values.sessionId}\nName: ${values.name}\nCron: ${values.cronExpression} · ${values.timezone}\nDowntime: ${values.missedRunPolicy}\nOverlap: ${values.overlapPolicy}\nMisfire grace: ${values.misfireGraceMs} ms\nApproval-required actions allowed: ${values.allowApprovalRequiredAction ? "YES" : "no"}\nPrompt bytes: ${values.promptBytes}\n\nReview the complete prompt in the editor. An ambiguous retry retains the same UUIDv7 and exact definition.`;
+      if (values.allowApprovalRequiredAction) {
+        const required = `CREATE ${scheduleId}`;
+        if (window.prompt(`${review}\n\nThis schedule may admit action prompts. Type exactly:\n${required}`) !== required) return;
+      } else if (!window.confirm(review)) return;
+      scheduleCommandInProgress = true;
+      createScheduleButton.textContent = "Creating…";
+      updateScheduleControls();
+      clearError();
+      try {
+        const schedule = await postJson("/api/schedules", {
+          apiVersion: "v1",
+          scheduleId,
+          sessionId: values.sessionId,
+          name: values.name,
+          prompt: values.prompt,
+          cronExpression: values.cronExpression,
+          timezone: values.timezone,
+          missedRunPolicy: values.missedRunPolicy,
+          overlapPolicy: values.overlapPolicy,
+          misfireGraceMs: values.misfireGraceMs,
+          allowApprovalRequiredAction: values.allowApprovalRequiredAction
+        });
+        if (!scheduleMatchesDraft(schedule, values, scheduleId)) throw new Error("Schedule creation receipt mismatch");
+        clearPendingScheduleCreate();
+        try {
+          await fetchScheduleEvidence(scheduleId);
+          await refresh();
+        } catch (error) {
+          showError(error, `Schedule ${scheduleId} was created with canonical evidence, but the follow-up view could not refresh. Load that exact schedule ID; do not submit a new creation retry.`);
+        }
+      } catch (error) {
+        createScheduleButton.textContent = "Retry same schedule creation";
+        try {
+          const observed = await fetchScheduleEvidence(scheduleId);
+          if (scheduleMatchesDraft(observed, values, scheduleId)) {
+            clearPendingScheduleCreate();
+            await refresh();
+            return;
+          }
+        } catch (_) { /* Preserve the bounded ambiguity warning and stable creation key. */ }
+        showError(error, "The schedule creation result may be ambiguous. Retry retains the same UUIDv7 and exact definition; conflicting reuse fails closed.");
+      } finally {
+        scheduleCommandInProgress = false;
+        updateScheduleControls();
+      }
+    }
+
+    function updateScheduleControls() {
+      const status = loadedSchedule ? loadedSchedule.status : null;
+      pauseScheduleButton.disabled = scheduleCommandInProgress || status !== "active";
+      resumeScheduleButton.disabled = scheduleCommandInProgress || status !== "paused";
+      cancelScheduleButton.disabled = scheduleCommandInProgress || !status || status === "cancelled";
+      createScheduleButton.disabled = scheduleCommandInProgress;
+      [scheduleSession, scheduleName, schedulePrompt, scheduleCron, scheduleTimezone, scheduleMissedPolicy, scheduleOverlapPolicy, scheduleMisfireGrace, scheduleAllowActions].forEach(control => {
+        control.disabled = scheduleCommandInProgress;
+      });
+    }
+
+    function renderScheduleRunHistory() {
+      document.getElementById("schedule-run-count").textContent = `${formatCount(loadedScheduleRuns.length)} run${loadedScheduleRuns.length === 1 ? "" : "s"}`;
+      if (!loadedSchedule) {
+        return emptyList(scheduleRuns, "No schedule selected.");
+      }
+      if (!loadedScheduleRuns.length) {
+        return emptyList(scheduleRuns, "This schedule has no retained occurrence history.");
+      }
+      scheduleRuns.replaceChildren(...loadedScheduleRuns.map(run => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(
+          element("p", "item-title", `${run.intent || "occurrence"} · ${formatTime(run.scheduledForMs)}`),
+          element("p", "item-meta", `${run.scheduleRunId || "unknown run"}${run.coalesced ? " · coalesced" : ""}${run.reason ? ` · ${run.reason}` : ""}`)
+        );
+        const side = element("div", "item-side");
+        side.append(
+          badge(run.status || "unknown"),
+          element("p", "item-meta", run.completedAtMs ? `completed ${formatTime(run.completedAtMs)}` : `claimed ${formatTime(run.createdAtMs)}`)
+        );
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function renderScheduleEvidence() {
+      scheduleDetail.textContent = loadedSchedule
+        ? JSON.stringify(loadedSchedule, null, 2)
+        : "Choose a schedule to load its exact definition and newest durable occurrence history.";
+      renderScheduleRunHistory();
+      updateScheduleControls();
+    }
+
+    async function fetchScheduleEvidence(scheduleId) {
+      const schedule = await requestJson(`/api/schedules/${encodeURIComponent(scheduleId)}`);
+      const history = await requestJson(`/api/schedules/${encodeURIComponent(scheduleId)}/runs?limit=50`);
+      if (schedule.scheduleId !== scheduleId || history.scheduleId !== scheduleId) {
+        throw new Error("Schedule evidence identity mismatch");
+      }
+      loadedSchedule = schedule;
+      loadedScheduleRuns = Array.isArray(history.runs) ? history.runs : [];
+      renderScheduleEvidence();
+      return schedule;
+    }
+
+    async function loadScheduleEvidence(scheduleId) {
+      if (!validEntityId(scheduleId)) return;
+      scheduleCommandInProgress = true;
+      updateScheduleControls();
+      clearError();
+      scheduleDetail.scrollIntoView({ behavior: "smooth", block: "center" });
+      try {
+        await fetchScheduleEvidence(scheduleId);
+      } catch (error) {
+        loadedSchedule = null;
+        loadedScheduleRuns = [];
+        renderScheduleEvidence();
+        showError(error, "The exact schedule definition or run history is unavailable.");
+      } finally {
+        scheduleCommandInProgress = false;
+        updateScheduleControls();
+      }
+    }
+
+    function scheduleLifecycleReview(action, schedule) {
+      const promptBytes = new TextEncoder().encode(String(schedule.prompt || "")).length;
+      return `${action.toUpperCase()} this exact schedule revision?\n\nName: ${schedule.name || "unnamed"}\nSchedule: ${schedule.scheduleId}\nSession: ${schedule.sessionId}\nRevision: ${schedule.revision}\nCron: ${schedule.cronExpression} · ${schedule.timezone}\nNext due: ${formatTime(schedule.nextDueAtMs)}\nApproval-required actions allowed: ${schedule.allowApprovalRequiredAction ? "YES" : "no"}\nPrompt bytes: ${promptBytes}\n\nReview the complete exact prompt and definition in the rendered evidence panel before continuing.`;
+    }
+
+    async function transitionSchedule(action) {
+      if (!loadedSchedule || scheduleCommandInProgress) return;
+      const schedule = loadedSchedule;
+      const allowed = (action === "pause" && schedule.status === "active")
+        || (action === "resume" && schedule.status === "paused")
+        || (action === "cancel" && schedule.status !== "cancelled");
+      if (!allowed) return;
+      const review = scheduleLifecycleReview(action, schedule);
+      if (action === "cancel") {
+        const required = `CANCEL ${schedule.scheduleId}`;
+        const entered = window.prompt(`${review}\n\nCancellation is terminal. Type exactly:\n${required}`);
+        if (entered !== required) return;
+      } else if (action === "resume" && schedule.allowApprovalRequiredAction) {
+        const required = `RESUME ${schedule.scheduleId}`;
+        const entered = window.prompt(`${review}\n\nThis schedule may admit approval-required action prompts. Type exactly:\n${required}`);
+        if (entered !== required) return;
+      } else if (!window.confirm(review)) {
+        return;
+      }
+      const scheduleId = schedule.scheduleId;
+      const expectedRevision = schedule.revision;
+      scheduleCommandInProgress = true;
+      updateScheduleControls();
+      clearError();
+      try {
+        const response = await postJson(`/api/schedules/${encodeURIComponent(scheduleId)}/${action}`, {
+          apiVersion: "v1",
+          expectedRevision
+        });
+        if (response.scheduleId !== scheduleId || asNumber(response.revision) !== asNumber(expectedRevision) + 1) {
+          throw new Error("Schedule lifecycle receipt mismatch");
+        }
+        await fetchScheduleEvidence(scheduleId);
+        await refresh();
+      } catch (error) {
+        try { await fetchScheduleEvidence(scheduleId); } catch (_) { /* Preserve the original bounded ambiguity warning. */ }
+        showError(error, "The schedule command result may be ambiguous. It was not retried; inspect the reloaded status and revision before acting again.");
+      } finally {
+        scheduleCommandInProgress = false;
+        updateScheduleControls();
+      }
+    }
+
+    function memoryWorkspaceValue() {
+      const value = memoryWorkspace.value.trim();
+      if (!value || value !== memoryWorkspace.value || new TextEncoder().encode(value).length > 1024 || /[\u0000-\u001f\u007f]/.test(value)) {
+        throw new Error("Enter one exact, unpadded memory namespace of at most 1,024 bytes.");
+      }
+      return value;
+    }
+
+    function memoryEditorValues() {
+      const content = memoryContent.value;
+      const contentBytes = new TextEncoder().encode(content).length;
+      const confidence = Number(memoryConfidence.value);
+      const categories = ["preference", "fact", "goal", "decision", "constraint", "identity", "credential", "health", "financial", "third_party_private"];
+      const sensitivities = ["public", "internal", "private", "restricted"];
+      const retentions = ["session", "standard", "pinned", "policy_hold"];
+      if (!content || contentBytes > 49152 || content.includes("\0")) throw new Error("Memory content must contain 1–49,152 UTF-8 bytes and no NUL character.");
+      if (!Number.isInteger(confidence) || confidence < 0 || confidence > 10000) throw new Error("Memory confidence must be an integer from 0 through 10,000.");
+      if (!categories.includes(memoryCategory.value) || !sensitivities.includes(memorySensitivity.value) || !retentions.includes(memoryRetention.value)) throw new Error("Memory governance metadata is invalid.");
+      return {
+        content,
+        contentBytes,
+        category: memoryCategory.value,
+        confidenceBasisPoints: confidence,
+        sensitivity: memorySensitivity.value,
+        retention: memoryRetention.value
+      };
+    }
+
+    function clearPendingMemoryProposal() {
+      if (pendingMemoryProposal) clearCommandKey(pendingMemoryProposal.scope);
+      pendingMemoryProposal = null;
+      proposeMemoryButton.textContent = "Propose new";
+    }
+
+    function clearPendingMemoryCorrection() {
+      if (pendingMemoryCorrection) clearCommandKey(pendingMemoryCorrection.scope);
+      pendingMemoryCorrection = null;
+      correctMemoryButton.textContent = "Correct loaded active";
+    }
+
+    function updateMemoryControls() {
+      const status = loadedMemory ? loadedMemory.status : null;
+      const retention = loadedMemory ? loadedMemory.retention : null;
+      activateMemoryButton.disabled = memoryCommandInProgress || status !== "proposed";
+      rejectMemoryButton.disabled = memoryCommandInProgress || status !== "proposed";
+      correctMemoryButton.disabled = memoryCommandInProgress || status !== "active";
+      pinMemoryButton.disabled = memoryCommandInProgress || status !== "active" || retention === "pinned" || retention === "policy_hold";
+      unpinMemoryButton.disabled = memoryCommandInProgress || status !== "active" || retention !== "pinned";
+      expireMemoryButton.disabled = memoryCommandInProgress || status !== "active";
+      deleteMemoryButton.disabled = memoryCommandInProgress || !status || status === "deleted";
+      proposeMemoryButton.disabled = memoryCommandInProgress;
+      loadMemoriesButton.disabled = memoryCommandInProgress;
+      searchMemoriesButton.disabled = memoryCommandInProgress;
+    }
+
+    function newestMemoryRevision(memory) {
+      const revisions = memory && Array.isArray(memory.revisions) ? memory.revisions : [];
+      return revisions.length ? revisions[revisions.length - 1] : null;
+    }
+
+    function renderMemoryEvidence(populateEditor) {
+      memoryDetail.textContent = loadedMemory
+        ? JSON.stringify(loadedMemory, null, 2)
+        : "Choose a memory to inspect its complete immutable revision and provenance history.";
+      if (loadedMemory && populateEditor) {
+        const revision = newestMemoryRevision(loadedMemory);
+        memoryContent.value = revision && typeof revision.content === "string" ? revision.content : "";
+        memoryCategory.value = loadedMemory.category || "fact";
+        memoryConfidence.value = String(loadedMemory.confidenceBasisPoints ?? 8000);
+        memorySensitivity.value = loadedMemory.sensitivity || "private";
+        memoryRetention.value = loadedMemory.retention || "standard";
+        clearPendingMemoryCorrection();
+      }
+      updateMemoryControls();
+    }
+
+    function renderMemories() {
+      const target = document.getElementById("memories");
+      document.getElementById("memory-count").textContent = `${formatCount(loadedMemories.length)} memor${loadedMemories.length === 1 ? "y" : "ies"}`;
+      if (!loadedMemories.length) return emptyList(target, "No governed memory matched this exact namespace/query.");
+      target.replaceChildren(...loadedMemories.map(memory => {
+        const item = element("li", "item");
+        const revision = newestMemoryRevision(memory);
+        const content = revision && typeof revision.content === "string" ? revision.content : "[scrubbed tombstone]";
+        const body = element("div");
+        body.append(
+          element("p", "item-title", `${memory.category || "memory"} · ${content.slice(0, 180)}`),
+          element("p", "item-meta", `${memory.memoryId} · revision ${formatCount(memory.revision)} · ${memory.sensitivity || "unknown"} · ${memory.retention || "unknown"}`)
+        );
+        const side = element("div", "item-side");
+        const inspect = element("button", "action", loadedMemory && loadedMemory.memoryId === memory.memoryId ? "Reload exact" : "Inspect exact");
+        inspect.type = "button";
+        inspect.disabled = !validEntityId(memory.memoryId);
+        inspect.addEventListener("click", () => { void loadMemoryEvidence(memory.memoryId); });
+        side.append(badge(memory.status || "unknown"), inspect);
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    async function queryMemories(search) {
+      let workspace;
+      try { workspace = memoryWorkspaceValue(); }
+      catch (error) { showError(error, "The memory namespace is invalid."); return; }
+      const query = memoryQuery.value;
+      if (search && (!query || query.trim() !== query || new TextEncoder().encode(query).length > 4096 || /[\u0000-\u001f\u007f]/.test(query))) {
+        showError(new Error("Enter an unpadded, control-free search query of at most 4,096 bytes."), "The memory query is invalid.");
+        return;
+      }
+      memoryCommandInProgress = true;
+      updateMemoryControls();
+      clearError();
+      try {
+        const payload = search
+          ? await postJson("/api/memories/search", {
+              apiVersion: "v1",
+              workspaceIdentity: workspace,
+              query,
+              maximumSensitivity: memoryMaximumSensitivity.value,
+              limit: 100
+            })
+          : await postJson("/api/memories/list", {
+              apiVersion: "v1",
+              workspaceIdentity: workspace,
+              includeDeleted: memoryIncludeDeleted.checked
+            });
+        loadedMemories = search
+          ? (Array.isArray(payload.hits) ? payload.hits.map(hit => hit.memory).filter(Boolean) : [])
+          : (Array.isArray(payload.memories) ? payload.memories : []);
+        renderMemories();
+      } catch (error) {
+        showError(error, search ? "Memory search is unavailable." : "The memory namespace is unavailable.");
+      } finally {
+        memoryCommandInProgress = false;
+        updateMemoryControls();
+      }
+    }
+
+    async function fetchMemoryEvidence(memoryId, populateEditor) {
+      const workspace = memoryWorkspaceValue();
+      const memory = await postJson(`/api/memories/${encodeURIComponent(memoryId)}/detail`, {
+        apiVersion: "v1",
+        workspaceIdentity: workspace
+      });
+      if (memory.memoryId !== memoryId || memory.workspaceIdentity !== workspace) throw new Error("Memory evidence identity mismatch");
+      loadedMemory = memory;
+      const index = loadedMemories.findIndex(candidate => candidate.memoryId === memoryId);
+      if (index >= 0) loadedMemories[index] = memory;
+      renderMemoryEvidence(populateEditor);
+      renderMemories();
+      return memory;
+    }
+
+    async function loadMemoryEvidence(memoryId) {
+      if (!validEntityId(memoryId)) return;
+      memoryCommandInProgress = true;
+      updateMemoryControls();
+      clearError();
+      memoryDetail.scrollIntoView({ behavior: "smooth", block: "center" });
+      try {
+        await fetchMemoryEvidence(memoryId, true);
+      } catch (error) {
+        loadedMemory = null;
+        renderMemoryEvidence(false);
+        showError(error, "The exact memory evidence is unavailable.");
+      } finally {
+        memoryCommandInProgress = false;
+        updateMemoryControls();
+      }
+    }
+
+    async function proposeNewMemory() {
+      let workspace;
+      let values;
+      try { workspace = memoryWorkspaceValue(); values = memoryEditorValues(); }
+      catch (error) { showError(error, "The memory proposal is invalid."); return; }
+      const fingerprint = JSON.stringify({ workspace, ...values });
+      if (!pendingMemoryProposal || pendingMemoryProposal.fingerprint !== fingerprint) {
+        clearPendingMemoryProposal();
+        const scope = `memory-propose:${Date.now()}:${values.contentBytes}`;
+        pendingMemoryProposal = { scope, fingerprint, idempotencyKey: commandKey(scope) };
+      }
+      const review = `PROPOSE a governed memory (not activate it)?\n\nNamespace: ${workspace}\nCategory: ${values.category}\nSensitivity: ${values.sensitivity}\nRetention: ${values.retention}\nConfidence: ${values.confidenceBasisPoints}\nContent bytes: ${values.contentBytes}\n\nReview the exact content in the editor. Never store a raw credential or bearer token.`;
+      if (!window.confirm(review)) return;
+      memoryCommandInProgress = true;
+      proposeMemoryButton.textContent = "Proposing…";
+      updateMemoryControls();
+      clearError();
+      try {
+        const memory = await postJson("/api/memories", {
+          apiVersion: "v1",
+          idempotencyKey: pendingMemoryProposal.idempotencyKey,
+          workspaceIdentity: workspace,
+          content: values.content,
+          category: values.category,
+          confidenceBasisPoints: values.confidenceBasisPoints,
+          sensitivity: values.sensitivity,
+          retention: values.retention
+        });
+        clearCommandKey(pendingMemoryProposal.scope);
+        pendingMemoryProposal = null;
+        proposeMemoryButton.textContent = "Proposed — review before activation";
+        loadedMemory = memory;
+        renderMemoryEvidence(true);
+        await queryMemories(false);
+      } catch (error) {
+        proposeMemoryButton.textContent = "Retry same proposal";
+        showError(error, "The proposal result may be ambiguous; retry uses the same digest-bound provenance key and first reconciles durable memory.");
+      } finally {
+        memoryCommandInProgress = false;
+        updateMemoryControls();
+      }
+    }
+
+    async function correctLoadedMemory() {
+      if (!loadedMemory || loadedMemory.status !== "active") return;
+      let workspace;
+      let values;
+      try { workspace = memoryWorkspaceValue(); values = memoryEditorValues(); }
+      catch (error) { showError(error, "The memory correction is invalid."); return; }
+      const memoryId = loadedMemory.memoryId;
+      const expectedRevision = loadedMemory.revision;
+      const fingerprint = JSON.stringify({ memoryId, expectedRevision, workspace, ...values });
+      if (!pendingMemoryCorrection || pendingMemoryCorrection.fingerprint !== fingerprint) {
+        clearPendingMemoryCorrection();
+        const scope = `memory-correct:${memoryId}:${expectedRevision}:${Date.now()}`;
+        pendingMemoryCorrection = { scope, fingerprint, idempotencyKey: commandKey(scope) };
+      }
+      const sensitive = ["identity", "credential", "health", "financial", "third_party_private"].includes(loadedMemory.category);
+      const review = `CORRECT this exact active memory revision?\n\nMemory: ${memoryId}\nRevision: ${expectedRevision}\nCategory remains: ${loadedMemory.category}\nSensitivity: ${values.sensitivity}\nRetention: ${values.retention}\nConfidence: ${values.confidenceBasisPoints}\nContent bytes: ${values.contentBytes}`;
+      if (sensitive) {
+        const required = `CORRECT ${memoryId}`;
+        if (window.prompt(`${review}\n\nThis category is sensitive. Type exactly:\n${required}`) !== required) return;
+      } else if (!window.confirm(`${review}\n\nReview the exact replacement content before continuing.`)) return;
+      memoryCommandInProgress = true;
+      correctMemoryButton.textContent = "Correcting…";
+      updateMemoryControls();
+      clearError();
+      try {
+        const memory = await postJson(`/api/memories/${encodeURIComponent(memoryId)}/correct`, {
+          apiVersion: "v1",
+          idempotencyKey: pendingMemoryCorrection.idempotencyKey,
+          workspaceIdentity: workspace,
+          expectedRevision,
+          content: values.content,
+          confidenceBasisPoints: values.confidenceBasisPoints,
+          sensitivity: values.sensitivity,
+          retention: values.retention
+        });
+        clearCommandKey(pendingMemoryCorrection.scope);
+        pendingMemoryCorrection = null;
+        correctMemoryButton.textContent = "Correction recorded";
+        loadedMemory = memory;
+        renderMemoryEvidence(true);
+        await queryMemories(false);
+      } catch (error) {
+        correctMemoryButton.textContent = "Retry same correction";
+        try { await fetchMemoryEvidence(memoryId, false); } catch (_) { /* Keep the bounded ambiguity warning. */ }
+        showError(error, "The correction result may be ambiguous; retry uses the same provenance key and rendered revision after inspection.");
+      } finally {
+        memoryCommandInProgress = false;
+        updateMemoryControls();
+      }
+    }
+
+    async function activateLoadedMemory() {
+      if (!loadedMemory || loadedMemory.status !== "proposed") return;
+      const revision = newestMemoryRevision(loadedMemory);
+      if (!revision || !validEntityId(revision.revisionId)) return;
+      const required = `ACTIVATE ${loadedMemory.memoryId}`;
+      const review = `Activate exact proposed revision ${revision.revisionId}?\n\nMemory: ${loadedMemory.memoryId}\nRevision: ${loadedMemory.revision}\nCategory: ${loadedMemory.category}\nSensitivity: ${loadedMemory.sensitivity}\nRetention: ${loadedMemory.retention}\n\nActivation makes this cited content eligible for retrieval and records explicit owner approval.`;
+      if (window.prompt(`${review}\n\nType exactly:\n${required}`) !== required) return;
+      await mutateLoadedMemory("activate", {
+        revisionId: revision.revisionId
+      }, "activation");
+    }
+
+    async function pinLoadedMemory(pinned) {
+      if (!loadedMemory || loadedMemory.status !== "active") return;
+      if (!window.confirm(`${pinned ? "PIN" : "UNPIN"} memory ${loadedMemory.memoryId} at revision ${loadedMemory.revision}?`)) return;
+      await mutateLoadedMemory("pin", { pinned }, pinned ? "pin" : "unpin");
+    }
+
+    async function lifecycleLoadedMemory(action) {
+      if (!loadedMemory || loadedMemory.status === "deleted") return;
+      const memoryId = loadedMemory.memoryId;
+      if (action === "delete") {
+        const required = `DELETE ${memoryId}`;
+        if (window.prompt(`DELETE and scrub all content for memory ${memoryId} at revision ${loadedMemory.revision}?\n\nOnly digest/lifecycle tombstones remain. Type exactly:\n${required}`) !== required) return;
+      } else if (!window.confirm(`${action.toUpperCase()} memory ${memoryId} at exact revision ${loadedMemory.revision}?`)) return;
+      await mutateLoadedMemory(action, {}, action);
+    }
+
+    async function mutateLoadedMemory(operation, extra, label) {
+      if (!loadedMemory || memoryCommandInProgress) return;
+      const memoryId = loadedMemory.memoryId;
+      const expectedRevision = loadedMemory.revision;
+      let workspace;
+      try { workspace = memoryWorkspaceValue(); }
+      catch (error) { showError(error, "The memory namespace is invalid."); return; }
+      memoryCommandInProgress = true;
+      updateMemoryControls();
+      clearError();
+      try {
+        const memory = await postJson(`/api/memories/${encodeURIComponent(memoryId)}/${operation}`, {
+          apiVersion: "v1",
+          workspaceIdentity: workspace,
+          expectedRevision,
+          ...extra
+        });
+        loadedMemory = memory;
+        renderMemoryEvidence(true);
+        await queryMemories(false);
+      } catch (error) {
+        try { await fetchMemoryEvidence(memoryId, false); } catch (_) { /* Keep the original bounded error. */ }
+        showError(error, `The memory ${label} result may be ambiguous. It was not blindly retried; inspect the reloaded status and revision.`);
+      } finally {
+        memoryCommandInProgress = false;
+        updateMemoryControls();
+      }
+    }
+
+    function extensionCanEnable(extension) {
+      return Boolean(extension && ["installed", "disabled", "failed"].includes(extension.status));
+    }
+
+    function extensionChoice(value, detail, checked, required, className) {
+      const label = element("label", "grant-option");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = checked;
+      input.dataset.extensionValue = value;
+      input.dataset.required = required ? "true" : "false";
+      if (className) input.className = className;
+      const copy = element("span", "", detail ? `${value} · ${detail}` : value);
+      label.append(input, copy);
+      return label;
+    }
+
+    function updateExtensionControls() {
+      const canEnable = extensionCanEnable(loadedExtension);
+      const status = loadedExtension ? loadedExtension.status : null;
+      loadExtensionsButton.disabled = extensionCommandInProgress;
+      enableExtensionButton.disabled = extensionCommandInProgress || !canEnable;
+      disableExtensionButton.disabled = extensionCommandInProgress || status !== "enabled";
+      revokeExtensionButton.disabled = extensionCommandInProgress || !status || status === "revoked";
+
+      document.querySelectorAll(".extension-capability, .extension-network, .extension-secret").forEach(control => {
+        control.disabled = extensionCommandInProgress || !canEnable || control.dataset.required === "true";
+      });
+      document.querySelectorAll(".extension-mount-row").forEach(row => {
+        const include = row.querySelector(".extension-mount-include");
+        const selected = Boolean(include && include.checked);
+        if (include) include.disabled = extensionCommandInProgress || !canEnable;
+        row.querySelectorAll("select, input[type='text']").forEach(control => {
+          control.disabled = extensionCommandInProgress || !canEnable || !selected;
+        });
+      });
+      const processRequested = Boolean(loadedExtension && loadedExtension.manifest && loadedExtension.manifest.permissions && loadedExtension.manifest.permissions.allowProcessSpawn);
+      extensionProcessSpawn.disabled = extensionCommandInProgress || !canEnable || !processRequested;
+      if (!processRequested) extensionProcessSpawn.checked = false;
+    }
+
+    function renderExtensionGrantReview() {
+      extensionCapabilities.replaceChildren();
+      extensionMounts.replaceChildren();
+      extensionNetwork.replaceChildren();
+      extensionSecrets.replaceChildren();
+      extensionProcessSpawn.checked = false;
+      const manifest = loadedExtension && loadedExtension.manifest ? loadedExtension.manifest : null;
+      if (!manifest) {
+        extensionCapabilities.append(element("p", "empty", "Load an exact extension before reviewing authority."));
+        [extensionMounts, extensionNetwork, extensionSecrets].forEach(target => target.append(element("p", "empty", "No manifest loaded.")));
+        updateExtensionControls();
+        return;
+      }
+
+      const healthCapability = manifest.healthCheck && manifest.healthCheck.capabilityId;
+      const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];
+      capabilities.forEach(capability => {
+        const capabilityId = String(capability.capabilityId || "");
+        const required = capabilityId === healthCapability;
+        extensionCapabilities.append(extensionChoice(
+          capabilityId,
+          `${capability.kind || "unknown"} · ${capability.effectClass || "unknown"} · ${capability.riskClass || "unknown"}`,
+          required,
+          required,
+          "extension-capability"
+        ));
+      });
+      if (!capabilities.length) extensionCapabilities.append(element("p", "empty", "No valid capability declaration."));
+
+      const permissions = manifest.permissions || {};
+      const mounts = Array.isArray(permissions.filesystem) ? permissions.filesystem : [];
+      mounts.forEach(permission => {
+        const row = element("div", "mount-row extension-mount-row");
+        row.dataset.mountName = String(permission.name || "");
+        const identity = element("label", "grant-option");
+        const include = document.createElement("input");
+        include.type = "checkbox";
+        include.className = "extension-mount-include";
+        identity.append(include, element("span", "", `${permission.name || "mount"} · requested ${permission.access || "unknown"}`));
+        const access = document.createElement("select");
+        access.className = "extension-mount-access";
+        const readOnly = element("option", "", "Read only");
+        readOnly.value = "read_only";
+        access.append(readOnly);
+        if (permission.access === "read_write") {
+          const readWrite = element("option", "", "Read/write");
+          readWrite.value = "read_write";
+          access.append(readWrite);
+        }
+        const hostPath = document.createElement("input");
+        hostPath.type = "text";
+        hostPath.maxLength = 4096;
+        hostPath.autocomplete = "off";
+        hostPath.spellcheck = false;
+        hostPath.placeholder = "Canonical host directory";
+        hostPath.className = "extension-mount-host";
+        const sandboxPath = document.createElement("input");
+        sandboxPath.type = "text";
+        sandboxPath.maxLength = 4096;
+        sandboxPath.autocomplete = "off";
+        sandboxPath.spellcheck = false;
+        sandboxPath.placeholder = "Absolute sandbox mount point";
+        sandboxPath.className = "extension-mount-sandbox";
+        include.addEventListener("change", updateExtensionControls);
+        row.append(identity, access, hostPath, sandboxPath);
+        extensionMounts.append(row);
+      });
+      if (!mounts.length) extensionMounts.append(element("p", "empty", "Manifest requests no filesystem mapping."));
+
+      const destinations = Array.isArray(permissions.networkDestinations) ? permissions.networkDestinations : [];
+      destinations.forEach(value => extensionNetwork.append(extensionChoice(String(value), "manifest-requested destination", false, false, "extension-network")));
+      if (!destinations.length) extensionNetwork.append(element("p", "empty", "Manifest requests no outbound destination."));
+      const references = Array.isArray(permissions.secretReferences) ? permissions.secretReferences : [];
+      references.forEach(value => extensionSecrets.append(extensionChoice(String(value), "opaque broker reference", false, false, "extension-secret")));
+      if (!references.length) extensionSecrets.append(element("p", "empty", "Manifest requests no secret reference."));
+      updateExtensionControls();
+    }
+
+    function renderExtensionEvidence(resetGrantReview) {
+      extensionDetail.textContent = loadedExtension
+        ? JSON.stringify(loadedExtension, null, 2)
+        : "Choose an extension to inspect its current data-only manifest, immutable manifest history, health evidence, and active grant.";
+      if (resetGrantReview) renderExtensionGrantReview();
+      updateExtensionControls();
+    }
+
+    function renderExtensions() {
+      const target = document.getElementById("extensions");
+      document.getElementById("extension-count").textContent = `${formatCount(loadedExtensions.length)} extension${loadedExtensions.length === 1 ? "" : "s"}`;
+      if (!loadedExtensions.length) return emptyList(target, "No extension is installed for this owner.");
+      target.replaceChildren(...loadedExtensions.map(extension => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(
+          element("p", "item-title", `${extension.name || "extension"} · ${extension.version || "unknown version"}`),
+          element("p", "item-meta", `${extension.extensionId} · revision ${formatCount(extension.revision)} · ${extension.publisher || "unknown publisher"}`)
+        );
+        const side = element("div", "item-side");
+        const inspect = element("button", "action", loadedExtension && loadedExtension.extensionId === extension.extensionId ? "Reload exact" : "Inspect exact");
+        inspect.type = "button";
+        inspect.disabled = !validEntityId(extension.extensionId);
+        inspect.addEventListener("click", () => { void loadExtensionEvidence(extension.extensionId); });
+        side.append(badge(extension.status || "unknown"), inspect);
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function upsertExtension(extension) {
+      const index = loadedExtensions.findIndex(candidate => candidate.extensionId === extension.extensionId);
+      if (index >= 0) loadedExtensions[index] = extension;
+      else loadedExtensions.push(extension);
+      renderExtensions();
+    }
+
+    async function loadExtensionInventory() {
+      if (extensionCommandInProgress) return;
+      extensionCommandInProgress = true;
+      updateExtensionControls();
+      clearError();
+      try {
+        const payload = await postJson("/api/extensions/list", { apiVersion: "v1" });
+        loadedExtensions = Array.isArray(payload.extensions) ? payload.extensions : [];
+        if (loadedExtension && !loadedExtensions.some(extension => extension.extensionId === loadedExtension.extensionId)) {
+          loadedExtension = null;
+          renderExtensionEvidence(true);
+        }
+        renderExtensions();
+      } catch (error) {
+        showError(error, "The extension inventory is unavailable.");
+      } finally {
+        extensionCommandInProgress = false;
+        updateExtensionControls();
+      }
+    }
+
+    async function fetchExtensionEvidence(extensionId, resetGrantReview) {
+      const extension = await postJson(`/api/extensions/${encodeURIComponent(extensionId)}/detail`, { apiVersion: "v1" });
+      if (extension.extensionId !== extensionId) throw new Error("Extension evidence identity mismatch");
+      loadedExtension = extension;
+      upsertExtension(extension);
+      renderExtensionEvidence(resetGrantReview);
+      return extension;
+    }
+
+    async function loadExtensionEvidence(extensionId) {
+      if (!validEntityId(extensionId) || extensionCommandInProgress) return;
+      extensionCommandInProgress = true;
+      updateExtensionControls();
+      clearError();
+      extensionDetail.scrollIntoView({ behavior: "smooth", block: "center" });
+      try {
+        await fetchExtensionEvidence(extensionId, true);
+      } catch (error) {
+        loadedExtension = null;
+        renderExtensionEvidence(true);
+        showError(error, "The exact extension evidence is unavailable.");
+      } finally {
+        extensionCommandInProgress = false;
+        updateExtensionControls();
+      }
+    }
+
+    function validDashboardAbsolutePath(value) {
+      if (typeof value !== "string" || new TextEncoder().encode(value).length > 4096 || !value.startsWith("/") || value.includes("\\") || /[\u0000-\u001f\u007f]/.test(value)) return false;
+      return value.split("/").slice(1).every(component => component && component !== "." && component !== "..");
+    }
+
+    function extensionGrantValues() {
+      if (!loadedExtension || !extensionCanEnable(loadedExtension)) throw new Error("Load an installed, disabled, or failed extension first.");
+      const capabilityIds = Array.from(document.querySelectorAll(".extension-capability"))
+        .filter(input => input.checked)
+        .map(input => input.dataset.extensionValue)
+        .sort();
+      const healthCapability = loadedExtension.manifest && loadedExtension.manifest.healthCheck && loadedExtension.manifest.healthCheck.capabilityId;
+      if (!healthCapability || !capabilityIds.includes(healthCapability)) throw new Error("The required health capability must remain selected.");
+      const mounts = [];
+      document.querySelectorAll(".extension-mount-row").forEach(row => {
+        const include = row.querySelector(".extension-mount-include");
+        if (!include || !include.checked) return;
+        const hostPath = row.querySelector(".extension-mount-host").value;
+        const sandboxPath = row.querySelector(".extension-mount-sandbox").value;
+        if (!validDashboardAbsolutePath(hostPath) || !validDashboardAbsolutePath(sandboxPath)) throw new Error(`Mount ${row.dataset.mountName} requires canonical absolute host and sandbox paths.`);
+        mounts.push({
+          name: row.dataset.mountName,
+          access: row.querySelector(".extension-mount-access").value,
+          hostPath,
+          sandboxPath
+        });
+      });
+      mounts.sort((left, right) => left.name.localeCompare(right.name));
+      const networkDestinations = Array.from(document.querySelectorAll(".extension-network"))
+        .filter(input => input.checked)
+        .map(input => input.dataset.extensionValue)
+        .sort();
+      const secretReferences = Array.from(document.querySelectorAll(".extension-secret"))
+        .filter(input => input.checked)
+        .map(input => input.dataset.extensionValue)
+        .sort();
+      return { capabilityIds, mounts, networkDestinations, secretReferences, allowProcessSpawn: extensionProcessSpawn.checked };
+    }
+
+    async function enableLoadedExtension() {
+      if (!extensionCanEnable(loadedExtension) || extensionCommandInProgress) return;
+      let grant;
+      try { grant = extensionGrantValues(); }
+      catch (error) { showError(error, "The extension grant is invalid."); return; }
+      const extensionId = loadedExtension.extensionId;
+      const expectedRevision = loadedExtension.revision;
+      const required = `ENABLE ${extensionId}`;
+      const review = `Issue a new exact extension authority grant?\n\nExtension: ${extensionId}\nManifest digest: ${loadedExtension.manifestDigest}\nRevision: ${expectedRevision}\n\n${JSON.stringify(grant, null, 2)}\n\nThis runs the manifest health probe before activation. Type exactly:\n${required}`;
+      if (window.prompt(review) !== required) return;
+      extensionCommandInProgress = true;
+      enableExtensionButton.textContent = "Enabling…";
+      updateExtensionControls();
+      clearError();
+      try {
+        const extension = await postJson(`/api/extensions/${encodeURIComponent(extensionId)}/enable`, {
+          apiVersion: "v1",
+          expectedRevision,
+          ...grant
+        });
+        loadedExtension = extension;
+        upsertExtension(extension);
+        renderExtensionEvidence(true);
+      } catch (error) {
+        try { await fetchExtensionEvidence(extensionId, true); } catch (_) { /* Keep the bounded ambiguity warning. */ }
+        showError(error, "The enable result may be ambiguous. It was not blindly retried; inspect the reloaded grant, status, and revision.");
+      } finally {
+        extensionCommandInProgress = false;
+        enableExtensionButton.textContent = "Review and enable";
+        updateExtensionControls();
+      }
+    }
+
+    async function lifecycleLoadedExtension(action) {
+      if (!loadedExtension || extensionCommandInProgress) return;
+      const extensionId = loadedExtension.extensionId;
+      const expectedRevision = loadedExtension.revision;
+      if (action === "revoke") {
+        const required = `REVOKE ${extensionId}`;
+        if (window.prompt(`Permanently revoke extension ${extensionId} at exact revision ${expectedRevision}?\n\nAll future authority is terminally denied while evidence remains. Type exactly:\n${required}`) !== required) return;
+      } else if (!window.confirm(`Disable all active authority for extension ${extensionId} at exact revision ${expectedRevision}?`)) return;
+      extensionCommandInProgress = true;
+      updateExtensionControls();
+      clearError();
+      try {
+        const extension = await postJson(`/api/extensions/${encodeURIComponent(extensionId)}/${action}`, {
+          apiVersion: "v1",
+          expectedRevision
+        });
+        loadedExtension = extension;
+        upsertExtension(extension);
+        renderExtensionEvidence(true);
+      } catch (error) {
+        try { await fetchExtensionEvidence(extensionId, true); } catch (_) { /* Keep the bounded ambiguity warning. */ }
+        showError(error, `The extension ${action} result may be ambiguous. It was not blindly retried; inspect the reloaded status and revision.`);
+      } finally {
+        extensionCommandInProgress = false;
+        updateExtensionControls();
+      }
+    }
+
+    function renderProviders(status) {
+      const target = document.getElementById("providers");
+      const endpoints = Array.isArray(status.providerEndpoints) ? status.providerEndpoints : [];
+      document.getElementById("provider-count").textContent = `${formatCount(endpoints.length)} endpoint${endpoints.length === 1 ? "" : "s"}`;
+      if (!endpoints.length) return emptyList(target, "No provider endpoint is configured in this daemon lifetime.");
+      target.replaceChildren(...endpoints.map(endpoint => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(
+          element("p", "item-title", `${endpoint.providerId || "provider"} · ${endpoint.modelId || "model"}`),
+          element("p", "item-meta", `${endpoint.protocol || "protocol"} · ${endpoint.local ? "local" : endpoint.residency || "remote"} · ${formatCount(endpoint.invocationCount)} durable dispatches`)
+        );
+        const side = element("div", "item-side");
+        side.append(
+          badge(endpoint.health || "unknown"),
+          element("p", "item-meta", `${formatCount(endpoint.inFlightRequests)}/${formatCount(endpoint.maximumConcurrentRequests)} active · ${formatCount(endpoint.requestsInCurrentMinute)}/${formatCount(endpoint.requestsPerMinute)} min`)
+        );
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function renderDoctor(doctor) {
+      const target = document.getElementById("doctor-checks");
+      const ready = Boolean(doctor.controlPlaneReady);
+      const state = document.getElementById("doctor-state");
+      state.className = `badge ${ready ? "ok" : "bad"}`;
+      state.textContent = ready ? "Conformant" : "Attention";
+      const checks = Object.entries(doctor.checks || {});
+      if (!checks.length) { target.replaceChildren(element("p", "empty", "No diagnostic checks were returned.")); return; }
+      target.replaceChildren(...checks.map(([name, detail]) => {
+        const record = element("div", "check");
+        const kind = classify(detail);
+        record.append(element("span", `check-indicator ${kind === "bad" ? "bad" : kind === "warn" ? "warn" : ""}`));
+        const copy = element("div");
+        copy.append(element("p", "check-name", name), element("p", "check-detail", detail));
+        record.append(copy);
+        return record;
+      }));
+    }
+
+    function renderSessions(payload) {
+      const target = document.getElementById("sessions");
+      const picker = document.getElementById("conversation-sessions");
+      const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+      document.getElementById("session-count").textContent = `${formatCount(sessions.length)} session${sessions.length === 1 ? "" : "s"}`;
+      if (!sessions.length) {
+        emptyList(target, "No retained session is visible to this exact local binding.");
+        picker.replaceChildren(element("p", "empty", "Create a session to begin."));
+        return;
+      }
+      picker.replaceChildren(...sessions.map(session => {
+        const choice = element("button", `session-choice${session.sessionId === selectedSessionId ? " selected" : ""}`);
+        choice.type = "button";
+        choice.dataset.sessionId = session.sessionId;
+        choice.append(
+          element("span", "session-choice-title", session.sessionId),
+          element("span", "session-choice-meta", `${formatCount(session.pendingInputs)} pending · ${formatTime(session.updatedAtMs)}`)
+        );
+        choice.addEventListener("click", () => { void selectSession(session.sessionId); });
+        return choice;
+      }));
+      target.replaceChildren(...sessions.map(session => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(element("p", "item-title", session.sessionId), element("p", "item-meta", `Revision ${formatCount(session.revision)} · updated ${formatTime(session.updatedAtMs)}`));
+        const side = element("div", "item-side");
+        const open = element("button", "action", session.sessionId === selectedSessionId ? "Open" : "View");
+        open.type = "button";
+        open.addEventListener("click", () => { void selectSession(session.sessionId); });
+        side.append(badge(session.status || "unknown"), element("p", "item-meta", `${formatCount(session.pendingInputs)} pending input${asNumber(session.pendingInputs) === 1 ? "" : "s"}`), open);
+        item.append(body, side);
+        return item;
+      }));
+      if (!selectedSessionId && validSessionId(sessions[0].sessionId)) void selectSession(sessions[0].sessionId);
+    }
+
+    function renderApprovals(payload) {
+      const target = document.getElementById("approvals");
+      const approvals = Array.isArray(payload.approvals) ? payload.approvals : [];
+      document.getElementById("approval-count").textContent = `${formatCount(approvals.length)} pending`;
+      if (!approvals.length) return emptyList(target, "There are no exact approval subjects waiting for an owner decision.");
+      target.replaceChildren(...approvals.map(approval => {
+        const item = element("li", "item");
+        const subject = approval.subject || {};
+        const body = element("div");
+        const targets = Array.isArray(subject.targetResources) && subject.targetResources.length ? subject.targetResources.join(", ") : "none";
+        body.append(
+          element("p", "item-title", `${subject.toolId || approval.effectId} · ${subject.toolVersion || "unknown version"}`),
+          element("p", "item-meta", `${approval.approvalId} · expires ${formatTime(subject.expiresAtMs)}`),
+          element("p", "approval-subject", `Capability: ${subject.capabilityScope || "unknown"} · Targets: ${targets} · Task: ${subject.taskId || "unknown"}`),
+          element("p", "approval-subject approval-digest", `Arguments ${subject.canonicalArgumentsDigest || "missing"}\nSubject ${approval.subjectDigest || "missing"}\nExecutable ${subject.executableIdentityDigest || "missing"} · Policy ${subject.policyVersion || "unknown"}`)
+        );
+        const side = element("div", "item-side");
+        const inspect = element("button", "action", "Inspect effect");
+        const approve = element("button", "action approve", "Approve exact");
+        const deny = element("button", "action deny", "Deny exact");
+        inspect.type = "button";
+        approve.type = "button";
+        deny.type = "button";
+        const buttons = [approve, deny];
+        inspect.addEventListener("click", () => { void selectEffectEvidence(approval.effectId, null); });
+        approve.addEventListener("click", () => { void resolveApproval(approval, "approve", buttons); });
+        deny.addEventListener("click", () => { void resolveApproval(approval, "deny", buttons); });
+        const actions = element("div", "command-actions");
+        actions.append(inspect, approve, deny);
+        side.append(badge(approval.status || "pending"), actions);
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function renderSchedules(payload) {
+      const target = document.getElementById("schedules");
+      const schedules = Array.isArray(payload.schedules) ? payload.schedules : [];
+      document.getElementById("schedule-count").textContent = `${formatCount(schedules.length)} schedule${schedules.length === 1 ? "" : "s"}`;
+      if (!schedules.length) return emptyList(target, "No recurring agent schedule is configured for this owner.");
+      target.replaceChildren(...schedules.map(schedule => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(element("p", "item-title", schedule.name || schedule.scheduleId), element("p", "item-meta", `${schedule.cronExpression} · ${schedule.timezone} · revision ${formatCount(schedule.revision)}`));
+        const side = element("div", "item-side");
+        const inspect = element("button", "action", loadedSchedule && loadedSchedule.scheduleId === schedule.scheduleId ? "Reload exact" : "Inspect exact");
+        inspect.type = "button";
+        inspect.disabled = !validEntityId(schedule.scheduleId);
+        inspect.addEventListener("click", () => { void loadScheduleEvidence(schedule.scheduleId); });
+        side.append(badge(schedule.status || "unknown"), element("p", "item-meta", schedule.nextDueAtMs ? `next ${formatTime(schedule.nextDueAtMs)}` : "no next run"), inspect);
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function renderTools(status) {
+      const read = Array.isArray(status.enabledReadTools) ? status.enabledReadTools : [];
+      const action = Array.isArray(status.enabledActionTools) ? status.enabledActionTools : [];
+      const tools = [...read.map(value => `read · ${value}`), ...action.map(value => `action · ${value}`)];
+      document.getElementById("tool-count").textContent = `${formatCount(tools.length)} tools`;
+      const target = document.getElementById("tools");
+      if (!tools.length) { target.replaceChildren(element("p", "empty", "No model-visible tool is enabled.")); return; }
+      target.replaceChildren(...tools.map(value => element("span", "chip", value)));
+    }
+
+    function renderFailures(status) {
+      const target = document.getElementById("failures");
+      const failures = Array.isArray(status.recentFailures) ? status.recentFailures : [];
+      document.getElementById("failure-count").textContent = `${formatCount(failures.length)} failure${failures.length === 1 ? "" : "s"}`;
+      if (!failures.length) return emptyList(target, "No retained operational failure summary is present.");
+      target.replaceChildren(...failures.map(failure => {
+        const item = element("li", "item");
+        const body = element("div");
+        body.append(element("p", "item-title", failure.code || failure.category || "classified failure"), element("p", "item-meta", failure.message || failure.detail || "Secret-free failure evidence retained by the daemon."));
+        const side = element("div", "item-side", formatTime(failure.occurredAtMs));
+        item.append(body, side);
+        return item;
+      }));
+    }
+
+    function render(snapshot) {
+      const status = snapshot.status || {};
+      const doctor = snapshot.doctor || {};
+      const ready = Boolean(doctor.controlPlaneReady) && String(status.runStatus || "").toLowerCase() === "running";
+      const activeWork = asNumber(status.pendingInputs) + asNumber(status.nonterminalRuns) + asNumber(status.activeLeases) + asNumber(status.pendingApprovals);
+      const attention = asNumber(status.unknownEffects) + asNumber(status.failedOutbox) + asNumber(status.failedExtensions) + asNumber(status.degradedChannels) + asNumber(status.failedScheduleRuns);
+
+      document.getElementById("live-dot").className = `dot ${ready ? "ok" : "bad"}`;
+      document.getElementById("live-label").textContent = ready ? "Live snapshot" : "Needs attention";
+      document.getElementById("overview-copy").textContent = ready
+        ? "The local control plane is ready. This temporary console can admit durable conversation work and issue narrowly scoped, idempotent owner commands without exposing the daemon bearer credential."
+        : "The daemon returned an operational snapshot, but readiness or a required diagnostic check needs attention. Inspect the Doctor panel before admitting more work.";
+      document.getElementById("provider-name").textContent = `${status.providerId || "unconfigured"} / ${status.providerModelId || "no model"}`;
+      document.getElementById("provider-meta").textContent = `${status.providerHealth || "unknown"} · ${status.providerLocal ? "local" : status.providerResidency || "remote"} · schema ${formatCount(status.schemaVersion)}`;
+      document.getElementById("snapshot-time").textContent = `Snapshot ${formatTime(snapshot.generatedAtMs)}`;
+      document.getElementById("metric-daemon").textContent = ready ? "Ready" : String(status.runStatus || "Unknown");
+      document.getElementById("metric-daemon-note").textContent = `${status.admissionOpen ? "Admission open" : "Admission closed"}${status.safeMode ? " · safe mode" : " · normal mode"}`;
+      document.getElementById("metric-work").textContent = formatCount(activeWork);
+      document.getElementById("metric-attention").textContent = formatCount(attention);
+      document.getElementById("metric-storage").textContent = formatBytes(asNumber(status.databaseBytes) + asNumber(status.artifactBytes));
+      document.getElementById("metric-storage-note").textContent = `${formatCount(status.artifactCount)} artifacts · ${formatBytes(status.databaseBytes)} database`;
+      if (!memoryWorkspaceTouched && !memoryWorkspace.value) {
+        const workspaceTools = Array.isArray(status.enabledReadTools)
+          && status.enabledReadTools.some(tool => String(tool).startsWith("workspace."));
+        memoryWorkspace.value = workspaceTools
+          ? "mealy://assistant/granted-workspaces"
+          : "mealy://assistant/no-workspace";
+      }
+
+      renderProviders(status);
+      renderDoctor(doctor);
+      renderSessions(snapshot.sessions || {});
+      renderApprovals(snapshot.approvals || {});
+      renderSchedules(snapshot.schedules || {});
+      renderUsageHistory(snapshot.usage || {});
+      renderTools(status);
+      renderFailures(status);
+    }
+
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      refreshButton.disabled = true;
+      try {
+        const snapshot = await requestJson("/api/snapshot");
+        render(snapshot);
+        clearError();
+      } catch (error) {
+        document.getElementById("live-dot").className = "dot bad";
+        document.getElementById("live-label").textContent = "Disconnected";
+        showError(error, "The dashboard snapshot is unavailable.");
+      } finally {
+        refreshing = false;
+        refreshButton.disabled = false;
+      }
+    }
+
+    refreshButton.addEventListener("click", refresh);
+    newSessionButton.addEventListener("click", () => { void createSession(); });
+    sendInputButton.addEventListener("click", () => { void submitInput(); });
+    cancelTaskButton.addEventListener("click", () => { void cancelActiveTask(); });
+    loadTaskUsageButton.addEventListener("click", () => { void loadTaskUsage(); });
+    loadEffectButton.addEventListener("click", () => { void loadEffectEvidence(); });
+    reconcileEffectButton.addEventListener("click", () => { void reconcileUnknownEffect(); });
+    createScheduleButton.addEventListener("click", () => { void createDurableSchedule(); });
+    pauseScheduleButton.addEventListener("click", () => { void transitionSchedule("pause"); });
+    resumeScheduleButton.addEventListener("click", () => { void transitionSchedule("resume"); });
+    cancelScheduleButton.addEventListener("click", () => { void transitionSchedule("cancel"); });
+    scheduleSession.addEventListener("input", () => {
+      scheduleSessionTouched = true;
+      clearPendingScheduleCreate();
+    });
+    [scheduleName, schedulePrompt, scheduleCron, scheduleTimezone, scheduleMissedPolicy, scheduleOverlapPolicy, scheduleMisfireGrace, scheduleAllowActions].forEach(input => {
+      input.addEventListener("input", clearPendingScheduleCreate);
+      input.addEventListener("change", clearPendingScheduleCreate);
+    });
+    loadMemoriesButton.addEventListener("click", () => { void queryMemories(false); });
+    searchMemoriesButton.addEventListener("click", () => { void queryMemories(true); });
+    proposeMemoryButton.addEventListener("click", () => { void proposeNewMemory(); });
+    correctMemoryButton.addEventListener("click", () => { void correctLoadedMemory(); });
+    activateMemoryButton.addEventListener("click", () => { void activateLoadedMemory(); });
+    pinMemoryButton.addEventListener("click", () => { void pinLoadedMemory(true); });
+    unpinMemoryButton.addEventListener("click", () => { void pinLoadedMemory(false); });
+    expireMemoryButton.addEventListener("click", () => { void lifecycleLoadedMemory("expire"); });
+    rejectMemoryButton.addEventListener("click", () => { void lifecycleLoadedMemory("reject"); });
+    deleteMemoryButton.addEventListener("click", () => { void lifecycleLoadedMemory("delete"); });
+    loadExtensionsButton.addEventListener("click", () => { void loadExtensionInventory(); });
+    enableExtensionButton.addEventListener("click", () => { void enableLoadedExtension(); });
+    disableExtensionButton.addEventListener("click", () => { void lifecycleLoadedExtension("disable"); });
+    revokeExtensionButton.addEventListener("click", () => { void lifecycleLoadedExtension("revoke"); });
+    memoryWorkspace.addEventListener("input", () => {
+      memoryWorkspaceTouched = true;
+      loadedMemory = null;
+      loadedMemories = [];
+      clearPendingMemoryProposal();
+      clearPendingMemoryCorrection();
+      renderMemoryEvidence(false);
+      renderMemories();
+    });
+    memoryQuery.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void queryMemories(true);
+      }
+    });
+    [memoryContent, memoryCategory, memoryConfidence, memorySensitivity, memoryRetention].forEach(input => {
+      input.addEventListener("input", () => {
+        clearPendingMemoryProposal();
+        clearPendingMemoryCorrection();
+      });
+    });
+    [effectIdInput, attemptIdInput].forEach(input => {
+      input.addEventListener("input", () => {
+        clearPendingReconciliation();
+        loadedEffect = null;
+        loadedAttempt = null;
+        renderEffectEvidence();
+      });
+      input.addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void loadEffectEvidence();
+        }
+      });
+    });
+    taskUsageIdInput.addEventListener("input", () => {
+      loadedTaskUsage = null;
+      renderTaskUsage();
+    });
+    taskUsageIdInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void loadTaskUsage();
+      }
+    });
+    reconcileOutcome.addEventListener("change", clearPendingReconciliation);
+    reconcileEvidence.addEventListener("input", clearPendingReconciliation);
+    promptInput.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        void submitInput();
+      }
+    });
+    promptInput.addEventListener("input", () => {
+      if (pendingInputCommand && pendingInputCommand.content !== promptInput.value) {
+        clearCommandKey(pendingInputCommand.scope);
+        pendingInputCommand = null;
+        sendInputButton.textContent = "Send";
+      }
+    });
+    deliveryMode.addEventListener("change", () => {
+      if (pendingInputCommand && pendingInputCommand.deliveryMode !== deliveryMode.value) {
+        clearCommandKey(pendingInputCommand.scope);
+        pendingInputCommand = null;
+        sendInputButton.textContent = "Send";
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        void refresh();
+        void refreshConversation(false);
+      }
+    });
+    window.setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+    window.setInterval(() => { if (!document.hidden) void refreshConversation(false); }, 1500);
+    renderExtensionGrantReview();
+    renderTaskUsage();
+    void refresh();
+  </script>
+</body>
+</html>

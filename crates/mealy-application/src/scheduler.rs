@@ -229,6 +229,16 @@ pub struct CompleteRunCommit {
     pub turn_event_id: EventId,
     /// Session-visible terminal event.
     pub session_event_id: EventId,
+    /// Delegation terminal event when the completed run is a child.
+    pub delegation_event_id: EventId,
+    /// Parent tool-result event when the completed run is a child.
+    pub parent_tool_event_id: EventId,
+    /// Parent run-resume event when the completed run is a child.
+    pub parent_run_event_id: EventId,
+    /// Parent task-resume event when the completed run is a child.
+    pub parent_task_event_id: EventId,
+    /// Parent loop checkpoint event when the completed run is a child.
+    pub parent_checkpoint_event_id: EventId,
     /// Durable final delivery.
     pub outbox_id: OutboxId,
     /// Correlates the terminal transition.
@@ -472,6 +482,11 @@ pub fn complete_run(
             task_event_id: ids.generate_event_id(),
             turn_event_id: ids.generate_event_id(),
             session_event_id: ids.generate_event_id(),
+            delegation_event_id: ids.generate_event_id(),
+            parent_tool_event_id: ids.generate_event_id(),
+            parent_run_event_id: ids.generate_event_id(),
+            parent_task_event_id: ids.generate_event_id(),
+            parent_checkpoint_event_id: ids.generate_event_id(),
             outbox_id: ids.generate_outbox_id(),
             correlation_id: ids.generate_correlation_id(),
             completed_at: clock.now(),
@@ -505,6 +520,11 @@ pub fn complete_agent_run(
             task_event_id: ids.generate_event_id(),
             turn_event_id: ids.generate_event_id(),
             session_event_id: ids.generate_event_id(),
+            delegation_event_id: ids.generate_event_id(),
+            parent_tool_event_id: ids.generate_event_id(),
+            parent_run_event_id: ids.generate_event_id(),
+            parent_task_event_id: ids.generate_event_id(),
+            parent_checkpoint_event_id: ids.generate_event_id(),
             outbox_id: ids.generate_outbox_id(),
             correlation_id: ids.generate_correlation_id(),
             completed_at: clock.now(),

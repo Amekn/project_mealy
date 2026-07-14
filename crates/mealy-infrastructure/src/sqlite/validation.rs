@@ -12,6 +12,9 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
 use std::{str::FromStr, time::SystemTime};
 
+const MAXIMUM_VALIDATION_CONTEXT_JSON_BYTES: usize = 256 * 1_024;
+const MAXIMUM_VALIDATION_SMALL_JSON_BYTES: usize = 64 * 1_024;
+
 impl ValidationStore for SqliteStore {
     fn task_success_criteria(
         &self,
@@ -80,6 +83,34 @@ impl ValidationStore for SqliteStore {
             .map_err(|_| agent::invariant("validator capabilities cannot be serialized"))?;
         let rubric_json = canonical_object(&commit.rubric, "validation rubric")?;
         let evidence_json = canonical_object(&commit.evidence, "validation evidence")?;
+        let request_digest = sha256_digest(request_json.as_bytes());
+        let criteria_digest = sha256_digest(criteria_json.as_bytes());
+        let outputs_digest = sha256_digest(outputs_json.as_bytes());
+        let context_evidence_digest = sha256_digest(context_evidence_json.as_bytes());
+        let capabilities_digest = sha256_digest(capabilities_json.as_bytes());
+        let stored_request_json =
+            agent::encode_durable_json(&request_json, MAXIMUM_VALIDATION_CONTEXT_JSON_BYTES)
+                .map_err(|()| agent::invariant("validation request cannot be compressed safely"))?;
+        let stored_criteria_json =
+            agent::encode_durable_json(&criteria_json, MAXIMUM_VALIDATION_SMALL_JSON_BYTES)
+                .map_err(|()| {
+                    agent::invariant("validation criteria cannot be compressed safely")
+                })?;
+        let stored_outputs_json =
+            agent::encode_durable_json(&outputs_json, MAXIMUM_VALIDATION_CONTEXT_JSON_BYTES)
+                .map_err(|()| agent::invariant("validation outputs cannot be compressed safely"))?;
+        let stored_context_evidence_json = agent::encode_durable_json(
+            &context_evidence_json,
+            MAXIMUM_VALIDATION_CONTEXT_JSON_BYTES,
+        )
+        .map_err(|()| {
+            agent::invariant("validation context evidence cannot be compressed safely")
+        })?;
+        let stored_capabilities_json =
+            agent::encode_durable_json(&capabilities_json, MAXIMUM_VALIDATION_SMALL_JSON_BYTES)
+                .map_err(|()| {
+                    agent::invariant("validator capabilities cannot be compressed safely")
+                })?;
 
         transaction
             .execute(
@@ -93,16 +124,16 @@ impl ValidationStore for SqliteStore {
                     commit.context.manifest_id.to_string(),
                     commit.task_id.to_string(),
                     commit.producer_fence.run_id().to_string(),
-                    request_json,
-                    sha256_digest(request_json.as_bytes()),
-                    criteria_json,
-                    sha256_digest(criteria_json.as_bytes()),
-                    outputs_json,
-                    sha256_digest(outputs_json.as_bytes()),
-                    context_evidence_json,
-                    sha256_digest(context_evidence_json.as_bytes()),
-                    capabilities_json,
-                    sha256_digest(capabilities_json.as_bytes()),
+                    stored_request_json,
+                    request_digest,
+                    stored_criteria_json,
+                    criteria_digest,
+                    stored_outputs_json,
+                    outputs_digest,
+                    stored_context_evidence_json,
+                    context_evidence_digest,
+                    stored_capabilities_json,
+                    capabilities_digest,
                     recorded_at_ms,
                 ],
             )
@@ -224,7 +255,7 @@ impl ValidationStore for SqliteStore {
             .query_row(
                 "SELECT task.validation_id \
                  FROM task \
-                 JOIN run ON run.task_id = task.id AND run.parent_run_id IS NULL \
+                 JOIN run ON run.task_id = task.id \
                  JOIN turn ON turn.run_id = run.id AND turn.task_id = task.id \
                  JOIN session ON session.id = turn.session_id \
                  WHERE task.id = ?1 AND session.principal_id = ?2 \
@@ -409,7 +440,7 @@ fn load_task_criteria(
                     criteria.no_objective_criteria_reason, criteria.risk_class, \
                     criteria.policy_version, criteria.created_at_ms \
              FROM task_success_criteria criteria \
-             JOIN run ON run.task_id = criteria.task_id AND run.parent_run_id IS NULL \
+             JOIN run ON run.task_id = criteria.task_id \
              JOIN turn ON turn.run_id = run.id AND turn.task_id = criteria.task_id \
              JOIN session ON session.id = turn.session_id \
              WHERE criteria.task_id = ?1 AND session.principal_id = ?2 \
@@ -628,7 +659,7 @@ fn parse_id<T: FromStr>(value: &str, field: &str) -> Result<T, AgentStoreError> 
 
 #[cfg(test)]
 mod tests {
-    use super::SqliteStore;
+    use super::{MAXIMUM_VALIDATION_SMALL_JSON_BYTES, SqliteStore, agent};
     use mealy_application::{
         AgentLoopLimits, AgentStoreError, FIXTURE_WRITE_INPUT_PREFIX, InboxPromotionStore,
         InputAdmissionCommit, LeaseClaimCommit, LeaseClaimOutcome, OwnershipContext,
@@ -711,6 +742,8 @@ mod tests {
                     promoted_at: at(1),
                     initial_agent_role: "assistant".to_owned(),
                     initial_budget: AgentLoopLimits::default(),
+                    initial_task_profile: mealy_application::InitialTaskProfile::FixtureProof,
+                    initial_capability_ceiling: None,
                 })
                 .expect("promote producer"),
             PromotionOutcome::Promoted(_)
@@ -775,7 +808,8 @@ mod tests {
                 manifest_id,
                 request: json!({
                     "objective": criteria.objective,
-                    "requestDigest": sha256_digest(b"phase4 fixture-write request")
+                    "requestDigest": sha256_digest(b"phase4 fixture-write request"),
+                    "fixtureContext": "validation context ".repeat(512)
                 }),
                 criteria: serde_json::to_value(criteria).expect("serialize criteria"),
                 outputs: json!({
@@ -911,13 +945,30 @@ mod tests {
             )
             .expect("fresh validation manifest");
         assert_eq!(manifest.0, 0);
+        let capabilities_json =
+            agent::decode_durable_json(&manifest.1, MAXIMUM_VALIDATION_SMALL_JSON_BYTES)
+                .expect("decode validator capabilities JSON");
         let capabilities: Value =
-            serde_json::from_str(&manifest.1).expect("validator capabilities JSON");
+            serde_json::from_str(&capabilities_json).expect("validator capabilities JSON");
         assert_eq!(capabilities["networkDestinations"], json!([]));
         assert_eq!(capabilities["secretReferences"], json!([]));
         assert_eq!(capabilities["effectClasses"], json!(["read_only"]));
         assert_eq!(manifest.2, producer.fence.run_id().to_string());
         assert_eq!(manifest.3, context_manifest_id.to_string());
+        let compressed_fields: i64 = store
+            .connection
+            .query_row(
+                "SELECT (request_json LIKE '%deflate-zlib-base64url-v1%') + \
+                        (criteria_json LIKE '%deflate-zlib-base64url-v1%') + \
+                        (outputs_json LIKE '%deflate-zlib-base64url-v1%') + \
+                        (evidence_json LIKE '%deflate-zlib-base64url-v1%') + \
+                        (capability_grant_json LIKE '%deflate-zlib-base64url-v1%') \
+                 FROM validation_context_manifest WHERE id = ?1",
+                [context_manifest_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("validation compression evidence");
+        assert!(compressed_fields >= 1);
 
         let lineage: (String, String, i64, String) = store
             .connection

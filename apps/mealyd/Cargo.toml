@@ -6,11 +6,16 @@ edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+publish.workspace = true
 default-run = "mealyd"
 
 [[bin]]
 name = "mealy-sample-extension"
 path = "../../crates/mealy-infrastructure/src/bin/mealy-fixture-worker.rs"
+
+[[bin]]
+name = "mealyd-mcp-fixture-server"
+path = "../../crates/mealy-infrastructure/src/bin/mealy-mcp-fixture-server.rs"
 
 [dependencies]
 axum.workspace = true
@@ -29,9 +34,10 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1.4", features = ["process"] }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
 eventsource-stream.workspace = true

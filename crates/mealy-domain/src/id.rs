@@ -164,6 +164,14 @@ define_id!(
     OutboxId
 );
 define_id!(
+    /// Identifies one owner-configured recurring agent schedule.
+    ScheduleId
+);
+define_id!(
+    /// Identifies one durable claimed or completed schedule occurrence.
+    ScheduleRunId
+);
+define_id!(
     /// Identifies related commands, events, attempts, and effects.
     CorrelationId
 );

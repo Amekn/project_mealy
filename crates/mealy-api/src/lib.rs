@@ -18,23 +18,29 @@ use mealy_application::{
     MAXIMUM_EFFECT_COMMAND_IDEMPOTENCY_KEY_BYTES, MAXIMUM_EFFECT_OUTCOME_DETAILS_BYTES,
 };
 use mealy_protocol::{
-    API_VERSION, AdminMetricsResponse, AdminStatusResponse, ApiErrorResponse,
-    ApprovalResolutionReceipt, ArtifactMetadataResponse, BackupResponse,
+    API_VERSION, AdminMetricsResponse, AdminStatusResponse, AdminUsageReportResponse,
+    ApiErrorResponse, ApprovalResolutionReceipt, ArtifactMetadataResponse, BackupResponse,
     BackupVerificationResponse, CancelTaskRequest, CompactionResponse,
     ContextManifestEvidenceResponse, ControlTaskRequest, CorrectMemoryRequest, CreateBackupRequest,
-    CreateCompactionRequest, CreateExportRequest, CreateSessionRequest, CreateSessionResponse,
-    CreateWebhookChannelRequest, CreateWebhookChannelResponse, DoctorResponse, DrainDaemonRequest,
-    DrainDaemonResponse, EffectAttemptResponse, EffectReconciliationReceipt, EffectResponse,
-    EnableExtensionRequest, ExportResponse, ExtensionInvocationResponse, ExtensionLifecycleRequest,
-    ExtensionResponse, ExtensionsResponse, GarbageCollectionResponse, HealthResponse,
-    InputAdmissionResponse, InstallExtensionRequest, InvokeExtensionRequest, MemoriesResponse,
-    MemoryIndexRebuildResponse, MemoryLifecycleRequest, MemoryResponse, MemorySearchResponse,
-    MemorySensitivityCommand, PendingApprovalsResponse, PromoteMemoryRequest, ProposeMemoryRequest,
-    ReadinessResponse, RebuildMemoryIndexRequest, ReconcileEffectRequest, ResolveApprovalRequest,
-    RevokeWebhookChannelRequest, RunGarbageCollectionRequest, SessionStatusResponse,
-    SetMemoryPinRequest, StageExtensionManifestRequest, SubmitInputRequest,
-    TaskCancellationReceipt, TaskControlReceipt, TaskReplayResponse, TaskResponse, TimelineCursor,
-    TimelinePageResponse, VerifyBackupRequest, WebhookChannelResponse, WebhookChannelsResponse,
+    CreateCompactionRequest, CreateDiscordChannelRequest, CreateExportRequest,
+    CreateScheduleRequest, CreateSessionRequest, CreateSessionResponse,
+    CreateTelegramChannelRequest, CreateWebhookChannelRequest, CreateWebhookChannelResponse,
+    DelegationResponse, DelegationsResponse, DiscordChannelResponse, DiscordChannelsResponse,
+    DoctorResponse, DrainDaemonRequest, DrainDaemonResponse, EffectAttemptResponse,
+    EffectReconciliationReceipt, EffectResponse, EnableExtensionRequest, ExportResponse,
+    ExtensionInvocationResponse, ExtensionLifecycleRequest, ExtensionResponse, ExtensionsResponse,
+    GarbageCollectionResponse, HealthResponse, InputAdmissionResponse, InstallExtensionRequest,
+    InvokeExtensionRequest, MemoriesResponse, MemoryIndexRebuildResponse, MemoryLifecycleRequest,
+    MemoryResponse, MemorySearchResponse, MemorySensitivityCommand, PendingApprovalsResponse,
+    PromoteMemoryRequest, ProposeMemoryRequest, ReadinessResponse, RebuildMemoryIndexRequest,
+    ReconcileEffectRequest, ResolveApprovalRequest, RevokeDiscordChannelRequest,
+    RevokeTelegramChannelRequest, RevokeWebhookChannelRequest, RunGarbageCollectionRequest,
+    ScheduleLifecycleRequest, ScheduleResponse, ScheduleRunsResponse, SchedulesResponse,
+    SessionSearchResponse, SessionStatusResponse, SessionsResponse, SetMemoryPinRequest,
+    StageExtensionManifestRequest, SubmitInputRequest, TaskCancellationReceipt, TaskControlReceipt,
+    TaskReplayResponse, TaskResponse, TelegramChannelResponse, TelegramChannelsResponse,
+    TimelineCursor, TimelinePageResponse, VerifyBackupRequest, WebhookChannelResponse,
+    WebhookChannelsResponse,
 };
 use serde::Deserialize;
 use std::{
@@ -240,6 +246,18 @@ pub trait ApiBackend: Send + Sync + 'static {
         identity: AuthenticatedIdentity,
     ) -> Result<AdminMetricsResponse, BackendError>;
 
+    /// Reads exact settled terminal-run usage grouped by UTC completion day.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when the range, authorization, or canonical usage is invalid.
+    fn admin_usage(
+        &self,
+        identity: AuthenticatedIdentity,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<AdminUsageReportResponse, BackendError>;
+
     /// Idempotently closes admission and begins bounded graceful drain.
     ///
     /// # Errors
@@ -313,6 +331,31 @@ pub trait ApiBackend: Send + Sync + 'static {
         identity: AuthenticatedIdentity,
     ) -> Result<CreateSessionResponse, BackendError>;
 
+    /// Lists recent sessions for the exact authenticated binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when validation, authorization, or persistence fails.
+    fn sessions(
+        &self,
+        identity: AuthenticatedIdentity,
+        limit: usize,
+    ) -> Result<SessionsResponse, BackendError>;
+
+    /// Searches canonical user/final-assistant transcript text for the exact binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when bounds, authorization, or persistence reject the query.
+    fn search_sessions(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _query: String,
+        _limit: usize,
+    ) -> Result<SessionSearchResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
     /// Durably admits an idempotent input.
     ///
     /// # Errors
@@ -335,6 +378,100 @@ pub trait ApiBackend: Send + Sync + 'static {
         identity: AuthenticatedIdentity,
         session_id: String,
     ) -> Result<SessionStatusResponse, BackendError>;
+
+    /// Creates one canonical recurring schedule targeting an authorized session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when validation, authorization, or persistence fails.
+    fn create_schedule(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _request: CreateScheduleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Lists owner-authorized recurring schedules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization or persistence fails.
+    fn schedules(
+        &self,
+        _identity: AuthenticatedIdentity,
+    ) -> Result<SchedulesResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Reads one owner-authorized recurring schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when the schedule is absent, unauthorized, or corrupt.
+    fn schedule(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _schedule_id: String,
+    ) -> Result<ScheduleResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Pauses one active schedule under an optimistic-concurrency fence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization, lifecycle, or persistence rejects the command.
+    fn pause_schedule(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _schedule_id: String,
+        _request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Resumes one paused schedule from a newly computed future cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization, lifecycle, or persistence rejects the command.
+    fn resume_schedule(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _schedule_id: String,
+        _request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Terminally cancels one schedule while retaining its history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization, lifecycle, or persistence rejects the command.
+    fn cancel_schedule(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _schedule_id: String,
+        _request: ScheduleLifecycleRequest,
+    ) -> Result<ScheduleResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Reads bounded newest-first occurrence history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization, bounds, or persistence fails.
+    fn schedule_runs(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _schedule_id: String,
+        _limit: usize,
+    ) -> Result<ScheduleRunsResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
 
     /// Reads an authorized bounded timeline page.
     ///
@@ -682,6 +819,110 @@ pub trait ApiBackend: Send + Sync + 'static {
         request: RevokeWebhookChannelRequest,
     ) -> Result<WebhookChannelResponse, BackendError>;
 
+    /// Creates one Telegram bot/user/chat binding after live token verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] for invalid identity, credential, connectivity, or persistence.
+    fn create_telegram_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _request: CreateTelegramChannelRequest,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Lists Telegram channels owned by the authenticated principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization or persistence fails.
+    fn telegram_channels(
+        &self,
+        _identity: AuthenticatedIdentity,
+    ) -> Result<TelegramChannelsResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Inspects one owner-authorized Telegram binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when absent, unauthorized, or corrupt.
+    fn telegram_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _binding_id: String,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Terminally revokes one Telegram binding and brokered bot token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] for authorization, revision, credential, or persistence failure.
+    fn revoke_telegram_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _binding_id: String,
+        _request: RevokeTelegramChannelRequest,
+    ) -> Result<TelegramChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Creates one exact Discord bot/human/DM binding after live verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] for invalid identity, credential, connectivity, or persistence.
+    fn create_discord_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _request: CreateDiscordChannelRequest,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Lists Discord DM channels owned by the authenticated principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization or persistence fails.
+    fn discord_channels(
+        &self,
+        _identity: AuthenticatedIdentity,
+    ) -> Result<DiscordChannelsResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Inspects one owner-authorized Discord DM binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when absent, unauthorized, or corrupt.
+    fn discord_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _binding_id: String,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Terminally revokes one Discord binding and brokered bot token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] for authorization, revision, credential, or persistence failure.
+    fn revoke_discord_channel(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _binding_id: String,
+        _request: RevokeDiscordChannelRequest,
+    ) -> Result<DiscordChannelResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
     /// Verifies and durably admits one external delivery without local bearer authentication.
     ///
     /// # Errors
@@ -704,6 +945,32 @@ pub trait ApiBackend: Send + Sync + 'static {
         identity: AuthenticatedIdentity,
         task_id: String,
     ) -> Result<TaskResponse, BackendError>;
+
+    /// Reads one authorized durable delegation projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when authorization, identity parsing, or persistence fails.
+    fn delegation(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _delegation_id: String,
+    ) -> Result<DelegationResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
+
+    /// Lists bounded newest-first delegations for the authenticated owner binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError`] when bounds, authorization, or persistence fails.
+    fn delegations(
+        &self,
+        _identity: AuthenticatedIdentity,
+        _limit: usize,
+    ) -> Result<DelegationsResponse, BackendError> {
+        Err(BackendError::Unavailable)
+    }
 
     /// Durably requests idempotent cooperative cancellation of one authorized task.
     ///
@@ -898,7 +1165,11 @@ fn build_router(
     let protected = Router::new()
         .route("/health/live", get(liveness_handler))
         .route("/health/ready", get(readiness_handler))
-        .route("/v1/sessions", post(create_session_handler))
+        .route(
+            "/v1/sessions",
+            get(sessions_handler).post(create_session_handler),
+        )
+        .route("/v1/sessions/search", get(session_search_handler))
         .route(
             "/v1/sessions/{session_id}/inputs",
             post(submit_input_handler),
@@ -909,6 +1180,27 @@ fn build_router(
         )
         .route("/v1/sessions/{session_id}/timeline", get(timeline_handler))
         .route("/v1/sessions/{session_id}/events", get(events_handler))
+        .route(
+            "/v1/schedules",
+            get(schedules_handler).post(create_schedule_handler),
+        )
+        .route("/v1/schedules/{schedule_id}", get(schedule_handler))
+        .route(
+            "/v1/schedules/{schedule_id}/pause",
+            post(pause_schedule_handler),
+        )
+        .route(
+            "/v1/schedules/{schedule_id}/resume",
+            post(resume_schedule_handler),
+        )
+        .route(
+            "/v1/schedules/{schedule_id}/cancel",
+            post(cancel_schedule_handler),
+        )
+        .route(
+            "/v1/schedules/{schedule_id}/runs",
+            get(schedule_runs_handler),
+        )
         .route(
             "/v1/artifacts/{artifact_id}",
             get(artifact_metadata_handler),
@@ -994,8 +1286,33 @@ fn build_router(
             "/v1/channels/webhooks/{binding_id}/revoke",
             post(revoke_webhook_channel_handler),
         )
+        .route(
+            "/v1/channels/telegram",
+            get(telegram_channels_handler).post(create_telegram_channel_handler),
+        )
+        .route(
+            "/v1/channels/telegram/{binding_id}",
+            get(telegram_channel_handler),
+        )
+        .route(
+            "/v1/channels/telegram/{binding_id}/revoke",
+            post(revoke_telegram_channel_handler),
+        )
+        .route(
+            "/v1/channels/discord",
+            get(discord_channels_handler).post(create_discord_channel_handler),
+        )
+        .route(
+            "/v1/channels/discord/{binding_id}",
+            get(discord_channel_handler),
+        )
+        .route(
+            "/v1/channels/discord/{binding_id}/revoke",
+            post(revoke_discord_channel_handler),
+        )
         .route("/v1/admin/status", get(admin_status_handler))
         .route("/v1/admin/metrics", get(admin_metrics_handler))
+        .route("/v1/admin/usage", get(admin_usage_handler))
         .route("/v1/admin/doctor", get(doctor_handler))
         .route("/v1/admin/drain", post(drain_daemon_handler))
         .route("/v1/admin/backups", post(create_backup_handler))
@@ -1008,6 +1325,8 @@ fn build_router(
             post(run_garbage_collection_handler),
         )
         .route("/v1/admin/exports", post(create_export_handler))
+        .route("/v1/delegations", get(delegations_handler))
+        .route("/v1/delegations/{delegation_id}", get(delegation_handler))
         .route("/v1/tasks/{task_id}", get(task_handler))
         .route("/v1/tasks/{task_id}/cancel", post(cancel_task_handler))
         .route("/v1/tasks/{task_id}/pause", post(pause_task_handler))
@@ -1179,6 +1498,26 @@ async fn admin_metrics_handler(
     Ok(Json(result))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AdminUsageParameters {
+    from_ms: i64,
+    to_ms: i64,
+}
+
+async fn admin_usage_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    parameters: Result<Query<AdminUsageParameters>, QueryRejection>,
+) -> Result<Json<AdminUsageReportResponse>, HttpError> {
+    let Query(parameters) = parameters.map_err(|rejection| map_query_rejection(&rejection))?;
+    let result = run_backend(state, move |backend| {
+        backend.admin_usage(identity, parameters.from_ms, parameters.to_ms)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
 async fn drain_daemon_handler(
     State(state): State<AppState>,
     Extension(identity): Extension<AuthenticatedIdentity>,
@@ -1268,6 +1607,60 @@ async fn create_session_handler(
     Ok(Json(result))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SessionListParameters {
+    limit: Option<usize>,
+}
+
+async fn sessions_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    parameters: Result<Query<SessionListParameters>, QueryRejection>,
+) -> Result<Json<SessionsResponse>, HttpError> {
+    let Query(parameters) = parameters.map_err(|rejection| map_query_rejection(&rejection))?;
+    let limit = parameters.limit.unwrap_or(20);
+    if !(1..=100).contains(&limit) {
+        return Err(HttpError(BackendError::InvalidRequest(
+            "session list limit must be between 1 and 100".to_owned(),
+        )));
+    }
+    let result = run_backend(state, move |backend| backend.sessions(identity, limit)).await?;
+    Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SessionSearchParameters {
+    query: String,
+    limit: Option<usize>,
+}
+
+async fn session_search_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    parameters: Result<Query<SessionSearchParameters>, QueryRejection>,
+) -> Result<Json<SessionSearchResponse>, HttpError> {
+    let Query(parameters) = parameters.map_err(|rejection| map_query_rejection(&rejection))?;
+    let limit = parameters.limit.unwrap_or(20);
+    if parameters.query.is_empty()
+        || parameters.query.len() > 4_096
+        || parameters.query.trim() != parameters.query
+        || parameters.query.chars().any(char::is_control)
+        || !(1..=100).contains(&limit)
+    {
+        return Err(HttpError(BackendError::InvalidRequest(
+            "session transcript search query or limit is invalid".to_owned(),
+        )));
+    }
+    let query = parameters.query;
+    let result = run_backend(state, move |backend| {
+        backend.search_sessions(identity, query, limit)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
 async fn submit_input_handler(
     State(state): State<AppState>,
     Extension(identity): Extension<AuthenticatedIdentity>,
@@ -1290,6 +1683,105 @@ async fn session_status_handler(
 ) -> Result<Json<SessionStatusResponse>, HttpError> {
     let result = run_backend(state, move |backend| {
         backend.session_status(identity, session_id)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn create_schedule_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    request: Result<Json<CreateScheduleRequest>, JsonRejection>,
+) -> Result<Json<ScheduleResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.create_schedule(identity, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn schedules_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+) -> Result<Json<SchedulesResponse>, HttpError> {
+    let result = run_backend(state, move |backend| backend.schedules(identity)).await?;
+    Ok(Json(result))
+}
+
+async fn schedule_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(schedule_id): Path<String>,
+) -> Result<Json<ScheduleResponse>, HttpError> {
+    let result = run_backend(state, move |backend| {
+        backend.schedule(identity, schedule_id)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn pause_schedule_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(schedule_id): Path<String>,
+    request: Result<Json<ScheduleLifecycleRequest>, JsonRejection>,
+) -> Result<Json<ScheduleResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.pause_schedule(identity, schedule_id, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn resume_schedule_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(schedule_id): Path<String>,
+    request: Result<Json<ScheduleLifecycleRequest>, JsonRejection>,
+) -> Result<Json<ScheduleResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.resume_schedule(identity, schedule_id, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn cancel_schedule_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(schedule_id): Path<String>,
+    request: Result<Json<ScheduleLifecycleRequest>, JsonRejection>,
+) -> Result<Json<ScheduleResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.cancel_schedule(identity, schedule_id, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+struct ScheduleRunParameters {
+    limit: Option<usize>,
+}
+
+async fn schedule_runs_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(schedule_id): Path<String>,
+    parameters: Result<Query<ScheduleRunParameters>, QueryRejection>,
+) -> Result<Json<ScheduleRunsResponse>, HttpError> {
+    let Query(parameters) = parameters.map_err(|rejection| map_query_rejection(&rejection))?;
+    let limit = parameters.limit.unwrap_or(100);
+    let result = run_backend(state, move |backend| {
+        backend.schedule_runs(identity, schedule_id, limit)
     })
     .await?;
     Ok(Json(result))
@@ -1728,6 +2220,104 @@ async fn revoke_webhook_channel_handler(
     Ok(Json(result))
 }
 
+async fn create_telegram_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    request: Result<Json<CreateTelegramChannelRequest>, JsonRejection>,
+) -> Result<Json<TelegramChannelResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.create_telegram_channel(identity, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn telegram_channels_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+) -> Result<Json<TelegramChannelsResponse>, HttpError> {
+    let result = run_backend(state, move |backend| backend.telegram_channels(identity)).await?;
+    Ok(Json(result))
+}
+
+async fn telegram_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(binding_id): Path<String>,
+) -> Result<Json<TelegramChannelResponse>, HttpError> {
+    let result = run_backend(state, move |backend| {
+        backend.telegram_channel(identity, binding_id)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn revoke_telegram_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(binding_id): Path<String>,
+    request: Result<Json<RevokeTelegramChannelRequest>, JsonRejection>,
+) -> Result<Json<TelegramChannelResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.revoke_telegram_channel(identity, binding_id, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn create_discord_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    request: Result<Json<CreateDiscordChannelRequest>, JsonRejection>,
+) -> Result<Json<DiscordChannelResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.create_discord_channel(identity, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn discord_channels_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+) -> Result<Json<DiscordChannelsResponse>, HttpError> {
+    let result = run_backend(state, move |backend| backend.discord_channels(identity)).await?;
+    Ok(Json(result))
+}
+
+async fn discord_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(binding_id): Path<String>,
+) -> Result<Json<DiscordChannelResponse>, HttpError> {
+    let result = run_backend(state, move |backend| {
+        backend.discord_channel(identity, binding_id)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+async fn revoke_discord_channel_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(binding_id): Path<String>,
+    request: Result<Json<RevokeDiscordChannelRequest>, JsonRejection>,
+) -> Result<Json<DiscordChannelResponse>, HttpError> {
+    let Json(request) = request.map_err(|rejection| map_json_rejection(&rejection))?;
+    require_version(&request.api_version)?;
+    let result = run_backend(state, move |backend| {
+        backend.revoke_discord_channel(identity, binding_id, request)
+    })
+    .await?;
+    Ok(Json(result))
+}
+
 async fn receive_signed_webhook_handler(
     State(state): State<AppState>,
     Path(binding_id): Path<String>,
@@ -1763,6 +2353,40 @@ fn signed_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, Http
     value
         .to_str()
         .map_err(|_| HttpError(BackendError::Unauthorized))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegationListParameters {
+    limit: Option<usize>,
+}
+
+async fn delegations_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    parameters: Result<Query<DelegationListParameters>, QueryRejection>,
+) -> Result<Json<DelegationsResponse>, HttpError> {
+    let Query(parameters) = parameters.map_err(|rejection| map_query_rejection(&rejection))?;
+    let limit = parameters.limit.unwrap_or(20);
+    if !(1..=100).contains(&limit) {
+        return Err(HttpError(BackendError::InvalidRequest(
+            "delegation list limit must be between 1 and 100".to_owned(),
+        )));
+    }
+    let result = run_backend(state, move |backend| backend.delegations(identity, limit)).await?;
+    Ok(Json(result))
+}
+
+async fn delegation_handler(
+    State(state): State<AppState>,
+    Extension(identity): Extension<AuthenticatedIdentity>,
+    Path(delegation_id): Path<String>,
+) -> Result<Json<DelegationResponse>, HttpError> {
+    let result = run_backend(state, move |backend| {
+        backend.delegation(identity, delegation_id)
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 async fn task_handler(
@@ -2242,9 +2866,10 @@ mod tests {
         MemorySearchResponse, MemorySensitivityCommand, PendingApprovalsResponse,
         PromoteMemoryRequest, ProposeMemoryRequest, RebuildMemoryIndexRequest,
         ReconcileEffectRequest, ReconciliationOutcomeCommand, ResolveApprovalRequest,
-        SessionStatusResponse, SetMemoryPinRequest, SubmitInputRequest, TaskBudgetUsage,
-        TaskCancellationReceipt, TaskReplayResponse, TaskResponse, TaskRiskClass, TaskStatus,
-        TaskSuccessCriteriaResponse, TimelineCursor, TimelinePageResponse,
+        SessionStatusResponse, SessionSummaryResponse, SessionsResponse, SetMemoryPinRequest,
+        SubmitInputRequest, TaskBudgetUsage, TaskCancellationReceipt, TaskReplayResponse,
+        TaskResponse, TaskRiskClass, TaskStatus, TaskSuccessCriteriaResponse, TimelineCursor,
+        TimelinePageResponse,
     };
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -2276,6 +2901,35 @@ mod tests {
             _identity: AuthenticatedIdentity,
         ) -> Result<mealy_protocol::AdminMetricsResponse, BackendError> {
             Err(BackendError::NotFound)
+        }
+
+        fn admin_usage(
+            &self,
+            _identity: AuthenticatedIdentity,
+            from_ms: i64,
+            to_ms: i64,
+        ) -> Result<mealy_protocol::AdminUsageReportResponse, BackendError> {
+            Ok(mealy_protocol::AdminUsageReportResponse {
+                api_version: API_VERSION.to_owned(),
+                from_ms,
+                to_ms,
+                buckets: vec![mealy_protocol::AdminUsageBucketResponse {
+                    bucket_start_ms: 86_400_000,
+                    bucket_end_ms: to_ms,
+                    completed_runs: 1,
+                    succeeded_runs: 1,
+                    failed_runs: 0,
+                    cancelled_runs: 0,
+                    used_model_calls: 2,
+                    used_tool_calls: 1,
+                    used_delegated_runs: 0,
+                    used_retries: 0,
+                    used_input_tokens: 100,
+                    used_output_tokens: 20,
+                    used_cost_microunits: 30,
+                    used_output_bytes: 40,
+                }],
+            })
         }
 
         fn drain_daemon(
@@ -2337,6 +2991,28 @@ mod tests {
             Ok(CreateSessionResponse {
                 api_version: API_VERSION.to_owned(),
                 session_id: "session-1".to_owned(),
+            })
+        }
+
+        fn sessions(
+            &self,
+            _identity: AuthenticatedIdentity,
+            limit: usize,
+        ) -> Result<SessionsResponse, BackendError> {
+            Ok(SessionsResponse {
+                api_version: API_VERSION.to_owned(),
+                sessions: (limit > 0)
+                    .then(|| SessionSummaryResponse {
+                        session_id: "session-1".to_owned(),
+                        status: "active".to_owned(),
+                        revision: 1,
+                        pending_inputs: 0,
+                        active_turn_id: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 2,
+                    })
+                    .into_iter()
+                    .collect(),
             })
         }
 
@@ -2926,6 +3602,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn admin_usage_route_is_authenticated_exact_and_query_closed() {
+        let (app, token) = app();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/admin/usage?fromMs=86400001&toMs=172800000")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("usage request"),
+            )
+            .await
+            .expect("usage response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4096)
+            .await
+            .expect("usage response body");
+        let report = serde_json::from_slice::<mealy_protocol::AdminUsageReportResponse>(&body)
+            .expect("versioned usage report");
+        assert_eq!(report.from_ms, 86_400_001);
+        assert_eq!(report.to_ms, 172_800_000);
+        assert_eq!(report.buckets[0].used_cost_microunits, 30);
+
+        let widened = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/admin/usage?fromMs=86400001&toMs=172800000&currency=NZD")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("widened usage request"),
+            )
+            .await
+            .expect("widened usage response");
+        assert_json_error(widened, StatusCode::BAD_REQUEST).await;
+
+        let unauthorized = app
+            .oneshot(
+                Request::get("/v1/admin/usage?fromMs=86400001&toMs=172800000")
+                    .body(Body::empty())
+                    .expect("unauthorized usage request"),
+            )
+            .await
+            .expect("unauthorized usage response");
+        assert_json_error(unauthorized, StatusCode::UNAUTHORIZED).await;
+    }
+
+    #[tokio::test]
     async fn effect_inspection_routes_are_authenticated_and_versioned() {
         let (app, token) = app();
         let approvals = app
@@ -3079,6 +3801,7 @@ mod tests {
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
         let authorized = app
+            .clone()
             .oneshot(
                 Request::post("/v1/sessions")
                     .header(header::AUTHORIZATION, format!("Bearer {token}"))
@@ -3091,6 +3814,21 @@ mod tests {
         assert_eq!(authorized.status(), StatusCode::OK);
         let body = to_bytes(authorized.into_body(), 4096).await.expect("body");
         assert!(String::from_utf8_lossy(&body).contains("session-1"));
+
+        let listed = app
+            .oneshot(
+                Request::get("/v1/sessions?limit=10")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("session list request"),
+            )
+            .await
+            .expect("session list response");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let body = to_bytes(listed.into_body(), 4096).await.expect("body");
+        let sessions: SessionsResponse = serde_json::from_slice(&body).expect("sessions JSON");
+        assert_eq!(sessions.sessions.len(), 1);
+        assert_eq!(sessions.sessions[0].session_id, "session-1");
     }
 
     #[tokio::test]
@@ -3451,6 +4189,30 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn transcript_search_rejects_missing_empty_untrimmed_and_unbounded_queries() {
+        let (app, token) = app();
+        for target in [
+            "/v1/sessions/search",
+            "/v1/sessions/search?query=&limit=20",
+            "/v1/sessions/search?query=%20marker&limit=20",
+            "/v1/sessions/search?query=marker&limit=0",
+            "/v1/sessions/search?query=marker&limit=101",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(target)
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_json_error(response, StatusCode::BAD_REQUEST).await;
+        }
     }
 
     #[tokio::test]

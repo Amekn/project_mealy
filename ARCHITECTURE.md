@@ -1,7 +1,7 @@
 # Mealy Architecture
 
 - Version: 0.1.0
-- Status: proposed implementation baseline
+- Status: implemented release-one baseline; competitive capability work in progress
 - Requirements: [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - Research: [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md)
 
@@ -56,7 +56,7 @@ Detailed evidence and commit pins are in the research report.
 ```mermaid
 flowchart LR
   User["Owner"] --> Clients["CLI / TUI / Web"]
-  Platforms["Discord / future channels"] --> ChannelAdapters["Channel adapters"]
+  Platforms["Telegram / Discord / future channels"] --> ChannelAdapters["Channel adapters"]
   Clients --> API["Versioned local API"]
   ChannelAdapters --> API
 
@@ -73,8 +73,10 @@ flowchart LR
   Store --> Artifacts[("Content-addressed artifacts")]
   Providers --> Models["Local / remote model providers"]
   Scheduler --> Executor["Sandbox executor process"]
+  Scheduler --> Browser["Fresh isolated browser process"]
   Scheduler --> ExtensionHost["Extension host process"]
-  Executor --> OS["Filesystem / commands / browser"]
+  Executor --> OS["Filesystem / commands"]
+  Browser --> BrowserProxy["Scoped GET/HEAD Unix-socket proxy"]
   ExtensionHost --> Services["External services"]
 ```
 
@@ -83,8 +85,10 @@ flowchart LR
 | Zone | Contents | Secret access | Arbitrary code | Failure effect |
 |---|---|---:|---:|---|
 | Trusted control plane | daemon, store, policy, provider broker, secret broker | scoped broker access | first-party compiled code only | daemon restart and recovery |
-| Restricted executor | shell/file/browser worker under OS policy | invocation-scoped handles only | model-proposed commands | kill worker; classify active effect |
+| Restricted executor | file/process worker under OS policy | invocation-scoped handles only | model-proposed commands | kill worker; classify active effect |
+| Browser sandbox | one content-pinned Headless Shell plus trusted worker per read | none | rendered page/browser runtime | terminate call and delete profile; durable daemon survives |
 | Extension host | one or more third-party extension processes | declared scoped handles only | installed extension code | disable affected extension; daemon remains healthy |
+| MCP stdio sandbox | one owner-selected native server per fresh session | none in the initial profile | digest-pinned server code | reject call/startup; durable tasks and daemon survive |
 | External | model providers, APIs, channels | credentials sent only by broker | outside Mealy | retry, reconcile, or degrade by policy |
 
 The initial implementation may use trusted built-in channel and provider adapters in the daemon. No third-party code is promoted into that zone.
@@ -495,9 +499,59 @@ The worker emits structured start, progress, and terminal frames. Loss of the wo
 
 - Linux: prefer namespaces/bubblewrap or an equivalent backend with explicit filesystem and network policy.
 - macOS: use Seatbelt or a container/VM adapter with documented limits.
-- Windows: use restricted tokens/AppContainer/job objects or an external VM/container backend; unsupported filesystem carve-outs fail closed.
+
+Windows is outside the release-one support and CI contract. A future Windows port requires a
+separately reviewed restricted-token/AppContainer/job-object or VM/container adapter; no current
+release claim depends on that design.
 
 The architecture exposes capability semantics, not one platform's flags. `doctor` reports which profiles the current host can enforce.
+
+### 10.6 Production workspace mutation subset
+
+Linux production mutation authority is explicit and narrow. A stopped-daemon writable-workspace
+grant enables create-new, existing-file replacement, and path-lifecycle descriptors, but only
+`/act`, `/edit`, or `/manage` admission places one of them in a run ceiling.
+All workspace roots are canonically disjoint from the daemon home: neither state descendants nor
+roots containing the state directory can become model or worker authority. The stopped-home CLI
+and daemon startup enforce that invariant independently. The generated systemd unit derives exact
+`ReadWritePaths` entries from the validated writable subset, in addition to the daemon home, so its
+outer `ProtectHome=read-only`/`ProtectSystem=strict` boundary matches the inner tool policy.
+Generation rejects homes or workspaces hidden by `PrivateTmp=true` and rejects volatile
+`tmpfs`/`ramfs` state homes. Its private umask applies to the daemon and children; the intentional
+status-2 forced-drain exit is restart-inhibited so service supervision cannot reopen admission.
+The outer unit additionally isolates devices and kernel/control-plane interfaces, constrains
+process visibility, socket families, and syscall ABI, and denies realtime scheduling without
+blocking the nested hostname/proc operations, secure `openat2(O_CREAT)` path, V8 JIT, or outbound
+HTTPS required by explicit capabilities. `NoNewPrivileges`, the private umask, Bubblewrap
+capability dropping, read-only outer views, and request-specific mounts provide the applicable
+privilege and filesystem boundaries.
+`workspace.replace_file` binds the logical target,
+current SHA-256, and exactly one of complete content or an ordered list of at most 16 exact
+old/new-text edits with expected non-overlapping occurrence counts. The sandbox worker reopens the
+target beneath the selected root without following symlinks or crossing mounts, verifies all
+preconditions, derives bounded UTF-8 output, and commits through a private mode-`0600` staging file,
+file/directory synchronization, and atomic rename. Any mismatch occurs before rename and leaves the
+original intact.
+
+`workspace.manage_path` accepts exactly one of create-directory, move-file, remove-file, or
+remove-empty-directory. It creates no missing parent, never overwrites or recurses, and binds every
+logical target plus a complete-content SHA-256 for a file move/removal. The worker resolves safe
+parents with `openat2` beneath/no-symlink/no-magic-link/no-mount-crossing flags. Moves use
+`renameat2(RENAME_NOREPLACE)`, synchronize both parents, and recheck the destination digest.
+Removal first moves the target exclusively into an effect/attempt-specific root quarantine,
+synchronizes it, rechecks the digest, then unlinks and synchronizes again. Empty-directory removal
+uses non-recursive `unlinkat(AT_REMOVEDIR)`. The descriptor is conservatively non-idempotent with
+reconcile-only recovery, so an interrupted post-dispatch attempt is parked rather than retried.
+Recursive tree operations, directory moves, overwrite, fuzzy patching, and chmod are not implied by
+these descriptors.
+
+`process.run` additionally restricts each configured command to one canonical root-controlled ELF
+file and its stopped-daemon SHA-256 grant. The trusted daemon discovers the worker/command dynamic
+runtime only through the exact root-controlled `/usr/bin/ldd`, with an empty environment and `--`
+before the canonical path; it never searches the owner's `PATH` or carries `LD_*` state into that
+inspection. Missing or untrusted inspection support omits the action tool rather than weakening
+the sandbox. Model dispatch remains a direct `execve`-style argument vector inside Bubblewrap, not
+a shell command.
 
 ## 11. Context and memory
 
@@ -579,6 +633,64 @@ An extension cannot open arbitrary daemon HTTP routes. It may register a channel
 
 Skills remain declarative resources. If a skill ships code, that code is a declared extension/tool and gets a separate permission review.
 
+### 13.4 MCP adapter subset
+
+MCP is an adapter protocol, never an authority source. The initial implementation accepts only
+native local stdio servers negotiating exact revision `2025-11-25`. Owner inspection and activation
+bind executable bytes, direct non-secret arguments, the complete paginated tool set, and every
+selected full definition and self-contained schema. A model sees only selected namespaced
+read-only descriptors. Server annotations do not alter effect class, policy, or sandbox grants.
+
+Startup and every call use a fresh process and repeat initialization plus full discovery before
+dispatch. Linux Bubblewrap provides an empty environment and namespaces with no network, home,
+workspace, secrets, persistent writable mount, shell, `PATH`, or child-process budget. Protocol,
+schema, message, output, CPU, memory, file, descriptor, process, and wall-clock bounds are enforced;
+cancellation is signalled before termination. Results are untrusted cited evidence recorded through
+the normal read-tool ledger, so recovery may retry a pure interrupted read and recorded replay never
+executes the server. HTTP transport, resource mounts, server credentials, and effectful MCP require
+new explicit policy/executor designs rather than configuration flags on this subset.
+
+### 13.5 Rendered-browser read adapter
+
+`browser.snapshot` is a medium-risk read tool, not a general browser-control session. The owner
+installs a complete content-addressed Chrome Headless Shell bundle; config pins its aggregate
+inventory, exact executable, CDP product, and stable protocol `1.3`. Inspection runs only
+`--version` in a no-network namespace, installation performs a real loopback render self-test,
+startup re-verifies content, and every call checks it again before process dispatch.
+
+The trusted worker and untrusted browser run in a new Bubblewrap mount/PID/user/network namespace.
+The only writable state is an ephemeral agent profile; no Mealy home, personal browser profile,
+workspace, environment, shell, or secret is mounted. CDP binds only inside that namespace. Browser
+proxy TCP is relayed to a mounted Unix socket, where the trusted host proxy applies the existing
+`WebAccessConfig` and immutable task destination claims, resolves/pins public peers, permits exact
+HTTP loopback only when granted, and bounds connection count, headers, bytes, and time. Plain HTTP
+admits only GET/HEAD; HTTPS uses an authorized CONNECT tunnel plus independent CDP Fetch method
+interception. Each invocation intersects the broader configured/task ceiling with the initial
+URL's exact origin. Cross-origin redirects, subresources, and link targets therefore fail closed,
+including an origin otherwise present in configuration. Authentication and downloads are denied;
+WebSocket/WebTransport/QUIC/direct sockets,
+service workers, beacons, form submission, and non-read Fetch/XHR are blocked or fail the call.
+
+Navigation starts at a validated HTTP(S) URL. The only compound operation either selects one exact
+accessible link name/occurrence, resolves its `href`, and performs another same-origin direct GET
+navigation, or selects one exact accessible button name/occurrence. Button activation succeeds
+only for an enabled native `<button type="button">` outside a form, using a pristine click method
+captured before page script. Submit controls and form-owned buttons fail closed; every resulting
+request still crosses CDP method interception and the same-origin proxy.
+Output is normalized final URL/title, the exact activated-element receipt when applicable,
+bounded visible accessibility text, bounded interactive
+role/name/occurrence records, and an optional verified PNG no larger than 512 KiB. Raw CDP/DOM,
+cookies, profile data, field values, and stderr never enter model context. The process/profile/socket
+are destroyed at the terminal boundary. Durable evidence and artifact handling use the normal read
+tool ledger, so replay never starts Chrome. CDP download byte counters accept only non-negative
+integral JSON numbers within exact IEEE-754 range before the tighter 512-KiB bound. Arbitrary
+keyboard events, POST or multi-control form submission, uploads, owner-path/unbounded downloads,
+and persistent sessions require a future approval/effect design.
+
+Chrome's V8 engine needs a large virtual address reservation, making `RLIMIT_AS` unusable. Per-call
+CPU/process/file/descriptor/output/wall bounds remain, while the supported systemd service applies
+physical-memory, swap, and task cgroup ceilings to the daemon and all browser descendants.
+
 ## 14. API and channel model
 
 ### 14.1 Initial transport
@@ -586,6 +698,51 @@ Skills remain declarative resources. If a skill ships code, that code is a decla
 The first daemon exposes versioned HTTP/JSON plus server-sent events on loopback. It uses a randomly generated local bearer credential stored with OS-user-only permissions, strict Origin handling for browser access, bounded bodies, and no unauthenticated mode. Unix socket or named-pipe transport can be added without changing protocol DTOs.
 
 Remote listening is disabled by default and is not a release-one requirement.
+
+`mealyctl dashboard` is an ephemeral presentation/command adapter, not another state authority. It
+reads the owner-private connection descriptor, preflights five typed operational projections, and
+binds a random numeric-loopback port only for its foreground lifetime. Its browser receives a
+separate random capability, never the daemon bearer. The adapter exposes a fixed aggregate snapshot
+plus typed session create/input, bounded timeline, exact approval-resolution, and cooperative
+task-cancellation routes. It also exposes exact effect/attempt reads and one narrow reconciliation
+command for a linked `outcome_unknown` attempt; this binds the inspected effect revision, explicit
+terminal conclusion, non-empty bounded external evidence, and idempotency key without redispatching
+the effect. Fixed schedule routes expose durable keyed creation, one canonical definition, 1–100
+newest occurrence rows, and pause/resume/cancel transitions bound to the rendered revision. The
+client proposes a canonical UUIDv7 schedule identity and retains it with the exact immutable
+definition across an ambiguous manual retry. The canonical store returns an identical existing
+definition without a second event and conflicts on any semantic mismatch. A lifecycle response is
+accepted only for the same schedule, requested status, and revision +1; ambiguous transitions are
+re-read and never automatically retried. Governed-memory routes accept only exact authorized
+namespaces and canonical IDs: bounded list/search/detail, proposal, explicit exact-revision
+activation, correction, pin/unpin, expiry, rejection, and deletion. Proposal and correction do not
+accept arbitrary provenance from the browser. The adapter derives a stable SHA-256 owner locator
+from the browser command key, binds it to the exact content digest, and checks canonical state for
+that locator before dispatch, making ambiguous manual retries duplicate-safe without changing the
+memory store contract. Activation always forwards explicit `owner_approval`; it is never combined
+with proposal. Every command still enters the canonical
+API/use-case/store path and retains its durable idempotency, exact subject, or revision fence;
+there is no generic daemon proxy. Extension routes use
+Origin-checked POSTs for bounded inventory/detail and revision-fenced enable/disable/revoke. The
+adapter deserializes and validates the complete data-only manifest before accepting an enable
+grant, requires the health capability, proves every selected authority axis is a manifest subset,
+and accepts only the same manifest at enabled revision +1 with the exact returned grant. A
+preflight recognizes an identical completed transition without redispatch; install/stage,
+installation roots, upgrades, and invocation remain outside the browser boundary.
+
+A fixed Origin-checked task-usage read returns one canonical owner-authorized `TaskResponse` rather
+than a dashboard-computed accounting record. The adapter validates task/run/criteria/validation
+identity, digest-bound final content, exact browser-safe integers, and zero terminal reservations,
+then labels used versus reserved provider-neutral cost microunits separately. It does not aggregate
+or infer provider billing dimensions absent from canonical settlement.
+
+The adapter caps request/input/timeline/evidence sizes, canonicalizes UUID-backed route identities, limits
+snapshot/timeline/detail/command concurrency separately, enforces exact Host on every request and exact
+Origin on every mutation, streams daemon responses under an 8 MiB ceiling before decode, and sends
+no-store/CSP/frame/resource policy headers. Backend errors are
+reclassified without returning daemon bodies or private paths, and the private connection
+descriptor is reloaded so an orderly daemon restart does not copy credentials into browser state.
+Closing the command removes the entire adapter boundary.
 
 ### 14.2 Command/query split
 
@@ -610,6 +767,24 @@ DTOs carry an API version and idempotency key where applicable. Generated OpenAP
 
 The API projects durable journal facts into stable user-facing events. High-frequency provider deltas may be delivered live but are marked ephemeral. A final message, tool result summary, error, approval, and lifecycle transition always has a durable cursor.
 
+### 14.4 First-party remote adapters
+
+Telegram and Discord are trusted compiled presentation adapters over the same session inbox,
+approval ledger, journal, and outbox; neither owns alternate conversation state. Telegram binds a
+verified bot token to one exact sender/chat and uses monotonic update IDs. Discord's least-authority
+profile binds a verified API v10 bot to one exact type-1 DM with one non-bot recipient. Discord
+snowflakes remain canonical decimal strings because their unsigned 64-bit identity must not be
+narrowed through SQLite's signed integer type.
+
+Both adapters reserve untrusted platform input before interpretation and advance their durable
+cursor only with terminal admission/ignore evidence. Discord additionally treats the documented
+newest-to-oldest 100-message page as potentially saturated: it walks backward to the prior durable
+floor, filters, sorts, and duplicate-checks the bounded set before processing. Outbound channel
+messages derive identity from the durable outbox. Discord suppresses all mentions/embeds, binds a
+stable 25-character nonce with `enforce_nonce`, shares a `Retry-After` gate between polling and
+delivery, and parks ambiguous acceptance. Token bytes stay in the owner-private broker and are
+never placed in URLs, SQLite, configuration, or presentation DTOs.
+
 ## 15. Validation and evaluations
 
 Validation is a policy-driven run, not an unconditional extra model call.
@@ -631,6 +806,7 @@ bootstrap logging
 → load config and secret references
 → open/backup-check/migrate SQLite
 → verify artifact store
+→ verify configured skill, MCP, and browser bytes
 → run recovery
 → start extension/provider health
 → bind API
@@ -647,9 +823,25 @@ Shutdown stops admission, drains within a deadline, revokes worker leases, recor
 
 ### 16.3 Backup and migration
 
-Backup uses SQLite's online backup API or a safe checkpointed copy and includes an artifact manifest. Restore is verified into a separate directory before replacement. A corrupt database is moved with WAL/SHM sidecars to a timestamped forensic backup before any fresh start.
+Backup uses SQLite's online backup API or a safe checkpointed copy and includes an artifact manifest,
+configured skill packages, configured content-addressed MCP executables, and every file/mode in a
+configured content-addressed browser bundle. Restore is verified
+into a separate directory before replacement. A corrupt database is moved with WAL/SHM sidecars to
+a timestamped forensic backup before any fresh start.
 
 Every migration has forward tests from supported historical snapshots. Destructive canonical-data changes require an explicit export/transform/import plan and cannot hide behind a schema migration.
+
+### 16.4 Clean-home setup
+
+First-run setup is an offline configuration transaction, not an alternate daemon API. The client
+creates an owner-private home under the same file lock, publishes the application-owned typed
+default atomically, and then invokes the existing provider validation/probe/broker/config-history
+path. Interactive prompts carry only provider identity, endpoint, model, limits, prices, and an
+environment-variable name; credential bytes are resolved once only after exact owner approval and
+never enter argv, prompts, config, history, or presentation JSON. Denial occurs before home
+mutation. Probe/config failure retains either no home or the safe builtin default, so retry never
+depends on repairing partial provider authority. The daemon's typed default serialization is
+regression-tested against the same shared document constructor used by `mealyctl`.
 
 ## 17. Repository layout
 
@@ -690,7 +882,7 @@ Each directory has a README that states ownership, allowed dependencies, and com
 | SEC-001..017, AUTH-010..013 | policy/identity + API + sandbox adapter | threat-model and boundary tests |
 | CTX-001, CTX-010..015 | context module | manifest snapshot and compaction provenance tests |
 | MEM-001, MEM-010..015 | memory module + FTS adapter | lifecycle, namespace, deletion tests |
-| EXT-001, EXT-010..016 | extension manifest/host adapters | hostile extension and crash isolation tests |
+| EXT-001, EXT-010..016 | extension manifest/host and MCP adapters | hostile extension, MCP drift/isolation, cancellation, and crash tests |
 | REC-001..017 | store + recovery + artifacts | crash-point scenario suite and backup restore tests |
 | OBS-010..013, ART-010..011 | journal/outbox/artifacts/API | cursor resume, gap, atomic artifact tests |
 | VAL-010..016 | validation + testkit | independent-context and rubric scenarios |
@@ -734,7 +926,9 @@ Rejected. A process crash does not prove an external call failed. Recovery depen
 - Durable model-response recording can contain sensitive data. Retention, encryption adapters, and redaction need early implementation.
 - Out-of-process extensions add RPC and packaging work. That cost buys a boundary the references consistently lack.
 - Independent validation adds latency and cost. Risk policy and deterministic evidence keep it proportional.
-- Local browser UI authentication requires careful Origin and token handling. It is scheduled after CLI-based proof of the core.
+- Local browser UI authentication remains security-sensitive; exact Host/mutation-Origin checks,
+  an independent lifetime capability, no CORS or generic proxy, strict browser policy headers, and
+  adversarial plus real-daemon process gates are mandatory for every dashboard route expansion.
 
 ## 21. Implementation rule
 

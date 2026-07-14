@@ -2,10 +2,11 @@ use super::SqliteStore;
 use mealy_application::{
     InboxPromotionStore, InterruptionReceipt, OwnershipContext, PromotionCandidate,
     PromotionCommit, PromotionOutcome, PromotionReceipt, PromotionStoreError, SteeringReceipt,
-    initial_task_contract, sha256_digest,
+    initial_task_contract_for_profile, sha256_digest, valid_general_assistant_capability_ceiling,
 };
 use mealy_domain::{
-    ChannelBindingId, CorrelationId, DeliveryMode, EventId, PrincipalId, RiskClass, SessionId,
+    ChannelBindingId, CorrelationId, DeliveryMode, EffectClass, EventId, PolicyProfile,
+    PrincipalId, RiskClass, SessionId,
 };
 use rusqlite::{ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
@@ -628,13 +629,131 @@ fn append_active_outbox(
     Ok(())
 }
 
+fn apply_initial_contract_overrides(
+    contract: &mut mealy_application::InitialTaskContract,
+    commit: &PromotionCommit,
+) -> Result<(), PromotionStoreError> {
+    match (
+        commit.initial_task_profile,
+        commit.initial_capability_ceiling.as_ref(),
+    ) {
+        (mealy_application::InitialTaskProfile::GeneralAssistant, Some(capabilities)) => {
+            apply_general_assistant_contract_overrides(contract, capabilities)?;
+        }
+        (
+            mealy_application::InitialTaskProfile::GeneralAssistant
+            | mealy_application::InitialTaskProfile::FixtureProof,
+            None,
+        ) => {}
+        (mealy_application::InitialTaskProfile::FixtureProof, Some(_)) => {
+            return Err(invariant(
+                "fixture promotion cannot accept configured capability authority",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_general_assistant_contract_overrides(
+    contract: &mut mealy_application::InitialTaskContract,
+    capabilities: &mealy_domain::CapabilityGrant,
+) -> Result<(), PromotionStoreError> {
+    if !valid_general_assistant_capability_ceiling(capabilities) {
+        return Err(invariant(
+            "general-assistant promotion capability authority is invalid",
+        ));
+    }
+    let requested_action = contract.context_baseline_version == "mealy.general-assistant.action.v1";
+    let requested_edit = contract.context_baseline_version == "mealy.general-assistant.edit.v2";
+    let requested_manage = contract.context_baseline_version == "mealy.general-assistant.manage.v1";
+    let requested_process =
+        contract.context_baseline_version == "mealy.general-assistant.process.v1";
+    let configured_action = capabilities
+        .tools
+        .contains(mealy_application::WORKSPACE_CREATE_FILE_TOOL_ID);
+    let configured_edit = capabilities
+        .tools
+        .contains(mealy_application::WORKSPACE_REPLACE_FILE_TOOL_ID);
+    let configured_manage = capabilities
+        .tools
+        .contains(mealy_application::WORKSPACE_MANAGE_PATH_TOOL_ID);
+    let configured_process = capabilities
+        .tools
+        .contains(mealy_application::PROCESS_RUN_TOOL_ID);
+    let mut effective = capabilities.clone();
+    if !requested_action || !configured_action {
+        effective
+            .tools
+            .remove(mealy_application::WORKSPACE_CREATE_FILE_TOOL_ID);
+    }
+    if !requested_edit || !configured_edit {
+        effective
+            .tools
+            .remove(mealy_application::WORKSPACE_REPLACE_FILE_TOOL_ID);
+    }
+    if !requested_manage || !configured_manage {
+        effective
+            .tools
+            .remove(mealy_application::WORKSPACE_MANAGE_PATH_TOOL_ID);
+    }
+    let effective_idempotent_action =
+        requested_action && configured_action || requested_edit && configured_edit;
+    if !effective_idempotent_action {
+        effective.effect_classes.remove(&EffectClass::Idempotent);
+    }
+    if !requested_process || !configured_process {
+        effective
+            .tools
+            .remove(mealy_application::PROCESS_RUN_TOOL_ID);
+        effective.executable_identity_digests.clear();
+    }
+    let effective_non_idempotent_action =
+        requested_manage && configured_manage || requested_process && configured_process;
+    if !effective_non_idempotent_action {
+        effective.effect_classes.remove(&EffectClass::NonIdempotent);
+    }
+    if !effective_idempotent_action && !effective_non_idempotent_action {
+        effective.writable_workspace_roots.clear();
+        effective.profiles.remove(&PolicyProfile::WorkspaceWrite);
+    }
+    if requested_action && !configured_action
+        || requested_edit && !configured_edit
+        || requested_manage && !configured_manage
+        || requested_process && !configured_process
+    {
+        let fallback = initial_task_contract_for_profile(
+            "",
+            mealy_application::InitialTaskProfile::GeneralAssistant,
+        );
+        contract.success_criteria = fallback.success_criteria;
+    }
+    contract.capability_ceiling = effective;
+    if requested_process && configured_process {
+        "mealy.general-assistant.process.v1"
+    } else if requested_manage && configured_manage {
+        "mealy.general-assistant.manage.v1"
+    } else if requested_edit && configured_edit {
+        "mealy.general-assistant.edit.v2"
+    } else if requested_action && configured_action {
+        "mealy.general-assistant.action.v1"
+    } else if contract.capability_ceiling.tools.is_empty() {
+        "mealy.general-assistant.baseline.v1"
+    } else {
+        "mealy.general-assistant.configured-read.v1"
+    }
+    .clone_into(&mut contract.context_baseline_version);
+    Ok(())
+}
+
 fn insert_work_graph(
     transaction: &Transaction<'_>,
     commit: &PromotionCommit,
     pending: &PendingRow,
     promoted_at_ms: i64,
 ) -> Result<(), PromotionStoreError> {
-    let mut contract = initial_task_contract(&pending.content);
+    let mut contract =
+        initial_task_contract_for_profile(&pending.content, commit.initial_task_profile);
+    apply_initial_contract_overrides(&mut contract, commit)?;
     contract.budget = commit.initial_budget;
     contract
         .budget
@@ -654,7 +773,6 @@ fn insert_work_graph(
         .map_err(|_| invariant("default agent budget cannot be serialized"))?;
     let criteria_json = serde_json::to_string(&contract.success_criteria.criteria)
         .map_err(|_| invariant("initial task criteria cannot be serialized"))?;
-    let context_baseline_version = contract.context_baseline_version.clone();
     let validation_required =
         i64::from(contract.success_criteria.independent_validation_required());
     transaction
@@ -712,13 +830,7 @@ fn insert_work_graph(
             "INSERT INTO turn(\
                 id, session_id, inbox_entry_id, task_id, run_id, status, revision, correlation_id, \
                 created_at_ms, context_epoch_id\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, ?6, ?7, \
-                       (SELECT CASE WHEN epoch.baseline_version = ?8 \
-                                    THEN session.current_context_epoch_id ELSE NULL END \
-                        FROM session \
-                        LEFT JOIN context_epoch epoch \
-                          ON epoch.id = session.current_context_epoch_id \
-                        WHERE session.id = ?2))",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, ?6, ?7, NULL)",
             params![
                 commit.turn_id.to_string(),
                 commit.session_id.to_string(),
@@ -727,7 +839,6 @@ fn insert_work_graph(
                 commit.run_id.to_string(),
                 pending.correlation_id,
                 promoted_at_ms,
-                context_baseline_version,
             ],
         )
         .map_err(map_sqlite_error)?;

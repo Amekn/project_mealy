@@ -11,10 +11,11 @@ use mealy_domain::{
     ExtensionShutdownMode, RiskClass,
 };
 use mealy_protocol::{
-    API_VERSION, EnableExtensionRequest, ExtensionInvocationResponse,
-    ExtensionInvocationStatusResponse, ExtensionLifecycleRequest, ExtensionResponse,
-    ExtensionStatusResponse, InstallExtensionRequest, InvokeExtensionRequest, LocalConnectionInfo,
-    ReadinessResponse, StageExtensionManifestRequest,
+    API_VERSION, EnableExtensionRequest, ExtensionFilesystemAccessCommand,
+    ExtensionInvocationResponse, ExtensionInvocationStatusResponse, ExtensionLifecycleRequest,
+    ExtensionMountGrantCommand, ExtensionResponse, ExtensionStatusResponse,
+    InstallExtensionRequest, InvokeExtensionRequest, LocalConnectionInfo, ReadinessResponse,
+    StageExtensionManifestRequest,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -108,6 +109,24 @@ async fn extension_lifecycle_is_isolated_durable_upgradeable_and_terminally_revo
     assert!(
         !public_projection.contains(&package_root),
         "package root must not cross the public projection"
+    );
+
+    let mut private_mount = enable_request(0);
+    private_mount.mounts.push(ExtensionMountGrantCommand {
+        name: "private-state".to_owned(),
+        access: ExtensionFilesystemAccessCommand::ReadOnly,
+        host_path: home.path().display().to_string(),
+        sandbox_path: "/documents".to_owned(),
+    });
+    assert_eq!(
+        post_status(
+            &client,
+            &connection,
+            &format!("/v1/extensions/{extension_id}/enable"),
+            &private_mount,
+        )
+        .await,
+        StatusCode::BAD_REQUEST
     );
 
     let enabled: ExtensionResponse = authorized_post(
