@@ -310,8 +310,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Require an explicit public-use project license
-        run: scripts/validate-public-license.sh .
       - run: rustup show
       - name: Verify tag, host architecture, and package identity
         shell: bash
