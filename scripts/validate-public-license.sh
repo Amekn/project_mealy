@@ -32,8 +32,17 @@ if [[ -L $workspace_manifest || ! -f $workspace_manifest \
   exit 65
 fi
 license_bytes=$(stat -c '%s' "$license_file")
-if (( license_bytes < 512 || license_bytes > 65536 )); then
-  echo "project license is empty, truncated, or exceeds its 64 KiB bound" >&2
+if (( license_bytes < 1 || license_bytes > 65536 )); then
+  echo "project license is empty or exceeds its 64 KiB bound" >&2
+  exit 65
+fi
+if grep -Eiq 'all rights reserved|no license is granted to (use|copy|modify|merge|publish|distribute)' \
+  "$license_file"; then
+  echo "project license still contains no-use or all-rights-reserved terms" >&2
+  exit 65
+fi
+if (( license_bytes < 512 )); then
+  echo "project license is truncated or does not contain complete terms" >&2
   exit 65
 fi
 
@@ -74,12 +83,6 @@ elif [[ ${#expressions[@]} -eq 0 && ${#license_files[@]} -eq 1 \
   expression=
 else
   echo "workspace.package must declare one reviewed SPDX expression or license-file = \"LICENSE\"" >&2
-  exit 65
-fi
-
-if grep -Eiq 'all rights reserved|no license is granted to (use|copy|modify|merge|publish|distribute)' \
-  "$license_file"; then
-  echo "project license still contains no-use or all-rights-reserved terms" >&2
   exit 65
 fi
 

@@ -83,6 +83,10 @@ expect_rejection() {
 make_restrictive() {
   printf 'All rights reserved. No license is granted to use this software.\n' >>"$1/LICENSE"
 }
+make_short_restrictive() {
+  printf 'Copyright 2026. All rights reserved. No license is granted to use this software.\n' \
+    >"$1/LICENSE"
+}
 redirect_license_file() {
   sed -i 's/^license-file = .*/license-file = "COPYING"/' "$1/Cargo.toml"
 }
@@ -100,6 +104,9 @@ duplicate_declaration() {
 }
 
 expect_rejection restrictive "$temporary/apache" make_restrictive
+expect_rejection short-restrictive "$temporary/apache" make_short_restrictive
+grep -Fxq 'project license still contains no-use or all-rights-reserved terms' \
+  "$temporary/short-restrictive.stderr"
 expect_rejection redirected-license-file "$temporary/license-file" redirect_license_file
 expect_rejection package-without-license "$temporary/apache" drop_package_inheritance
 expect_rejection unsupported-expression "$temporary/apache" use_unsupported_expression
