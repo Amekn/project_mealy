@@ -110,10 +110,11 @@ the call and adds 32-concurrent/256-total connection budgets at both proxy layer
 replacement extracted package.
 
 Later provider-contract, client-boundary, and fragmented browser-verification findings superseded
-that subject. The current 24-hour subject is the exact auditable `mealyd` SHA-256
-`649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572`, reproduced by two clean
-`c483945` builds. Its empty, disk-backed clock began at 2026-07-15 10:47:53 Pacific/Auckland.
-Verifier-only commit `c797e8e` reproduced the same daemon and CLI bytes and passed all seven
-protected workflow contexts. No duration or turn count from a superseded/interrupted run is
-carried forward. Until this run emits and passes its final report, the checked 30-minute paced
-report remains the newest positive long-form durability observation.
+that subject. The resulting auditable `c483945` soak and its `53feae1` successor both stopped
+without a promotable report. The retained
+[schema-15 contention-failure observation](2026-07-16-schema15-long-soak-contention-failure.md)
+records their 15-hour-51-minute and 12-hour-9-minute failure timelines, intact SQLite databases,
+root cause, correction, and a successful 176-turn dense diagnostic against a 1.5 GB retained-home
+clone. No duration or turn count from either failed run is carried forward. Until a fresh corrected
+run emits and passes its final report, the checked 30-minute paced report remains the newest
+positive long-form durability observation.
