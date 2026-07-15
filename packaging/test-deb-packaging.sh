@@ -106,6 +106,8 @@ cmp "$temporary/extracted/usr/bin/mealyctl" "$release_root/bin/mealyctl"
 [[ $(stat -c '%a' "$release_root/fetch-browser-runtime.sh") == 755 ]]
 [[ $(stat -c '%a' "$release_root/README.md") == 644 ]]
 [[ $(stat -c '%a' "$temporary/extracted/usr/share/doc/mealy/copyright") == 644 ]]
+expected_copyright=$'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: Mealy\nSource: https://github.com/Amekn/project_mealy\n\nFiles: *\nCopyright: 2026 Amekn\nLicense: Apache-2.0\n On Debian systems, the complete text of the Apache License, Version 2.0\n can be found in /usr/share/common-licenses/Apache-2.0.'
+[[ $(<"$temporary/extracted/usr/share/doc/mealy/copyright") == "$expected_copyright" ]]
 cmp "$release_root/README.md" "$temporary/extracted/usr/share/doc/mealy/README.md"
 cmp "$release_root/docs/README.md" \
   "$temporary/extracted/usr/share/doc/mealy/docs/README.md"
