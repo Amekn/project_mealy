@@ -87,6 +87,11 @@ The supported-package observations separately exercise the exact dirty-tree arch
 payloads on [Ubuntu 24.04](2026-07-13-ubuntu-24.04-installed-package-smoke.md) and the exact Debian
 payload on [Debian 13](2026-07-13-debian-13-installed-package-smoke.md). Both are x86_64
 clean-runtime-container evidence rather than published-release or native ARM64 proof.
+The [Fedora 44 rootless archive observation](2026-07-15-fedora-44-installed-package-smoke.md)
+independently runs the exact soaking binaries through install, mandatory sandbox enforcement,
+durable work, replay, usage, backup verification, drain, uninstall, and state preservation on
+glibc 2.43/Bubblewrap 0.11.0. It is same-host pre-release evidence and still requires repetition
+against the final public package.
 The Ubuntu record also retains the subsequent PID-1 systemd-user investigation: it distinguishes
 startup/sandbox-probe success from a real approved mutation and records the final generated-unit
 effect-level pass.

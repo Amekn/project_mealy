@@ -36,6 +36,12 @@ drain, and LaunchAgent rendering against both the build output and the extracted
 archives are useful installable control planes, not production worker targets: every governed
 worker/tool sandbox profile remains denied. Windows is outside the release-one support and CI contract.
 
+The rootless Linux archive path also passes the complete installed-package lifecycle on Fedora 44
+x86_64 with glibc 2.43 and Bubblewrap 0.11.0, including mandatory sandbox enforcement, replay,
+backup verification, drain, uninstall, and state preservation. That checked observation is
+[pre-release evidence](benchmarks/2026-07-15-fedora-44-installed-package-smoke.md), not a claim that
+the Debian asset is an RPM or that a local archive is an attested public release.
+
 ## Repository release controls
 
 Before creating a production tag, protect `main` and require the complete `mealy-ci` check set for
