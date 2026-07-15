@@ -19,8 +19,9 @@ The current quality job installs Bubblewrap before the complete suite. Every Ubu
 job also activates the distro's reviewed `bwrap-userns-restrict` profile while retaining the
 host-wide namespace restriction, then requires an immediate private-network Bubblewrap probe.
 Checkout is updated to a current full-SHA pin. These repairs pass local syntax, workflow-auditor,
-package, and sandbox gates, but remain unverified by GitHub until the owner authorizes a commit and
-push.
+package, and sandbox gates. Subsequent protected GitHub runs verified the repaired workspace,
+sandbox, browser, native ARM64, and macOS boundaries; only an exact tagged release can provide the
+final package provenance and public-download evidence.
 
 ## Workflow boundary
 
@@ -67,8 +68,18 @@ Environment. Those findings were corrected before this clean result. The pinned 
 mandatory CI gate. A 2026-07-15 upstream freshness review retained Actionlint 1.7.12,
 cargo-deny 0.20.2, cargo-audit 0.22.2, cargo-auditable 0.7.5, cargo-about 0.9.1, and Syft 1.46.0,
 and advanced zizmor from 1.26.1 to the newly published 1.27.0 bug-fix release. The same review
-confirmed Chrome for Testing stable remained 150.0.7871.115 and every SHA-pinned GitHub Action
-still matched its latest upstream release.
+advanced Chrome for Testing stable from 150.0.7871.115 to 150.0.7871.124; the helper now binds the
+official Linux Headless Shell archive at exactly 120,351,731 bytes and SHA-256
+`98de0bcdc661d14b2fc122ae99a27df35d47e464e8d38a4a5e01f81a4ce295c2`. A final 2026-07-15
+recheck found `.124` still current. The extracted runtime identified itself as `Google Chrome for
+Testing 150.0.7871.124`, contained 287 regular files and no symlinks, and passed the real isolated
+browser, model-visible evidence/replay, and stopped-home configuration lifecycle suites. Checkout
+v7.0.0, Attest v4.1.1, Upload Artifact v7.0.1,
+Download Artifact v8.0.1, and SBOM Action v0.24.0 remained their upstream repositories' latest
+releases, and each tag resolved to the exact full commit SHA pinned in the workflows. Rust 1.97.0
+had become stable, but the compiler is deliberately retained at 1.96.0 for this candidate because
+changing it would change the already reproduced and soaking executables; a compiler advance belongs
+to a subsequent candidate with its own complete binary reproduction and durability evidence.
 
 ## Rust dependency boundary
 
@@ -230,10 +241,11 @@ sandbox, channel, provider, backup/activation, migration, and rollback tests pas
 whose contracts explicitly require the reviewed Chrome bundle, a live network credential, or the
 separate long-soak harness remained ignored in that aggregate run.
 
-The ignored browser paths were then selected individually against the size/SHA-pinned Chrome
-Headless Shell 150.0.7871.115 bundle. The optimized isolated-worker conformance test, stopped-home
-browser lifecycle test, and model-visible citation/artifact/replay test all passed. The official
-Chrome for Testing stable metadata still identified 150.0.7871.115 after those runs. The optimized
+The ignored browser paths were then selected individually against the then-current, size/SHA-pinned
+Chrome Headless Shell 150.0.7871.115 bundle. The optimized isolated-worker conformance test,
+stopped-home browser lifecycle test, and model-visible citation/artifact/replay test all passed.
+The official Chrome for Testing stable metadata still identified 150.0.7871.115 after those runs;
+the later `.124` freshness update and its gates are recorded above. The optimized
 credential-free public-HTTPS adapter test also passed against its live endpoint. Brave Search and
 real model-provider smoke remain external credential-bearing gates rather than being replaced by
 these checks.
