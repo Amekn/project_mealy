@@ -226,12 +226,17 @@ fresh run is required to select the verified extracted release daemon explicitly
 that exact executable SHA-256 instead of merely identifying a Cargo integration build. It must
 also use and retain an explicit disk-backed home: a short superseded launch was stopped after the
 storage audit found that the default temporary directory was RAM-backed `tmpfs` on this host.
-The exact current run began at 2026-07-15 10:47:53 Pacific/Auckland with that disk-backed home.
-An early live snapshot recorded 432 successful tasks/runs, 864 completed model attempts, four
-planned-restart interruptions, one completed hard restart, SQLite `quick_check` `ok`, and no
-nonterminal task or run. These are health diagnostics only, not a pass: the final promoted report
-must cover the complete 86,400-second interval, integrity, replay, clean drain, and zero residual
-work before the durability gate closes.
+That run and its later final-candidate successor both stopped without a promotable report. The
+retained [schema-15 contention-failure observation](benchmarks/2026-07-16-schema15-long-soak-contention-failure.md)
+records failures after about 15 hours 51 minutes and 12 hours 9 minutes respectively. Both SQLite
+databases passed integrity checking. The timelines exposed cancellation probes blocking behind the
+canonical-store mutex and provider completion timestamps being delayed beyond durable deadlines.
+The corrected runtime avoids blocking cancellation checks, bounds provider waits by the remaining
+absolute deadline, and timestamps provider completion before store reacquisition. It completed a
+176-turn dense diagnostic on a 1.5 GB retained-home clone with every run, tool, and validation
+successful and no residual work. That is regression evidence, not a long-soak pass: a fresh single
+86,400-second corrected run must still complete, pass integrity and replay, drain cleanly, and emit
+zero-residue release evidence before the durability gate closes.
 
 The storage gate now has object-level attribution and bounded compatibility-preserving compression.
 The checked [60-second optimized storage observation](benchmarks/2026-07-13-storage-optimized-soak.json)

@@ -54,10 +54,13 @@ The copyright holder selected Apache-2.0 on 2026-07-15. The repository now carri
 Apache License 2.0 text through the existing exact `license-file = "LICENSE"` inheritance, so the
 choice does not introduce an unrelated package-metadata change.
 A clean auditable fingerprint probe at commit `0be7f63` changed only the referenced license-file
-content and reproduced the active soak subject exactly: `mealyd` SHA-256
+content and reproduced the then-active soak subject exactly: `mealyd` SHA-256
 `649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572` and `mealyctl` SHA-256
-`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. The selected canonical terms
-still require the same fresh clean-build comparison before publication. The native tag jobs run
+`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. That soak later failed and
+is superseded by the corrected candidate described in the
+[negative contention observation](benchmarks/2026-07-16-schema15-long-soak-contention-failure.md).
+The selected canonical terms still require the same fresh clean-build comparison before
+publication. The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
 package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,

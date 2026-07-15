@@ -45,7 +45,7 @@ use std::{
     fmt::Write as _,
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, TryLockError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime},
@@ -1529,12 +1529,20 @@ struct DurableCancellationProbe {
 
 impl CancellationProbe for DurableCancellationProbe {
     fn is_cancelled(&self) -> bool {
-        self.local_timeout.load(Ordering::Acquire)
-            || self.store.lock().map_or(true, |store| {
-                store
-                    .agent_run_cancellation_requested(self.run_id)
-                    .unwrap_or(true)
-            })
+        if self.local_timeout.load(Ordering::Acquire) {
+            return true;
+        }
+        match self.store.try_lock() {
+            Ok(store) => store
+                .agent_run_cancellation_requested(self.run_id)
+                .unwrap_or(true),
+            Err(TryLockError::Poisoned(_)) => true,
+            // Canonical transitions are serialized through this mutex. Contention is not a
+            // cancellation signal, and blocking here can starve a provider or read tool until its
+            // own deadline. Long-running adapters poll again; every dispatch remains bounded by
+            // its local timeout and checks durable cancellation at the next canonical boundary.
+            Err(TryLockError::WouldBlock) => false,
+        }
     }
 }
 
@@ -2585,6 +2593,11 @@ fn dispatch_model(
         })?;
     }
     let request = load_provider_request(store, attempt_id)?;
+    let provider_timeout = remaining_deadline_duration(
+        request.deadline_at_ms,
+        epoch_milliseconds(SystemClock.now())?,
+    )
+    .min(Duration::from_millis(snapshot.limits.provider_timeout_ms));
     let local_timeout = Arc::new(AtomicBool::new(false));
     let cancellation = DurableCancellationProbe {
         store: Arc::clone(store),
@@ -2600,17 +2613,25 @@ fn dispatch_model(
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let provider = Arc::clone(provider);
     let worker_progress = Arc::clone(&progress);
-    std::thread::Builder::new()
-        .name("mealy-provider-attempt".to_owned())
-        .spawn(move || {
-            let _ = sender.send(provider.complete_with_progress(
-                &request,
-                &cancellation,
-                worker_progress.as_ref(),
-            ));
-        })?;
-    let result =
-        match receiver.recv_timeout(Duration::from_millis(snapshot.limits.provider_timeout_ms)) {
+    let result = if provider_timeout.is_zero() {
+        local_timeout.store(true, Ordering::Release);
+        Err(ProviderError {
+            class: ProviderErrorClass::Timeout,
+            message: "provider attempt deadline elapsed".to_owned(),
+            retryable: true,
+            disposition: ProviderFailureDisposition::OutcomeUnknown,
+        })
+    } else {
+        std::thread::Builder::new()
+            .name("mealy-provider-attempt".to_owned())
+            .spawn(move || {
+                let _ = sender.send(provider.complete_with_progress(
+                    &request,
+                    &cancellation,
+                    worker_progress.as_ref(),
+                ));
+            })?;
+        match receiver.recv_timeout(provider_timeout) {
             Ok(result) => result,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 local_timeout.store(true, Ordering::Release);
@@ -2627,7 +2648,12 @@ fn dispatch_model(
                 retryable: true,
                 disposition: ProviderFailureDisposition::OutcomeUnknown,
             }),
-        };
+        }
+    };
+    // Record when the provider boundary actually completed, before progress flushing or canonical
+    // store contention. A timely result must not become late merely because another transition
+    // held the SQLite mutex while this worker waited to commit it.
+    let completed_at = SystemClock.now();
     progress.flush(true);
     let output = match result {
         Ok(output) => output,
@@ -2654,7 +2680,7 @@ fn dispatch_model(
                     attempt_event_id: SystemIdGenerator.generate_event_id(),
                     checkpoint_event_id: SystemIdGenerator.generate_event_id(),
                     lease_event_id: SystemIdGenerator.generate_event_id(),
-                    completed_at: SystemClock.now(),
+                    completed_at,
                 })?;
             if receipt.retry_scheduled {
                 tracing::warn!(
@@ -2682,7 +2708,7 @@ fn dispatch_model(
             artifact_event_id: None,
             event_id: SystemIdGenerator.generate_event_id(),
             checkpoint_event_id: SystemIdGenerator.generate_event_id(),
-            completed_at: SystemClock.now(),
+            completed_at,
         })?;
     Ok(false)
 }
@@ -4630,14 +4656,61 @@ fn epoch_milliseconds(time: SystemTime) -> Result<i64, Box<dyn Error + Send + Sy
     )?)
 }
 
+fn remaining_deadline_duration(deadline_at_ms: i64, observed_at_ms: i64) -> Duration {
+    Duration::from_millis(
+        u64::try_from(deadline_at_ms.saturating_sub(observed_at_ms).max(0)).unwrap_or(0),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BuiltinPhaseTwoProvider, RuntimeSkillContext};
+    use super::{
+        BuiltinPhaseTwoProvider, DurableCancellationProbe, RuntimeSkillContext,
+        remaining_deadline_duration,
+    };
     use crate::config::SkillConfig;
-    use mealy_application::{ModelProvider, sha256_digest};
-    use mealy_infrastructure::{inspect_skill_package, publish_skill_package};
+    use mealy_application::{CancellationProbe, ModelProvider, sha256_digest};
+    use mealy_domain::RunId;
+    use mealy_infrastructure::{SqliteStore, inspect_skill_package, publish_skill_package};
     use serde_json::json;
-    use std::{fs, time::Duration};
+    use std::{
+        fs,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn provider_wait_is_bounded_by_the_absolute_durable_deadline() {
+        assert_eq!(
+            remaining_deadline_duration(10_500, 10_000),
+            Duration::from_millis(500)
+        );
+        assert_eq!(remaining_deadline_duration(10_000, 10_000), Duration::ZERO);
+        assert_eq!(remaining_deadline_duration(9_000, 10_000), Duration::ZERO);
+    }
+
+    #[test]
+    fn busy_canonical_store_is_not_misclassified_as_cancellation() {
+        let store = Arc::new(Mutex::new(
+            SqliteStore::open_in_memory(0).expect("in-memory store"),
+        ));
+        let local_timeout = Arc::new(AtomicBool::new(false));
+        let probe = DurableCancellationProbe {
+            store: Arc::clone(&store),
+            run_id: RunId::new(),
+            local_timeout: Arc::clone(&local_timeout),
+        };
+        let guard = store.lock().expect("hold canonical store");
+        let started = Instant::now();
+        assert!(!probe.is_cancelled());
+        assert!(started.elapsed() < Duration::from_millis(100));
+        local_timeout.store(true, Ordering::Release);
+        assert!(probe.is_cancelled());
+        drop(guard);
+    }
 
     #[test]
     fn builtin_provider_is_local_and_tool_capable() {
