@@ -107,7 +107,7 @@ jq -e '
 
 session_json=$("$mealyctl" --home "$state_home" session create)
 session_id=$(jq -er '.sessionId' <<<"$session_json")
-request="zsh quoted-path preview [${session_id}] *"
+request="zsh quoted-path preview $session_id"
 "$mealyctl" --home "$state_home" session send "$session_id" "$request" \
   --idempotency-key macos-zsh-preview-smoke-1 >/dev/null
 task_id=''
