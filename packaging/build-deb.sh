@@ -234,7 +234,18 @@ chmod 0755 "$release_root/bin/mealyd" "$release_root/bin/mealyctl" \
   "$release_root/install.sh" "$release_root/fetch-browser-runtime.sh"
 ln -s ../lib/mealy/release/bin/mealyd "$data_root/usr/bin/mealyd"
 ln -s ../lib/mealy/release/bin/mealyctl "$data_root/usr/bin/mealyctl"
-install -m 0644 "$release_root/LICENSE" "$documentation/copyright"
+printf '%s\n' \
+  'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/' \
+  'Upstream-Name: Mealy' \
+  'Source: https://github.com/Amekn/project_mealy' \
+  '' \
+  'Files: *' \
+  'Copyright: 2026 Amekn' \
+  'License: Apache-2.0' \
+  ' On Debian systems, the complete text of the Apache License, Version 2.0' \
+  ' can be found in /usr/share/common-licenses/Apache-2.0.' \
+  >"$documentation/copyright"
+chmod 0644 "$documentation/copyright"
 install -m 0644 "$release_root/THIRD-PARTY-LICENSES.html" \
   "$documentation/third-party-licenses.html"
 install -m 0644 "$release_root/README.md" "$documentation/README.md"
