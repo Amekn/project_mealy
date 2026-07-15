@@ -999,6 +999,120 @@ fn find_effect_observation(value: &Value) -> Option<(Value, String)> {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)]
+async fn subscription_provider_reserves_official_client_input_overhead() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = TempDir::new().expect("temporary subscription daemon home");
+    write_provider_config(home.path(), "http://127.0.0.1:9/v1");
+    let executable = home.path().join("codex-subscription-fixture");
+    let fixture_body = concat!(
+        "#!/bin/sh\n",
+        "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+        "cat >/dev/null\n",
+        "printf '%s\\n' ",
+        "'{\"type\":\"thread.started\",\"thread_id\":\"subscription-overhead-proof\"}' ",
+        "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"Subscription overhead settled safely.\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
+        "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":8000,\"output_tokens\":5}}'\n",
+    );
+    fs::write(&executable, fixture_body).expect("write subscription fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make subscription fixture executable");
+    let executable = executable
+        .canonicalize()
+        .expect("canonical subscription fixture");
+    let config_path = home.path().join("config.json");
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&config_path).expect("read configured provider fixture"))
+            .expect("configured provider JSON");
+    config["provider"] = json!({
+        "kind": "subscription_cli",
+        "providerId": "openai.subscription",
+        "client": "open_ai_codex",
+        "executablePath": executable.to_str().expect("UTF-8 fixture path"),
+        "executableSha256": sha256_digest(fixture_body.as_bytes()),
+        "model": "fixture-model",
+        "residency": "remote",
+        "contextTokens": 32768,
+        "maximumOutputTokens": 64,
+        "estimatedLatencyMs": 1000
+    });
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&config).expect("encode subscription config"),
+    )
+    .expect("write subscription config");
+
+    let client = http_client();
+    let _daemon = Daemon::spawn(home.path(), false);
+    let connection = wait_until_ready(&client, home.path()).await;
+    let session: CreateSessionResponse = authorized_post(
+        &client,
+        &connection,
+        "/v1/sessions",
+        &CreateSessionRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    let admission: InputAdmissionResponse = authorized_post(
+        &client,
+        &connection,
+        &format!("/v1/sessions/{}/inputs", session.session_id),
+        &SubmitInputRequest {
+            api_version: API_VERSION.to_owned(),
+            idempotency_key: "subscription-overhead-proof".to_owned(),
+            delivery_mode: DeliveryMode::Queue,
+            content: "Return one short response.".to_owned(),
+        },
+    )
+    .await;
+    let task_id = wait_for_task_id(
+        &client,
+        &connection,
+        &session.session_id,
+        admission.cursor.0,
+    )
+    .await;
+    let task = wait_until_terminal(&client, &connection, &task_id).await;
+    assert_eq!(task.status, TaskStatus::Succeeded, "task: {task:?}");
+    assert_eq!(task.usage.used_input_tokens, 8000);
+    assert_eq!(
+        task.final_response.as_deref(),
+        Some("Subscription overhead settled safely.")
+    );
+
+    let database = rusqlite::Connection::open(home.path().join("mealy.sqlite3"))
+        .expect("open subscription evidence database");
+    let (reserved_input, normalized_input, capability_json) = database
+        .query_row(
+            "SELECT reservation.input_tokens, manifest.total_token_estimate, \
+                    attempt.capability_snapshot_json \
+             FROM model_attempt attempt \
+             JOIN budget_reservation reservation USING(attempt_id) \
+             JOIN context_manifest manifest ON manifest.id = attempt.context_manifest_id",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .expect("durable subscription reservation");
+    assert_eq!(reserved_input, normalized_input + 16_384);
+    let capabilities: Value =
+        serde_json::from_str(&capability_json).expect("capability snapshot JSON");
+    assert_eq!(capabilities["inputTokenOverhead"], 16_384);
+    let replay: TaskReplayResponse =
+        authorized_get(&client, &connection, &format!("/v1/tasks/{task_id}/replay")).await;
+    assert!(replay.evidence_complete, "replay: {replay:?}");
+    assert_eq!(replay.live_provider_calls, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)]
 async fn configured_provider_completes_validates_and_replays_without_live_dispatch() {

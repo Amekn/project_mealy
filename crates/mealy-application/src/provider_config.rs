@@ -1,6 +1,6 @@
-use crate::ProviderPricing;
+use crate::{ProviderPricing, is_sha256_digest};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, net::IpAddr};
+use std::{collections::BTreeSet, net::IpAddr, path::Path};
 use thiserror::Error;
 use url::Url;
 
@@ -73,6 +73,57 @@ pub enum ProviderConfig {
         /// Bounded routing estimate, not a dispatch timeout.
         estimated_latency_ms: u64,
     },
+    /// Owner-local official client using that client's existing subscription authentication.
+    SubscriptionCli {
+        /// Stable provider identity retained in routing and attempt evidence.
+        provider_id: String,
+        /// Official client whose own authenticated process performs the request.
+        client: SubscriptionCliClient,
+        /// Exact canonical official-client executable path.
+        executable_path: String,
+        /// SHA-256 identity checked before every invocation.
+        executable_sha256: String,
+        /// Exact model name selected through the official client.
+        model: String,
+        /// Owner-declared remote residency label used by routing policy.
+        residency: String,
+        /// Maximum normalized input-token window advertised by this model.
+        context_tokens: u64,
+        /// Maximum accepted output tokens; over-limit client results fail closed.
+        maximum_output_tokens: u64,
+        /// Bounded routing estimate, not a dispatch timeout.
+        estimated_latency_ms: u64,
+    },
+}
+
+/// Official local client allowed to broker its own subscription session.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionCliClient {
+    /// `OpenAI` Codex CLI authenticated with `ChatGPT` sign-in.
+    OpenAiCodex,
+    /// Anthropic Claude Code authenticated with a Claude subscription.
+    AnthropicClaude,
+}
+
+impl SubscriptionCliClient {
+    /// Stable adapter protocol identity.
+    #[must_use]
+    pub const fn protocol(self) -> &'static str {
+        match self {
+            Self::OpenAiCodex => "openai_subscription_cli",
+            Self::AnthropicClaude => "claude_subscription_cli",
+        }
+    }
+
+    /// Conservative provider-owned input allowance reserved on every request.
+    #[must_use]
+    pub const fn input_token_overhead(self) -> u64 {
+        match self {
+            Self::OpenAiCodex => 16_384,
+            Self::AnthropicClaude => 24_576,
+        }
+    }
 }
 
 /// Trusted-process reference to provider credential material.
@@ -166,6 +217,32 @@ impl ProviderConfig {
                     Err(ProviderConfigError::Invalid)
                 }
             }
+            Self::SubscriptionCli {
+                provider_id,
+                client,
+                executable_path,
+                executable_sha256,
+                model,
+                residency,
+                context_tokens,
+                maximum_output_tokens,
+                estimated_latency_ms,
+            } => {
+                if valid_label(provider_id, 128)
+                    && valid_absolute_executable_path(executable_path)
+                    && is_sha256_digest(executable_sha256)
+                    && valid_label(model, 256)
+                    && valid_label(residency, 128)
+                    && (1..=2_000_000).contains(context_tokens)
+                    && client.input_token_overhead() < *context_tokens
+                    && (1..=*context_tokens).contains(maximum_output_tokens)
+                    && (1..=300_000).contains(estimated_latency_ms)
+                {
+                    Ok(())
+                } else {
+                    Err(ProviderConfigError::Invalid)
+                }
+            }
         }
     }
 
@@ -173,7 +250,7 @@ impl ProviderConfig {
     #[must_use]
     pub const fn pricing(&self) -> ProviderPricing {
         match self {
-            Self::BuiltinFixture => ProviderPricing {
+            Self::BuiltinFixture | Self::SubscriptionCli { .. } => ProviderPricing {
                 input_microunits_per_million_tokens: 0,
                 output_microunits_per_million_tokens: 0,
             },
@@ -199,7 +276,8 @@ impl ProviderConfig {
         match self {
             Self::BuiltinFixture => None,
             Self::OpenAiResponses { provider_id, .. }
-            | Self::AnthropicMessages { provider_id, .. } => Some(provider_id),
+            | Self::AnthropicMessages { provider_id, .. }
+            | Self::SubscriptionCli { provider_id, .. } => Some(provider_id),
         }
     }
 
@@ -218,6 +296,7 @@ impl ProviderConfig {
                 residency,
                 ..
             } => validated_provider_url(base_url).map(|local| (residency.as_str(), local)),
+            Self::SubscriptionCli { residency, .. } => Some((residency.as_str(), false)),
         }
     }
 }
@@ -348,11 +427,19 @@ fn valid_label(value: &str, maximum: usize) -> bool {
         && !value.chars().any(char::is_control)
 }
 
+fn valid_absolute_executable_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 2_048
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+        && Path::new(value).is_absolute()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ProviderConfig, ProviderCredentialReference, valid_provider_secret_id,
-        validate_provider_base_url, validate_provider_chain,
+        ProviderConfig, ProviderCredentialReference, SubscriptionCliClient,
+        valid_provider_secret_id, validate_provider_base_url, validate_provider_chain,
     };
 
     fn remote(credential: Option<ProviderCredentialReference>) -> ProviderConfig {
@@ -369,6 +456,31 @@ mod tests {
             output_microunits_per_million_tokens: 2_000_000,
             estimated_latency_ms: 10_000,
         }
+    }
+
+    #[test]
+    fn subscription_config_reserves_its_client_owned_context() {
+        let mut subscription = ProviderConfig::SubscriptionCli {
+            provider_id: "openai.subscription".to_owned(),
+            client: SubscriptionCliClient::OpenAiCodex,
+            executable_path: "/usr/bin/codex".to_owned(),
+            executable_sha256: "0".repeat(64),
+            model: "codex-snapshot".to_owned(),
+            residency: "trusted-remote".to_owned(),
+            context_tokens: 16_385,
+            maximum_output_tokens: 1_024,
+            estimated_latency_ms: 60_000,
+        };
+        assert!(subscription.validate().is_ok());
+        let ProviderConfig::SubscriptionCli { context_tokens, .. } = &mut subscription else {
+            unreachable!()
+        };
+        *context_tokens = SubscriptionCliClient::OpenAiCodex.input_token_overhead();
+        assert!(subscription.validate().is_err());
+        assert_eq!(
+            SubscriptionCliClient::AnthropicClaude.input_token_overhead(),
+            24_576
+        );
     }
 
     #[test]

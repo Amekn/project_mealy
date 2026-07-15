@@ -12,7 +12,7 @@ This is risk reduction, not a claim that arbitrary native code can be perfectly 
 ## Assets
 
 - owner files, repositories, devices, and local services;
-- provider, channel, and service credentials;
+- provider, channel, and service credentials, including official-client subscription sessions;
 - private conversations, context manifests, memories, and artifacts;
 - task/effect/approval integrity;
 - daemon configuration, policy, skill/extension manifests, and audit history;
@@ -34,13 +34,14 @@ This is risk reduction, not a claim that arbitrary native code can be perfectly 
 | Local MCP stdio server | Untrusted owner-selected native code confined to a fresh read-only sandbox and exact schema/tool-set grant |
 | Chrome Headless Shell and rendered page | Untrusted browser/runtime content confined to a fresh agent-only profile, private network namespace, and exact GET/HEAD destination grant |
 | Provider/service | External dependency; responses untrusted, credential scope limited |
+| Official subscription client | Trusted owner-installed authentication/transport broker; executable identity pinned, model decision untrusted |
 | Sandbox worker | Disposable, lower-trust process |
 
 ## Trust boundaries
 
 1. Channel/network to API: signature/token verification, replay protection, size/rate limits.
 2. API to application: principal authorization and command validation.
-3. Application to provider: privacy routing and secret broker.
+3. Application to provider: privacy routing, secret broker, or exact-digest official subscription client.
 4. Application to executor: capability token, sandbox profile, effect ID, fencing token.
 5. Application to extension host: manifest grant and versioned RPC.
 6. Skill package to context/resource tool: exact inventory/digest verification, separate activation, and bounded reads.
@@ -262,6 +263,27 @@ by UTC completion day, and rejects residual reservations, unbalanced status tota
 buckets, or non-exact browser integers. The per-task adapter distinguishes used from reserved
 microunits. Neither view labels configured provider-neutral microunits as an invoice or infers
 unsupported upstream billing axes. Financial reconciliation still requires the provider's records.
+
+### Subscription bridge steals a session or exposes ambient client tools
+
+Controls: Mealy does not parse, copy, refresh, export, or persist OAuth/session material. The owner
+first signs in with the official Codex or Claude client; Mealy invokes only the canonical absolute
+client path whose SHA-256 was approved and rechecks that identity before every request. The client
+process necessarily retains access to its own owner authentication home and is therefore trusted
+code, not a sandbox worker. Its environment is otherwise cleared to a small locale/runtime/auth-home
+allowlist; OpenAI, Anthropic, OpenRouter, and private-endpoint API-key variables are never inherited.
+
+Each invocation starts at `/`, loads no project rules, receives the normalized bounded conversation
+and Mealy tool descriptions through stdin only, and disables host shell, filesystem, browser,
+computer, image, app/connector, subagent, skill-dependency, and session-persistence facilities.
+Output must match a fixed structured decision envelope; tool identity must be one Mealy-supplied ID,
+JSON arguments must decode to one bounded object, final text and complete usage remain bounded, and
+the process is deadline/cancellation/concurrency/rate limited. The configured output-token limit is
+an acceptance check over reported usage because these clients do not expose the direct API's exact
+upstream maximum-output control. Invalid login, executable drift, nonzero exit, malformed output,
+missing usage, or over-limit usage fails closed. Client updates require explicit stopped-home
+reactivation. This owner-local convenience is not credited as a service-account, CI, multi-user, or
+general API authentication boundary; upstream subscription terms and limits still apply.
 
 ### Secret disclosure in prompts or logs
 

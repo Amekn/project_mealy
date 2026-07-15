@@ -603,6 +603,16 @@ Routing is a policy decision with an explanation. Fallback creates a new attempt
 
 The provider broker owns credentials, rate limits, concurrency, and cost reservations. Agent workers and extension hosts receive no ambient provider API keys.
 
+An optional owner-local subscription adapter may delegate authentication and transport to an
+already signed-in official Codex or Claude client. It is not a core dependency and does not turn a
+personal subscription into an API credential. Configuration pins the canonical executable and
+SHA-256; every invocation rechecks that identity, clears API-key variables, disables host-client
+tools/connectors/persistence, and accepts only bounded structured decision and usage output. The
+official client remains trusted code with access to its own authentication home, while its model
+decision remains untrusted provider output. The direct Responses/Messages adapters and deterministic
+fixture remain independently implemented, preserving the requirement that Mealy not depend on
+another agent product for core behavior.
+
 ## 13. Extension architecture
 
 ### 13.1 Manifest plane

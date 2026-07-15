@@ -20,6 +20,9 @@ pub struct ProviderCapabilities {
     pub context_tokens: u64,
     /// Maximum normalized generated tokens.
     pub maximum_output_tokens: u64,
+    /// Conservative provider-owned input tokens added outside normalized Mealy context.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub input_token_overhead: u64,
     /// Whether normalized tool calls are supported.
     pub tool_calling: bool,
     /// Whether structured JSON outputs are supported.
@@ -50,6 +53,11 @@ pub struct ProviderPricing {
     pub input_microunits_per_million_tokens: u64,
     /// Output-token price per one million tokens in configured currency microunits.
     pub output_microunits_per_million_tokens: u64,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// One health/latency/trust-qualified routing candidate.
@@ -238,6 +246,8 @@ fn candidate_matches(policy: &ProviderRoutingPolicy, candidate: &ProviderRouteCa
         && capabilities.pricing.output_microunits_per_million_tokens
             <= policy.maximum_output_microunits_per_million_tokens
         && candidate.estimated_latency_ms <= policy.maximum_latency_ms
+        && capabilities.context_tokens > capabilities.input_token_overhead
+        && capabilities.maximum_output_tokens != 0
         && capabilities.maximum_concurrent_requests != 0
         && capabilities.requests_per_minute != 0
 }
@@ -544,6 +554,7 @@ mod tests {
                 input_modalities: BTreeSet::from(["text".to_owned()]),
                 context_tokens: 8_192,
                 maximum_output_tokens: 1_024,
+                input_token_overhead: 0,
                 tool_calling: true,
                 structured_output: true,
                 reasoning_controls: BTreeSet::from(["none".to_owned()]),

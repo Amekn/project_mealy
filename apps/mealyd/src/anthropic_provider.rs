@@ -292,6 +292,7 @@ impl AnthropicMessagesProvider {
                 input_modalities: BTreeSet::from(["text".to_owned()]),
                 context_tokens: settings.context_tokens,
                 maximum_output_tokens: settings.maximum_output_tokens,
+                input_token_overhead: 0,
                 tool_calling: true,
                 structured_output: true,
                 reasoning_controls: BTreeSet::from(["none".to_owned()]),

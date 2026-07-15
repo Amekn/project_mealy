@@ -6,26 +6,28 @@ on:
       provider:
         description: Remote provider adapter to exercise
         required: true
+        default: openrouter-free
         type: choice
         options:
+          - openrouter-free
+          - private-responses
           - openai
           - anthropic
-          - openrouter
       model:
-        description: Exact current model ID or snapshot
-        required: true
+        description: Exact model ID for private/direct probes; ignored for OpenRouter free
+        required: false
         type: string
       context_tokens:
-        description: Conservative verified context-token limit
-        required: true
+        description: Verified context limit for private/direct probes; discovered for OpenRouter free
+        required: false
         type: string
       input_price:
-        description: Input price in currency microunits per million tokens
-        required: true
+        description: Input price for direct OpenAI/Anthropic; fixed to zero for OpenRouter free
+        required: false
         type: string
       output_price:
-        description: Output price in currency microunits per million tokens
-        required: true
+        description: Output price for direct OpenAI/Anthropic; fixed to zero for OpenRouter free
+        required: false
         type: string
       run_brave_search:
         description: Also exercise Brave Search using BRAVE_SEARCH_API_KEY
@@ -86,7 +88,8 @@ jobs:
           LIVE_OUTPUT_PRICE: ${{ inputs.output_price }}
           MEALY_OPENAI_LIVE_API_KEY: ${{ inputs.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
           MEALY_ANTHROPIC_LIVE_API_KEY: ${{ inputs.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
-          MEALY_OPENROUTER_LIVE_API_KEY: ${{ inputs.provider == 'openrouter' && secrets.OPENROUTER_API_KEY || '' }}
+          MEALY_OPENROUTER_LIVE_API_KEY: ${{ inputs.provider == 'openrouter-free' && secrets.OPENROUTER_API_KEY || '' }}
+          MEALY_PRIVATE_LIVE_API_KEY: ${{ inputs.provider == 'private-responses' && secrets.LOCAL_API_KEY || '' }}
         run: |
           set -euo pipefail
           home="$RUNNER_TEMP/mealy-live-home"
@@ -104,11 +107,12 @@ jobs:
           case $LIVE_PROVIDER in
             openai) MEALY_LIVE_API_KEY=$MEALY_OPENAI_LIVE_API_KEY ;;
             anthropic) MEALY_LIVE_API_KEY=$MEALY_ANTHROPIC_LIVE_API_KEY ;;
-            openrouter) MEALY_LIVE_API_KEY=$MEALY_OPENROUTER_LIVE_API_KEY ;;
+            openrouter-free) MEALY_LIVE_API_KEY=$MEALY_OPENROUTER_LIVE_API_KEY ;;
+            private-responses) MEALY_LIVE_API_KEY=$MEALY_PRIVATE_LIVE_API_KEY ;;
             *) echo "unsupported live provider selection" >&2; exit 64 ;;
           esac
           unset MEALY_OPENAI_LIVE_API_KEY MEALY_ANTHROPIC_LIVE_API_KEY \
-            MEALY_OPENROUTER_LIVE_API_KEY
+            MEALY_OPENROUTER_LIVE_API_KEY MEALY_PRIVATE_LIVE_API_KEY
           export MEALY_LIVE_API_KEY
           credential=$MEALY_LIVE_API_KEY
           if [[ -z $credential ]]; then
@@ -118,8 +122,54 @@ jobs:
           contains_credential() {
             grep -Fq -f <(printf '%s\n' "$credential") -- "$@"
           }
+          base_url_args=()
+          if [[ $LIVE_PROVIDER == openrouter-free ]]; then
+            catalog="$RUNNER_TEMP/mealy-live-openrouter-catalog.json"
+            target/release/mealyctl --home "$home" config provider-models-openrouter \
+              --credential-env MEALY_LIVE_API_KEY --limit 500 >"$catalog"
+            if contains_credential "$catalog"; then
+              echo "provider credential appeared in the OpenRouter catalog" >&2
+              exit 70
+            fi
+            selected=$(jq -cer '
+              [.models[] | select(
+                (.id | endswith(":free"))
+                and .toolCapable == true
+                and .pricingComplete == true
+                and .tokenLimitsComplete == true
+                and .inputMicrounitsPerMillionTokens == 0
+                and .outputMicrounitsPerMillionTokens == 0
+                and (.unsupportedPricingAxes | type == "array" and length == 0)
+                and (.contextTokens | type == "number" and . > 256)
+                and (.maximumOutputTokens | type == "number" and . >= 256)
+              )] | sort_by(.id) | first
+            ' "$catalog")
+            LIVE_MODEL=$(jq -er '.id' <<<"$selected")
+            LIVE_CONTEXT_TOKENS=$(jq -er '.contextTokens' <<<"$selected")
+            LIVE_INPUT_PRICE=$(jq -er '.inputMicrounitsPerMillionTokens' <<<"$selected")
+            LIVE_OUTPUT_PRICE=$(jq -er '.outputMicrounitsPerMillionTokens' <<<"$selected")
+            [[ $LIVE_MODEL == *:free ]]
+            [[ $LIVE_INPUT_PRICE == 0 && $LIVE_OUTPUT_PRICE == 0 ]]
+            LIVE_PROVIDER=openrouter
+          elif [[ $LIVE_PROVIDER == private-responses ]]; then
+            if [[ ! $LIVE_CONTEXT_TOKENS =~ ^[1-9][0-9]*$ || -z $LIVE_MODEL ]]; then
+              echo "private provider model and verified context limit are required" >&2
+              exit 64
+            fi
+            LIVE_INPUT_PRICE=0
+            LIVE_OUTPUT_PRICE=0
+            LIVE_PROVIDER=openai
+            base_url_args=(--base-url https://the-beast.taile6fad0.ts.net/v1)
+          elif [[ ! $LIVE_CONTEXT_TOKENS =~ ^[1-9][0-9]*$ \
+            || ! $LIVE_INPUT_PRICE =~ ^[0-9]+$ \
+            || ! $LIVE_OUTPUT_PRICE =~ ^[0-9]+$ \
+            || -z $LIVE_MODEL ]]; then
+            echo "direct-provider model, limit, and price inputs are required" >&2
+            exit 64
+          fi
           target/release/mealyctl --home "$home" setup \
             --provider "$LIVE_PROVIDER" \
+            "${base_url_args[@]}" \
             --model "$LIVE_MODEL" \
             --context-tokens "$LIVE_CONTEXT_TOKENS" \
             --maximum-output-tokens 256 \

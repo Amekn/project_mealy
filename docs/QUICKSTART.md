@@ -590,6 +590,46 @@ To add a second local model behind the same trust/locality boundary while stoppe
   --approve
 ```
 
+### Authenticated private llama-server over Tailnet
+
+The owner deployment at `https://the-beast.taile6fad0.ts.net/v1` is authenticated and is not a
+literal-loopback endpoint, so use the general Responses-compatible adapter rather than the
+credentialless local preset. The machine running Mealy must already be able to resolve, reach, and
+validate that Tailnet HTTPS origin. Inspect the server's exact model IDs without changing config:
+
+```sh
+export LOCAL_API_KEY='replace-with-your-private-endpoint-key'
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-models \
+  --base-url https://the-beast.taile6fad0.ts.net/v1 \
+  --credential-env LOCAL_API_KEY
+```
+
+After verifying that the selected llama-server model implements `POST /v1/responses`, activate it
+with conservative limits from the server's actual launch configuration:
+
+```sh
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider \
+  --provider-id local.tailnet.responses \
+  --base-url https://the-beast.taile6fad0.ts.net/v1 \
+  --model YOUR_EXACT_LLAMA_SERVER_MODEL_ID \
+  --secret-id local-tailnet-primary \
+  --credential-env LOCAL_API_KEY \
+  --residency private-tailnet \
+  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
+  --maximum-output-tokens 4096 \
+  --input-microunits-per-million-tokens 0 \
+  --output-microunits-per-million-tokens 0 \
+  --approve
+unset LOCAL_API_KEY
+```
+
+This is Mealy's preferred frequent/long-running provider for this installation. The activation
+probe is still mandatory: a server that exposes only Chat Completions, returns a different model
+identity, or lacks the required Responses tool contract is rejected atomically. Add
+`--disable-streaming` only when the endpoint supports terminal Responses JSON but not Responses
+SSE. Mealy classifies the HTTPS endpoint as remote for routing and secret handling even though it
+is privately hosted.
+
 ### OpenRouter Responses beta
 
 OpenRouter exposes a stateless OpenAI-compatible Responses API, currently documented as beta. Use
@@ -610,15 +650,36 @@ lists `unsupportedPricingAxes`. Use catalog prices as complete accounting inputs
 or cache charges cannot currently be settled by Mealy's two-axis token budget. Catalog presence
 does not prove the beta Responses path or every future tool route.
 
+For this installation, select only records whose exact ID ends in `:free`, whose input and output
+microunit prices are both zero, whose `pricingComplete` and `tokenLimitsComplete` fields are true,
+whose `unsupportedPricingAxes` array is empty, and whose `toolCapable` field is true. This is the
+same fail-closed rule used by the reviewed live-provider workflow:
+
+```sh
+catalog=$(mktemp)
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-models-openrouter \
+  --limit 500 >"$catalog"
+jq -r '.models[] | select(
+  (.id | endswith(":free"))
+  and .toolCapable == true
+  and .pricingComplete == true
+  and .tokenLimitsComplete == true
+  and .inputMicrounitsPerMillionTokens == 0
+  and .outputMicrounitsPerMillionTokens == 0
+  and (.unsupportedPricingAxes | length == 0)
+) | [.id, .contextTokens, .maximumOutputTokens] | @tsv' "$catalog"
+rm -f "$catalog"
+```
+
 Activate the exact slug while stopped:
 
 ```sh
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-openrouter \
-  --model YOUR_EXACT_OPENROUTER_SLUG \
+  --model YOUR_EXACT_OPENROUTER_SLUG_ENDING_IN_:free \
   --context-tokens YOUR_VERIFIED_CONTEXT_LIMIT \
   --maximum-output-tokens YOUR_VERIFIED_OUTPUT_LIMIT \
-  --input-microunits-per-million-tokens YOUR_CONSERVATIVE_INPUT_PRICE \
-  --output-microunits-per-million-tokens YOUR_CONSERVATIVE_OUTPUT_PRICE \
+  --input-microunits-per-million-tokens 0 \
+  --output-microunits-per-million-tokens 0 \
   --approve
 unset OPENROUTER_API_KEY
 ```
@@ -633,6 +694,58 @@ a promise that the upstream will never change. See the official
 [Responses overview](https://openrouter.ai/docs/api/reference/responses/overview),
 [user-filtered Models API](https://openrouter.ai/docs/api/api-reference/models/list-models-user),
 and [model pricing schema](https://openrouter.ai/docs/guides/overview/models#model-pricing).
+
+Free-model availability and rate limits can change. Re-run account-filtered discovery before
+activation or acceptance; never remove the `:free` suffix or substitute a merely low-cost model.
+
+### OpenAI and Claude subscription sign-in
+
+A ChatGPT subscription is not an OpenAI Platform API key. Mealy supports that owner-local account
+only by launching the official Codex client that is already signed in with ChatGPT. It does not
+read, copy, refresh, or store the client's OAuth material:
+
+```sh
+codex login status
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-openai \
+  --model YOUR_EXACT_CODEX_SUBSCRIPTION_MODEL \
+  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
+  --maximum-output-tokens 4096 \
+  --approve
+```
+
+Claude subscription access uses the same boundary around an already signed-in official Claude
+client:
+
+```sh
+claude auth status
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-claude \
+  --model YOUR_EXACT_CLAUDE_SUBSCRIPTION_MODEL \
+  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
+  --maximum-output-tokens 4096 \
+  --approve
+```
+
+If PATH lookup is ambiguous, add `--executable-path /absolute/path/to/the/official/client`. Mealy
+canonicalizes that path, records its SHA-256, and rechecks the bytes before every request. The
+official process receives no OpenAI, Anthropic, OpenRouter, or local API-key variables; client
+tools, connectors, project instructions, session persistence, and writable execution are disabled.
+Only a bounded JSON conversation/tool envelope enters stdin, and only schema-valid decision and
+usage output is accepted. Updating the official client changes its digest and deliberately requires
+stopped-home reactivation. Expired or invalid client login fails the connectivity probe without
+replacing the previous provider.
+
+Activation raises the current per-provider deadline only when needed to cover the declared
+routing-latency estimate (60 seconds by default) and refuses to exceed the configured total run
+wall-time bound. Mealy also reserves a conservative, capability-recorded allowance for input
+tokens added by the official client outside the normalized conversation; the provider's reported
+usage must still fit that durable reservation before settlement succeeds.
+
+The configured output-token value is an acceptance ceiling checked against client-reported usage;
+the subscription clients do not currently expose the same exact upstream `max_output_tokens`
+control as the direct APIs. Use the private llama-server or zero-price OpenRouter route for
+frequent, long-running, unattended, or release-acceptance work. Subscription availability, account
+limits, and official-client terms remain upstream constraints, and these commands are not a way to
+turn a personal subscription into a general API credential.
 
 ### Credentialed OpenAI or Anthropic
 

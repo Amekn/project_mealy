@@ -50,18 +50,15 @@ reviewers, then add only the provider secret needed for the reviewed manual prob
 secret only when that independent option will run). Never place those credentials in repository,
 workflow, or command-line configuration.
 
-The checked project license is currently all-rights-reserved and expressly grants no right to use,
-copy, modify, publish, or distribute Mealy. It cannot support the public-install goal. Before a
-production tag, the copyright holder must deliberately replace it with Apache-2.0, MIT, or dual
-`MIT OR Apache-2.0` terms. The existing exact `license-file = "LICENSE"` inheritance may be
-retained to avoid an unrelated package-metadata change, or it can be replaced consistently with
-the matching SPDX expression.
+The copyright holder selected Apache-2.0 on 2026-07-15. The repository now carries the canonical
+Apache License 2.0 text through the existing exact `license-file = "LICENSE"` inheritance, so the
+choice does not introduce an unrelated package-metadata change.
 A clean auditable fingerprint probe at commit `0be7f63` changed only the referenced license-file
 content and reproduced the active soak subject exactly: `mealyd` SHA-256
 `649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572` and `mealyctl` SHA-256
-`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. The final selected terms
-must still receive the same fresh clean-build comparison before publication. The native tag jobs
-run `scripts/validate-public-license.sh` and refuse publication while the restrictive terms,
+`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. The selected canonical terms
+still require the same fresh clean-build comparison before publication. The native tag jobs run
+`scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
 package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,
 not a claim that automated text checks replace legal review.
@@ -83,9 +80,15 @@ conversations, and force-push/deletion denial. On 2026-07-15, strict protection 
 seven authoritative checks `Strict workspace gate`, `Linux sandbox conformance`, `Linux
 rendered-browser conformance`, and `Control plane` on Ubuntu x86-64, Ubuntu ARM64, macOS ARM64, and
 macOS Intel. Repository-level immutable releases and private vulnerability reporting are enabled.
-The `live-provider-smoke` Environment requires an explicit repository-owner review, but no provider
-credential is present. Create the tag only after required CI, the current durability report, and one
-reviewed real-account smoke are all complete.
+The `live-provider-smoke` Environment requires an explicit repository-owner review and now contains
+owner-supplied `OPENROUTER_API_KEY` and `LOCAL_API_KEY` secrets. The checked workflow consumes only
+the selected provider secret. Its default OpenRouter gate dynamically requires an exact
+tool-capable `:free` model, complete zero pricing, complete token limits, and no unsupported billing
+axes; it cannot silently select a paid model. The local credential is reserved for a separately reachable local
+endpoint and is not exposed to public or untrusted runners. Its optional workflow path hardcodes
+the reviewed Tailnet HTTPS origin, requires explicit model/context inputs, and fixes both prices to
+zero so a dispatch input cannot redirect that credential. Create the tag only after required CI,
+the current durability report, and one reviewed real-account smoke are all complete.
 
 After publication, the same tag workflow downloads the immutable public assets without build-job
 state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on
@@ -403,11 +406,9 @@ remove it before uninstalling.
 
 ## Maintainer release checklist
 
-1. Have the copyright holder explicitly choose Apache-2.0, MIT, or dual `MIT OR Apache-2.0`, replace
-   the current all-rights-reserved `LICENSE`, update workspace/package metadata only if selecting
-   SPDX metadata instead of the existing exact license-file inheritance, and run
-   `scripts/validate-public-license.sh .`. Then make the workspace version and intended `vVERSION`
-   tag identical.
+1. Confirm the copyright-holder-selected canonical Apache-2.0 `LICENSE` remains inherited by every
+   workspace package and run `scripts/validate-public-license.sh .`. Then make the workspace version
+   and intended `vVERSION` tag identical.
 2. Compare the pinned Headless Shell version with the official
    [Chrome for Testing stable metadata](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json).
    If the reviewed stable patch changed, update its exact archive byte count/SHA-256 and product

@@ -318,6 +318,107 @@ fn provider_model_discovery_does_not_echo_failure_body_or_credential() {
 }
 
 #[test]
+#[cfg(unix)]
+fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let cases = [
+        (
+            "provider-subscription-openai",
+            "openai_subscription_cli",
+            "open_ai_codex",
+            "openai.subscription",
+            concat!(
+                "#!/bin/sh\n",
+                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+                "cat >/dev/null\n",
+                "printf '%s\\n' ",
+                "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
+                "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
+                "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
+            ),
+        ),
+        (
+            "provider-subscription-claude",
+            "claude_subscription_cli",
+            "anthropic_claude",
+            "claude.subscription",
+            concat!(
+                "#!/bin/sh\n",
+                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+                "cat >/dev/null\n",
+                "printf '%s\\n' ",
+                "'{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\",\"session_id\":\"fixture-request\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5},\"modelUsage\":{\"fixture-model\":{}}}'\n",
+            ),
+        ),
+    ];
+
+    for (command, protocol, client, provider_id, fixture_body) in cases {
+        let home = tempfile::tempdir().expect("temporary subscription home");
+        fs::create_dir(home.path().join("config-history")).expect("configuration history");
+        fs::write(
+            home.path().join("config.json"),
+            serde_json::to_vec_pretty(&default_config()).expect("encode default config"),
+        )
+        .expect("write default config");
+        let executable = home.path().join(format!("{command}-fixture"));
+        fs::write(&executable, fixture_body).expect("write subscription fixture");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make subscription fixture executable");
+        let executable = executable
+            .canonicalize()
+            .expect("canonical subscription fixture");
+        let executable_digest = sha256_digest(fixture_body.as_bytes());
+
+        let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+            .arg("--home")
+            .arg(home.path())
+            .args(["config", command, "--executable-path"])
+            .arg(&executable)
+            .args([
+                "--model",
+                "fixture-model",
+                "--context-tokens",
+                "32768",
+                "--maximum-output-tokens",
+                "64",
+                "--approve",
+            ])
+            .env("OPENAI_API_KEY", "must-not-reach-official-client")
+            .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+            .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+            .env("LOCAL_API_KEY", "must-not-reach-official-client")
+            .output()
+            .expect("activate subscription provider");
+        assert!(
+            output.status.success(),
+            "{command} activation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).expect("activation response");
+        assert_eq!(response["protocol"], protocol);
+        assert_eq!(response["providerId"], provider_id);
+        assert_eq!(response["connectivityTested"], true);
+        assert_eq!(response["secretId"], Value::Null);
+
+        let config: Value = serde_json::from_slice(
+            &fs::read(home.path().join("config.json")).expect("subscription config"),
+        )
+        .expect("subscription config JSON");
+        assert_eq!(config["provider"]["kind"], "subscription_cli");
+        assert_eq!(config["provider"]["client"], client);
+        assert_eq!(
+            config["provider"]["executablePath"],
+            executable.to_str().expect("UTF-8 fixture path")
+        );
+        assert_eq!(config["provider"]["executableSha256"], executable_digest);
+        assert_eq!(config["provider"]["model"], "fixture-model");
+        assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 60_000);
+        assert!(!home.path().join("provider-secrets").exists());
+    }
+}
+
+#[test]
 fn guided_setup_initializes_a_clean_home_probes_brokers_and_prints_exact_handoff() {
     let home = tempfile::tempdir().expect("clean temporary Mealy home");
     let completed = json!({

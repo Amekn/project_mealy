@@ -1602,6 +1602,14 @@ fn load_read_tool_id(
         .map_err(map_sqlite_error)
 }
 
+fn model_input_reservation(commit: &PrepareModelAttemptCommit) -> Result<u64, AgentStoreError> {
+    commit
+        .manifest
+        .total_token_estimate
+        .checked_add(commit.capabilities.input_token_overhead)
+        .ok_or_else(|| invariant("provider input-token reservation overflows"))
+}
+
 fn validate_prepare_model(commit: &PrepareModelAttemptCommit) -> Result<(), AgentStoreError> {
     commit
         .limits
@@ -1609,12 +1617,21 @@ fn validate_prepare_model(commit: &PrepareModelAttemptCommit) -> Result<(), Agen
         .map_err(|_| invariant("agent loop limits are invalid"))?;
     validate_context_manifest(&commit.manifest)
         .map_err(|error| invariant(format!("context manifest is invalid: {error}")))?;
+    let reserved_input_tokens = model_input_reservation(commit)?;
+    let provider_context_reservation = commit
+        .manifest
+        .token_budget
+        .checked_add(commit.capabilities.input_token_overhead)
+        .ok_or_else(|| invariant("provider context reservation overflows"))?;
     if commit.manifest.run_id != commit.fence.run_id()
         || commit.request.run_id != commit.fence.run_id()
         || commit.request.attempt_id != commit.attempt_id
         || commit.request.context_manifest_id != commit.manifest.manifest_id
         || commit.request.provider_id != commit.capabilities.provider_id
         || commit.request.model_id != commit.capabilities.model_id
+        || commit.capabilities.input_token_overhead >= commit.capabilities.context_tokens
+        || provider_context_reservation > commit.capabilities.context_tokens
+        || reserved_input_tokens > commit.limits.maximum_input_tokens
         || commit.request.maximum_output_tokens > commit.limits.maximum_output_tokens
         || commit.reserved_output_bytes > commit.limits.maximum_output_bytes
         || commit.reserved_cost_microunits > commit.limits.maximum_cost_microunits
@@ -1862,10 +1879,7 @@ fn reserve_model_budget(
     commit: &PrepareModelAttemptCommit,
     prepared_at_ms: i64,
 ) -> Result<(), AgentStoreError> {
-    let input_tokens = to_i64(
-        commit.manifest.total_token_estimate,
-        "reserved input tokens",
-    )?;
+    let input_tokens = to_i64(model_input_reservation(commit)?, "reserved input tokens")?;
     let output_tokens = to_i64(
         commit.request.maximum_output_tokens,
         "reserved output tokens",
@@ -2009,7 +2023,7 @@ fn insert_model_attempt(
                     .map_err(|_| invariant("tool schema digests cannot be serialized"))?,
                 json!({
                     "modelCalls": 1,
-                    "inputTokens": commit.manifest.total_token_estimate,
+                    "inputTokens": model_input_reservation(commit)?,
                     "outputTokens": commit.request.maximum_output_tokens,
                     "costMicrounits": commit.reserved_cost_microunits,
                     "outputBytes": commit.reserved_output_bytes,
@@ -3941,6 +3955,7 @@ struct ReplayAttempt {
     request: ProviderRequest,
     tool_schema_digests: Vec<String>,
     provider_residency: String,
+    input_token_overhead: u64,
     correlation_id: String,
     prepared_at_ms: i64,
     dispatched_at_ms: Option<i64>,
@@ -4407,7 +4422,12 @@ fn verify_replay_attempt(
         .ok()??;
     if u64::try_from(manifest_token_budget)
         .ok()
-        .is_none_or(|budget| budget == 0 || budget > capabilities.context_tokens)
+        .is_none_or(|budget| {
+            budget == 0
+                || budget
+                    .checked_add(capabilities.input_token_overhead)
+                    .is_none_or(|reserved| reserved > capabilities.context_tokens)
+        })
         || manifest_residency != capabilities.residency
     {
         return None;
@@ -4514,6 +4534,7 @@ fn verify_replay_attempt(
         request,
         tool_schema_digests,
         provider_residency: capabilities.residency,
+        input_token_overhead: capabilities.input_token_overhead,
         correlation_id,
         prepared_at_ms: row.prepared_at_ms,
         dispatched_at_ms: row.dispatched_at_ms,
@@ -5306,7 +5327,10 @@ fn verify_context_manifest(
         )
         .optional()
         .map_err(map_sqlite_error)?;
-    if reserved_input_tokens != Some(total_token_estimate) {
+    let expected_reserved_input_tokens = i64::try_from(attempt.input_token_overhead)
+        .ok()
+        .and_then(|overhead| total_token_estimate.checked_add(overhead));
+    if reserved_input_tokens != expected_reserved_input_tokens {
         return Ok(false);
     }
     let encoded_schema_digests = serde_json::to_string(&attempt.tool_schema_digests)

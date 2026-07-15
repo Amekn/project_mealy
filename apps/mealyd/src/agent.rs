@@ -36,8 +36,8 @@ use mealy_domain::{
 use mealy_infrastructure::{
     BrowserReadTool, FileArtifactBlobStore, FileProviderSecretStore, FixtureReadTool,
     FixtureResource, MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES, McpReadTool, SkillResourceReadTool,
-    SqliteStore, SystemClock, SystemIdGenerator, WebReadTool, WorkspaceReadTool,
-    inspect_skill_package,
+    SqliteStore, SubscriptionCliProvider, SubscriptionCliSettings, SystemClock, SystemIdGenerator,
+    WebReadTool, WorkspaceReadTool, inspect_skill_package,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -746,6 +746,7 @@ impl ModelProvider for BuiltinPhaseTwoProvider {
             input_modalities: BTreeSet::from(["text".to_owned()]),
             context_tokens: 32_768,
             maximum_output_tokens: PROVIDER_OUTPUT_TOKENS,
+            input_token_overhead: 0,
             tool_calling: true,
             structured_output: true,
             reasoning_controls: BTreeSet::from(["none".to_owned()]),
@@ -933,6 +934,7 @@ pub struct RuntimeConfiguredProvider {
 enum RuntimeExternalProvider {
     OpenAiResponses(Box<OpenAiResponsesProvider>),
     AnthropicMessages(Box<AnthropicMessagesProvider>),
+    SubscriptionCli(Box<SubscriptionCliProvider>),
 }
 
 impl RuntimeExternalProvider {
@@ -940,6 +942,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(_) => "openai_responses",
             Self::AnthropicMessages(_) => "anthropic_messages",
+            Self::SubscriptionCli(provider) => provider.protocol(),
         }
     }
 
@@ -947,6 +950,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.capabilities(),
             Self::AnthropicMessages(provider) => provider.capabilities(),
+            Self::SubscriptionCli(provider) => provider.capabilities(),
         }
     }
 
@@ -958,6 +962,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.complete(request, cancellation),
             Self::AnthropicMessages(provider) => provider.complete(request, cancellation),
+            Self::SubscriptionCli(provider) => provider.complete(request, cancellation),
         }
     }
 
@@ -974,6 +979,9 @@ impl RuntimeExternalProvider {
             Self::AnthropicMessages(provider) => {
                 provider.complete_with_progress(request, cancellation, progress)
             }
+            Self::SubscriptionCli(provider) => {
+                provider.complete_with_progress(request, cancellation, progress)
+            }
         }
     }
 
@@ -981,6 +989,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.health_status(),
             Self::AnthropicMessages(provider) => provider.health_status(),
+            Self::SubscriptionCli(provider) => provider.health_status(),
         }
     }
 
@@ -988,6 +997,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.invocation_count(),
             Self::AnthropicMessages(provider) => provider.invocation_count(),
+            Self::SubscriptionCli(provider) => provider.invocation_count(),
         }
     }
 
@@ -995,6 +1005,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.in_flight_requests(),
             Self::AnthropicMessages(provider) => provider.in_flight_requests(),
+            Self::SubscriptionCli(provider) => provider.in_flight_requests(),
         }
     }
 
@@ -1002,6 +1013,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.requests_in_current_minute(),
             Self::AnthropicMessages(provider) => provider.requests_in_current_minute(),
+            Self::SubscriptionCli(provider) => provider.requests_in_current_minute(),
         }
     }
 
@@ -1009,6 +1021,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.last_success_at_ms(),
             Self::AnthropicMessages(provider) => provider.last_success_at_ms(),
+            Self::SubscriptionCli(provider) => provider.last_success_at_ms(),
         }
     }
 
@@ -1016,6 +1029,7 @@ impl RuntimeExternalProvider {
         match self {
             Self::OpenAiResponses(provider) => provider.last_failure_at_ms(),
             Self::AnthropicMessages(provider) => provider.last_failure_at_ms(),
+            Self::SubscriptionCli(provider) => provider.last_failure_at_ms(),
         }
     }
 }
@@ -1109,21 +1123,21 @@ impl RuntimeModelProvider {
                 maximum_concurrent_requests,
                 requests_per_minute,
             ))),
-            ProviderConfig::OpenAiResponses { .. } | ProviderConfig::AnthropicMessages { .. } => {
-                Ok(Self::External {
-                    providers: std::iter::once(primary)
-                        .chain(fallbacks)
-                        .map(|config| {
-                            Self::build_external_provider(
-                                config,
-                                provider_secrets,
-                                maximum_concurrent_requests,
-                                requests_per_minute,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                })
-            }
+            ProviderConfig::OpenAiResponses { .. }
+            | ProviderConfig::AnthropicMessages { .. }
+            | ProviderConfig::SubscriptionCli { .. } => Ok(Self::External {
+                providers: std::iter::once(primary)
+                    .chain(fallbacks)
+                    .map(|config| {
+                        Self::build_external_provider(
+                            config,
+                            provider_secrets,
+                            maximum_concurrent_requests,
+                            requests_per_minute,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
         }
     }
 
@@ -1209,10 +1223,53 @@ impl RuntimeModelProvider {
                 )),
                 estimated_latency_ms: *estimated_latency_ms,
             }),
+            ProviderConfig::SubscriptionCli { .. } => Self::build_subscription_provider(
+                config,
+                maximum_concurrent_requests,
+                requests_per_minute,
+            ),
             ProviderConfig::BuiltinFixture => {
                 Err("fixture provider cannot appear in an external fallback chain".into())
             }
         }
+    }
+
+    fn build_subscription_provider(
+        config: &ProviderConfig,
+        maximum_concurrent_requests: u32,
+        requests_per_minute: u32,
+    ) -> Result<RuntimeConfiguredProvider, Box<dyn Error + Send + Sync>> {
+        let ProviderConfig::SubscriptionCli {
+            provider_id,
+            client,
+            executable_path,
+            executable_sha256,
+            model,
+            residency,
+            context_tokens,
+            maximum_output_tokens,
+            estimated_latency_ms,
+        } = config
+        else {
+            return Err("subscription provider builder received a different provider kind".into());
+        };
+        Ok(RuntimeConfiguredProvider {
+            provider: RuntimeExternalProvider::SubscriptionCli(Box::new(
+                SubscriptionCliProvider::new(SubscriptionCliSettings {
+                    provider_id: provider_id.clone(),
+                    client: *client,
+                    executable_path: executable_path.into(),
+                    executable_sha256: executable_sha256.clone(),
+                    model: model.clone(),
+                    residency: residency.clone(),
+                    context_tokens: *context_tokens,
+                    maximum_output_tokens: *maximum_output_tokens,
+                    maximum_concurrent_requests: u64::from(maximum_concurrent_requests),
+                    requests_per_minute: u64::from(requests_per_minute),
+                })?,
+            )),
+            estimated_latency_ms: *estimated_latency_ms,
+        })
     }
 
     fn resolve_provider_credential(
@@ -2311,7 +2368,14 @@ fn prepare_next_model(
         .maximum_input_tokens
         .saturating_sub(snapshot.usage.used_input_tokens)
         .saturating_sub(snapshot.usage.reserved_input_tokens);
-    let token_budget = remaining_input_tokens.min(capabilities.context_tokens);
+    let input_token_overhead = capabilities.input_token_overhead;
+    let token_budget = remaining_input_tokens
+        .saturating_sub(input_token_overhead)
+        .min(
+            capabilities
+                .context_tokens
+                .saturating_sub(input_token_overhead),
+        );
     if token_budget == 0 {
         return Err("agent input-token budget is exhausted".into());
     }
@@ -2362,13 +2426,18 @@ fn prepare_next_model(
     };
     let capability_digest = sha256_digest(serde_json::to_string(&capabilities)?.as_bytes());
     let request_digest = sha256_digest(serde_json::to_string(&request)?.as_bytes());
+    let reserved_input_tokens = compiled
+        .manifest
+        .total_token_estimate
+        .checked_add(input_token_overhead)
+        .ok_or("agent input-token reservation overflows")?;
     let remaining_cost = snapshot
         .limits
         .maximum_cost_microunits
         .saturating_sub(snapshot.usage.used_cost_microunits)
         .saturating_sub(snapshot.usage.reserved_cost_microunits);
     let bounded_provider_cost = maximum_provider_cost(
-        compiled.manifest.total_token_estimate,
+        reserved_input_tokens,
         requested_output_tokens,
         capabilities.pricing,
     );

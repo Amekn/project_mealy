@@ -12,6 +12,7 @@ mod provider_secret;
 mod sandbox;
 mod skill_package;
 mod sqlite;
+mod subscription_cli;
 mod system;
 mod trusted_executable;
 mod web;
@@ -52,6 +53,10 @@ pub use skill_package::{
 pub use sqlite::{
     ArtifactBlobRecord, JournalRecord, LATEST_SCHEMA_VERSION, OutboxRecord, SqliteStore,
     StoreError, TaskMutation, TaskSnapshot,
+};
+pub use subscription_cli::{
+    SubscriptionCliBuildError, SubscriptionCliProvider, SubscriptionCliSettings,
+    inspect_subscription_cli_executable,
 };
 pub use system::{SystemClock, SystemIdGenerator};
 pub use trusted_executable::is_trusted_system_executable;

@@ -212,8 +212,8 @@ pub use provider::{
 };
 pub use provider_config::{
     MAXIMUM_PROVIDER_CREDENTIAL_BYTES, MAXIMUM_PROVIDER_FALLBACKS, ProviderConfig,
-    ProviderConfigError, ProviderCredentialReference, valid_provider_secret_id,
-    validate_provider_base_url, validate_provider_chain,
+    ProviderConfigError, ProviderCredentialReference, SubscriptionCliClient,
+    valid_provider_secret_id, validate_provider_base_url, validate_provider_chain,
 };
 pub use recovery::{RecoveryPlan, plan_interrupted_effect};
 pub use schedule::{
