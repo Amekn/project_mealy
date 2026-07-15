@@ -152,6 +152,9 @@ jobs:
         env:
           MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
         run: scripts/macos-control-plane-smoke.sh target/release/mealyd target/release/mealyctl
+      - name: Verify native zsh preview commands and quoted paths
+        if: ${{ runner.os == 'macOS' }}
+        run: /bin/zsh scripts/macos-zsh-preview-smoke.zsh target/release/mealyd target/release/mealyctl
 
   linux-sandbox-conformance:
     name: Linux sandbox conformance
