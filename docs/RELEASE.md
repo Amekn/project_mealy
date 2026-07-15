@@ -44,12 +44,19 @@ workflow, or command-line configuration.
 
 The checked project license is currently all-rights-reserved and expressly grants no right to use,
 copy, modify, publish, or distribute Mealy. It cannot support the public-install goal. Before a
-production tag, the copyright holder must deliberately replace it and the workspace metadata with
-Apache-2.0, MIT, or dual `MIT OR Apache-2.0` terms. The native tag jobs run
-`scripts/validate-public-license.sh` and refuse publication while the restrictive terms,
-`license-file` metadata, an unsupported/mismatched license text, or a workspace package that does
-not inherit the reviewed SPDX expression remains. This is a legal-distribution gate, not a claim
-that automated text checks replace legal review.
+production tag, the copyright holder must deliberately replace it with Apache-2.0, MIT, or dual
+`MIT OR Apache-2.0` terms. The existing exact `license-file = "LICENSE"` inheritance may be
+retained to avoid an unrelated package-metadata change, or it can be replaced consistently with
+the matching SPDX expression.
+A clean auditable fingerprint probe at commit `0be7f63` changed only the referenced license-file
+content and reproduced the active soak subject exactly: `mealyd` SHA-256
+`649db94894de63fb973c7d2ef7a4749100d5c9b3ca77524a0f8cbfde66c39572` and `mealyctl` SHA-256
+`e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. The final selected terms
+must still receive the same fresh clean-build comparison before publication. The native tag jobs
+run `scripts/validate-public-license.sh` and refuse publication while the restrictive terms,
+redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
+package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,
+not a claim that automated text checks replace legal review.
 
 The tag workflow independently fetches `origin/main`, checks ancestry in each native package job
 and again immediately before publication, and refuses unless the tagged SHA is an ancestor of that
@@ -389,7 +396,8 @@ remove it before uninstalling.
 ## Maintainer release checklist
 
 1. Have the copyright holder explicitly choose Apache-2.0, MIT, or dual `MIT OR Apache-2.0`, replace
-   the current all-rights-reserved `LICENSE` and workspace/package metadata, and run
+   the current all-rights-reserved `LICENSE`, update workspace/package metadata only if selecting
+   SPDX metadata instead of the existing exact license-file inheritance, and run
    `scripts/validate-public-license.sh .`. Then make the workspace version and intended `vVERSION`
    tag identical.
 2. Compare the pinned Headless Shell version with the official

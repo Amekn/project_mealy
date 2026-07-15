@@ -67,7 +67,8 @@ install/upgrade/rollback behavior. Treat a build as published only when its exac
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.
 
-> **Production status:** the durable release-one runtime proof is complete, and Mealy now supports
+> **Implementation status (not yet a public production release):** the durable release-one runtime
+> proof is complete, and Mealy now supports
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
 > Messages adapters, including explicit mixed-protocol fallback chains, plus a guarded OpenRouter
 > stateless Responses-beta preset with account-filtered catalog/price discovery. A clean-home
@@ -124,8 +125,9 @@ package.
 > arbitrary browser events/clicking, POST forms, uploads, unbounded/owner-path downloads,
 > persistent or personal profiles,
 > HTTP or credential-bearing MCP,
-> verified provider-wide price coverage, published release artifacts, and
-> production acceptance remain in progress. Credential-scoped live model discovery is available
+> verified provider-wide price coverage, an explicit public-use project license, the checked
+> 24-hour candidate report, owner-reviewed live-provider acceptance, and published clean-host
+> release evidence remain in progress. Credential-scoped live model discovery is available
 > for both supported provider protocols, alongside a credentialless, literal-loopback
 > Responses-compatible discovery/activation preset. See the
 > [quickstart](docs/QUICKSTART.md) for exactly what can be run today.

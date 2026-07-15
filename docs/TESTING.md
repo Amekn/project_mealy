@@ -618,7 +618,8 @@ incomplete turns, corrupt SQLite, and residual work must all fail. The tag publi
 renderer to bind the exact commit, approved live-provider run, release workflow, daemon digest,
 and checked soak measurements into the immutable release notes.
 `scripts/test-public-license-validator.sh` separately accepts synthetic Apache-2.0, MIT, and dual
-MIT/Apache workspaces while rejecting restrictive terms, `license-file` metadata, an unsupported
+MIT/Apache workspaces with either matching SPDX metadata or the existing exact `LICENSE`-file
+inheritance, while rejecting restrictive terms, redirected/mismatched metadata, an unsupported
 expression, and a member package that does not inherit the workspace license. The tag workflow
 runs the validator on the real checkout, so the current all-rights-reserved project cannot publish
 as a public-use release until the copyright holder explicitly replaces those terms.
