@@ -149,6 +149,7 @@ fn default_fake_capabilities() -> ProviderCapabilities {
         input_modalities: BTreeSet::from(["text".to_owned()]),
         context_tokens: 16_384,
         maximum_output_tokens: 4_096,
+        input_token_overhead: 0,
         tool_calling: true,
         structured_output: true,
         reasoning_controls: BTreeSet::from(["none".to_owned()]),

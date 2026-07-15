@@ -15,6 +15,15 @@ and prints exact daemon/doctor/chat handoff commands on stderr. Supplying all fl
 provides the same process-tested non-interactive path. `--skip-connectivity-test` is explicitly
 staged and does not count as production verification.
 
+Owner-local subscription activation is deliberately separate from this API-key wizard.
+`config provider-subscription-openai` uses an existing ChatGPT sign-in owned by the official Codex
+client, and `config provider-subscription-claude` uses the official Claude client's existing
+subscription sign-in. Both canonicalize and SHA-256-pin the selected executable, exclude provider
+API-key variables and host-client tools/connectors, run a bounded structured connectivity probe,
+and persist no OAuth/session/token material or broker identity. Activation raises the configured
+provider deadline only as far as its declared latency estimate and total run wall-time permit;
+official-client input overhead is included in the durable token reservation.
+
 The selected home must remain a canonical owner-private directory rather than a symlink. Before
 using the daemon bearer, the client validates that parent boundary, opens `connection.json`
 without following a symlink, caps it at 64 KiB, and requires a literal-loopback HTTP origin.
@@ -116,7 +125,9 @@ digests without crossing into Telegram/Discord/webhook sessions.
 `provider-anthropic`/`provider-fallback-anthropic` activate the independently implemented
 Anthropic Messages contract. `provider-openrouter` is an explicit preset for OpenRouter's stateless
 Responses API beta; it brokers `OPENROUTER_API_KEY`, defaults the official API base/residency, and
-retains the same live bounded compatibility probe. `provider-local`/`provider-fallback-local` are credentialless presets
+retains the same live bounded compatibility probe. This deployment requires an exact `:free`
+OpenRouter model with complete zero pricing and no unsupported billing axes; the account-filtered
+catalog exposes the fields needed to enforce that review. `provider-local`/`provider-fallback-local` are credentialless presets
 for an OpenAI Responses-compatible server on a literal loopback IP; they record local residency,
 zero provider price, and no broker entry. All commands request protocol-specific SSE by default and
 may be mixed only in one same-residency/locality chain. Use `--disable-streaming` for a terminal-only compatible

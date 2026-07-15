@@ -568,9 +568,14 @@ BRAVE_SEARCH_API_KEY='...' cargo test -p mealy-infrastructure --all-features --t
   live_brave_search_is_credential_scoped_bounded_and_cited -- --ignored --exact --nocapture
 ```
 
-The manual `mealy-live-provider-smoke` GitHub workflow provides the corresponding paid/account-
-scoped release gate for OpenAI, Anthropic, or OpenRouter. It requires current model/limit/price
-inputs and the selected `live-provider-smoke` GitHub Environment secret, performs the real setup
+The manual `mealy-live-provider-smoke` GitHub workflow provides the corresponding account-scoped
+release gate. Its default `openrouter-free` path discovers the account-visible catalog and selects
+only a tool-capable exact `:free` model with complete token limits, exact zero input/output prices,
+and no unsupported pricing axes. Direct OpenAI or Anthropic runs instead require current
+model/limit/price inputs and the selected `live-provider-smoke` GitHub Environment secret. The
+`private-responses` choice fixes the destination to
+`https://the-beast.taile6fad0.ts.net/v1`, requires an exact model and verified context limit, and
+forces zero prices; neither a dispatch input nor a pull request can redirect `LOCAL_API_KEY`. It performs the real setup
 probe and a complete durable
 workspace-read tool turn with an exact citation, asserts provider health, settlement, usage,
 recorded-only replay, sandbox conformance, clean
@@ -579,9 +584,9 @@ opt-in checkbox. The workflow is `workflow_dispatch` only, never runs on untrust
 and has read-only repository permission. The `live-provider-smoke` Environment requires an
 explicit repository-owner review; add a credential only when its reviewed run is ready. The job
 resolves exactly one of its secrets
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` from the selected adapter; unused
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, or `LOCAL_API_KEY` from the selected adapter; unused
 provider secrets are never added to the step environment.
-The job has a 20-minute hard timeout and a single non-cancelling concurrency group so two paid
+The job has a 20-minute hard timeout and a single non-cancelling concurrency group so two reviewed
 manual probes cannot overlap or terminate each other midway through settlement.
 
 ## Validation gates
@@ -621,8 +626,8 @@ and checked soak measurements into the immutable release notes.
 MIT/Apache workspaces with either matching SPDX metadata or the existing exact `LICENSE`-file
 inheritance, while rejecting restrictive terms, redirected/mismatched metadata, an unsupported
 expression, and a member package that does not inherit the workspace license. The tag workflow
-runs the validator on the real checkout, so the current all-rights-reserved project cannot publish
-as a public-use release until the copyright holder explicitly replaces those terms.
+runs the validator on the real checkout; the copyright-holder-selected canonical Apache-2.0 text
+and existing exact license-file inheritance now pass that public-use gate.
 The current tree additionally passed the equivalent GCC cross-check for
 `aarch64-unknown-linux-gnu`; native macOS build/package evidence and ARM64 Linux runtime/package
 evidence remain the CI and tag matrices' responsibility. Windows is outside the release-one support and CI

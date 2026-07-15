@@ -7,17 +7,22 @@ use clap::{Parser, Subcommand, ValueEnum};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::StreamExt;
 use mealy_application::{
-    BrowserConfig, McpServerConfig, McpServerDiscovery, McpToolGrant, ProviderConfig,
-    ProviderCredentialReference, WebAccessConfig, WebSearchConfig, default_daemon_config_document,
-    is_sha256_digest, sha256_digest, valid_provider_secret_id, validate_discord_snowflake,
-    validate_mcp_server_set, validate_provider_base_url, validate_provider_chain,
+    BrowserConfig, CancellationProbe, McpServerConfig, McpServerDiscovery, McpToolGrant,
+    MessageRole, ModelProvider, NormalizedMessage, ProviderConfig, ProviderCredentialReference,
+    ProviderRequest, ProviderResponse, SubscriptionCliClient, WebAccessConfig, WebSearchConfig,
+    default_daemon_config_document, is_sha256_digest, sha256_digest, valid_provider_secret_id,
+    validate_discord_snowflake, validate_mcp_server_set, validate_provider_base_url,
+    validate_provider_chain,
 };
-use mealy_domain::{ScheduleId, SkillAsset, SkillToolRequirement};
+use mealy_domain::{
+    AttemptId, ContextManifestId, RunId, ScheduleId, SkillAsset, SkillToolRequirement,
+};
 use mealy_infrastructure::{
     BrowserBundleError, BrowserHostError, FileProviderSecretStore, InspectedSkillPackage,
     MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES, MAXIMUM_ACTIVE_SKILL_RESOURCE_BYTES, McpHostError,
-    ProviderSecretStoreError, activate_backup, activate_migration_backup, browser_worker_main,
-    discover_mcp_stdio_server, inspect_browser_bundle, inspect_skill_package,
+    ProviderSecretStoreError, SubscriptionCliProvider, SubscriptionCliSettings, activate_backup,
+    activate_migration_backup, browser_worker_main, discover_mcp_stdio_server,
+    inspect_browser_bundle, inspect_skill_package, inspect_subscription_cli_executable,
     is_trusted_system_executable, mcp_stdio_launcher_main, probe_browser_bundle_product,
     publish_browser_bundle, publish_skill_package, verify_browser_runtime_installation,
 };
@@ -107,6 +112,7 @@ const MAXIMUM_SERVER_ERROR_MESSAGE_BYTES: usize = 4 * 1024;
 const PROVIDER_PROBE_MAXIMUM_BYTES: u64 = 1024 * 1024;
 const PROVIDER_PROBE_MAXIMUM_TEXT_BYTES: usize = 64 * 1024;
 const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 64;
+const SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
 const PROVIDER_DISCOVERY_MAXIMUM_MODELS: usize = 500;
 const PROVIDER_DISCOVERY_MAXIMUM_WIRE_MODELS: usize = 2_000;
 const TELEGRAM_PAIR_GET_ME_MAXIMUM_BYTES: usize = 64 * 1024;
@@ -459,9 +465,69 @@ enum ConfigCommand {
         #[arg(long)]
         skip_connectivity_test: bool,
         /// Conservative routing latency estimate in milliseconds.
-        #[arg(long, default_value_t = 30_000)]
+        #[arg(long, default_value_t = 60_000)]
         estimated_latency_ms: u64,
         /// Confirm this provider activation.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Configure official Codex CLI access using its existing `ChatGPT` subscription sign-in.
+    ProviderSubscriptionOpenai {
+        /// Stable provider identity retained in routing evidence.
+        #[arg(long, default_value = "openai.subscription")]
+        provider_id: String,
+        /// Installed Codex executable; PATH lookup is used when omitted.
+        #[arg(long)]
+        executable_path: Option<PathBuf>,
+        /// Exact subscription-accessible Codex model name.
+        #[arg(long)]
+        model: String,
+        /// Remote residency/trust label used by routing policy.
+        #[arg(long, default_value = "openai-subscription")]
+        residency: String,
+        /// Conservative context limit for this exact model.
+        #[arg(long)]
+        context_tokens: u64,
+        /// Maximum output tokens Mealy accepts from the official client.
+        #[arg(long, default_value_t = 4_096)]
+        maximum_output_tokens: u64,
+        /// Activate without the default bounded authenticated client probe.
+        #[arg(long)]
+        skip_connectivity_test: bool,
+        /// Conservative routing latency estimate in milliseconds.
+        #[arg(long, default_value_t = 60_000)]
+        estimated_latency_ms: u64,
+        /// Confirm this owner-local official-client activation.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Configure official Claude Code access using its existing Claude subscription sign-in.
+    ProviderSubscriptionClaude {
+        /// Stable provider identity retained in routing evidence.
+        #[arg(long, default_value = "claude.subscription")]
+        provider_id: String,
+        /// Installed Claude executable; PATH lookup is used when omitted.
+        #[arg(long)]
+        executable_path: Option<PathBuf>,
+        /// Exact subscription-accessible Claude model name.
+        #[arg(long)]
+        model: String,
+        /// Remote residency/trust label used by routing policy.
+        #[arg(long, default_value = "claude-subscription")]
+        residency: String,
+        /// Conservative context limit for this exact model.
+        #[arg(long)]
+        context_tokens: u64,
+        /// Maximum output tokens Mealy accepts from the official client.
+        #[arg(long, default_value_t = 4_096)]
+        maximum_output_tokens: u64,
+        /// Activate without the default bounded authenticated client probe.
+        #[arg(long)]
+        skip_connectivity_test: bool,
+        /// Conservative routing latency estimate in milliseconds.
+        #[arg(long, default_value_t = 60_000)]
+        estimated_latency_ms: u64,
+        /// Confirm this owner-local official-client activation.
         #[arg(long)]
         approve: bool,
     },
@@ -7263,6 +7329,54 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             *approve,
             *skip_connectivity_test,
         ),
+        ConfigCommand::ProviderSubscriptionOpenai {
+            provider_id,
+            executable_path,
+            model,
+            residency,
+            context_tokens,
+            maximum_output_tokens,
+            skip_connectivity_test,
+            estimated_latency_ms,
+            approve,
+        } => configure_subscription_provider(
+            home,
+            provider_id,
+            SubscriptionCliClient::OpenAiCodex,
+            executable_path.as_deref(),
+            "codex",
+            model,
+            residency,
+            *context_tokens,
+            *maximum_output_tokens,
+            *estimated_latency_ms,
+            *approve,
+            *skip_connectivity_test,
+        ),
+        ConfigCommand::ProviderSubscriptionClaude {
+            provider_id,
+            executable_path,
+            model,
+            residency,
+            context_tokens,
+            maximum_output_tokens,
+            skip_connectivity_test,
+            estimated_latency_ms,
+            approve,
+        } => configure_subscription_provider(
+            home,
+            provider_id,
+            SubscriptionCliClient::AnthropicClaude,
+            executable_path.as_deref(),
+            "claude",
+            model,
+            residency,
+            *context_tokens,
+            *maximum_output_tokens,
+            *estimated_latency_ms,
+            *approve,
+            *skip_connectivity_test,
+        ),
         ConfigCommand::Provider {
             provider_id,
             base_url,
@@ -8567,6 +8681,64 @@ fn read_provider_discovery_json(
     Ok(body)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn configure_subscription_provider(
+    home: &Path,
+    provider_id: &str,
+    client: SubscriptionCliClient,
+    executable_path: Option<&Path>,
+    default_executable: &str,
+    model: &str,
+    residency: &str,
+    context_tokens: u64,
+    maximum_output_tokens: u64,
+    estimated_latency_ms: u64,
+    approve: bool,
+    skip_connectivity_test: bool,
+) -> Result<(), CliError> {
+    let selected = executable_path
+        .map(Path::to_path_buf)
+        .or_else(|| find_executable_on_path(default_executable))
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
+        .map_err(|_| CliError::InvalidProviderConfiguration)?;
+    let canonical = canonical
+        .to_str()
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    configure_provider(
+        home,
+        ProviderConfig::SubscriptionCli {
+            provider_id: provider_id.to_owned(),
+            client,
+            executable_path: canonical.to_owned(),
+            executable_sha256,
+            model: model.to_owned(),
+            residency: residency.to_owned(),
+            context_tokens,
+            maximum_output_tokens,
+            estimated_latency_ms,
+        },
+        None,
+        approve,
+        skip_connectivity_test,
+    )
+}
+
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    if name.is_empty()
+        || name.len() > 128
+        || name.contains(std::path::MAIN_SEPARATOR)
+        || name.chars().any(char::is_control)
+    {
+        return None;
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 fn configure_provider(
     home: &Path,
     provider: ProviderConfig,
@@ -8602,6 +8774,7 @@ fn configure_provider(
     {
         return Err(CliError::InvalidProviderConfiguration);
     }
+    ensure_subscription_provider_timeout(object, &provider)?;
     let fallbacks = object
         .get("providerFallbacks")
         .cloned()
@@ -8739,6 +8912,7 @@ fn configure_provider_fallback(
     {
         return Err(CliError::InvalidProviderConfiguration);
     }
+    ensure_subscription_provider_timeout(object, &provider)?;
     let primary = serde_json::from_value::<ProviderConfig>(
         object
             .get("provider")
@@ -8805,6 +8979,41 @@ fn configure_provider_fallback(
         replaced_configuration_copy: replaced.display().to_string(),
         restart_required: true,
     })
+}
+
+fn ensure_subscription_provider_timeout(
+    config: &mut serde_json::Map<String, Value>,
+    provider: &ProviderConfig,
+) -> Result<(), CliError> {
+    let ProviderConfig::SubscriptionCli {
+        estimated_latency_ms,
+        ..
+    } = provider
+    else {
+        return Ok(());
+    };
+    let limits = config
+        .get_mut("agentLoopLimits")
+        .and_then(Value::as_object_mut)
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let maximum_wall_time_ms = limits
+        .get("maximumWallTimeMs")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let provider_timeout_ms = limits
+        .get("providerTimeoutMs")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    if *estimated_latency_ms > maximum_wall_time_ms {
+        return Err(CliError::InvalidProviderConfiguration);
+    }
+    if provider_timeout_ms < *estimated_latency_ms {
+        limits.insert(
+            "providerTimeoutMs".to_owned(),
+            Value::from(*estimated_latency_ms),
+        );
+    }
+    Ok(())
 }
 
 fn remove_provider_fallback(home: &Path, provider_id: &str, approve: bool) -> Result<(), CliError> {
@@ -8889,7 +9098,8 @@ fn remove_provider_fallback(home: &Path, provider_id: &str, approve: bool) -> Re
 fn provider_config_id(provider: &ProviderConfig) -> Result<&str, CliError> {
     match provider {
         ProviderConfig::OpenAiResponses { provider_id, .. }
-        | ProviderConfig::AnthropicMessages { provider_id, .. } => Ok(provider_id),
+        | ProviderConfig::AnthropicMessages { provider_id, .. }
+        | ProviderConfig::SubscriptionCli { provider_id, .. } => Ok(provider_id),
         ProviderConfig::BuiltinFixture => Err(CliError::InvalidProviderConfiguration),
     }
 }
@@ -8901,7 +9111,7 @@ fn provider_config_secret_id(provider: &ProviderConfig) -> Option<&str> {
             Some(ProviderCredentialReference::Broker { secret_id }) => Some(secret_id),
             Some(ProviderCredentialReference::Environment { .. }) | None => None,
         },
-        ProviderConfig::BuiltinFixture => None,
+        ProviderConfig::SubscriptionCli { .. } | ProviderConfig::BuiltinFixture => None,
     }
 }
 
@@ -8921,6 +9131,12 @@ fn provider_configuration_identity(
             streaming,
             ..
         } => Ok(("anthropic_messages", provider_id, model, streaming)),
+        ProviderConfig::SubscriptionCli {
+            provider_id,
+            client,
+            model,
+            ..
+        } => Ok((client.protocol(), provider_id, model, false)),
         ProviderConfig::BuiltinFixture => Err(CliError::InvalidProviderConfiguration),
     }
 }
@@ -8940,7 +9156,10 @@ fn validate_provider_credential_import(
             credential,
             ..
         } => (base_url, credential),
-        ProviderConfig::BuiltinFixture => return Err(CliError::InvalidProviderConfiguration),
+        ProviderConfig::SubscriptionCli { .. } if credential_import.is_none() => return Ok(()),
+        ProviderConfig::SubscriptionCli { .. } | ProviderConfig::BuiltinFixture => {
+            return Err(CliError::InvalidProviderConfiguration);
+        }
     };
     let local =
         validate_provider_base_url(base_url).map_err(|_| CliError::InvalidProviderConfiguration)?;
@@ -9077,8 +9296,103 @@ fn probe_provider_connectivity_blocking(
             *streaming,
             credential,
         ),
+        ProviderConfig::SubscriptionCli {
+            provider_id,
+            client,
+            executable_path,
+            executable_sha256,
+            model,
+            residency,
+            context_tokens,
+            maximum_output_tokens,
+            ..
+        } => probe_subscription_connectivity_blocking(
+            provider_id,
+            *client,
+            executable_path,
+            executable_sha256,
+            model,
+            residency,
+            *context_tokens,
+            *maximum_output_tokens,
+        ),
         ProviderConfig::BuiltinFixture => Err(CliError::InvalidProviderConfiguration),
     }
+}
+
+struct SubscriptionProbeCancellation;
+
+impl CancellationProbe for SubscriptionProbeCancellation {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn probe_subscription_connectivity_blocking(
+    provider_id: &str,
+    client: SubscriptionCliClient,
+    executable_path: &str,
+    executable_sha256: &str,
+    model: &str,
+    residency: &str,
+    context_tokens: u64,
+    maximum_output_tokens: u64,
+) -> Result<(), CliError> {
+    let provider = SubscriptionCliProvider::new(SubscriptionCliSettings {
+        provider_id: provider_id.to_owned(),
+        client,
+        executable_path: executable_path.into(),
+        executable_sha256: executable_sha256.to_owned(),
+        model: model.to_owned(),
+        residency: residency.to_owned(),
+        context_tokens,
+        maximum_output_tokens,
+        maximum_concurrent_requests: 1,
+        requests_per_minute: 1,
+    })
+    .map_err(|_| {
+        CliError::ProviderConnectivity(
+            "official subscription client identity is unavailable".to_owned(),
+        )
+    })?;
+    let now_ms = unix_timestamp_millis()?;
+    let deadline_at_ms = now_ms
+        .checked_add(180_000)
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or_else(|| {
+            CliError::ProviderConnectivity("subscription probe deadline overflowed".to_owned())
+        })?;
+    let request = ProviderRequest {
+        run_id: RunId::new(),
+        attempt_id: AttemptId::new(),
+        context_manifest_id: ContextManifestId::new(),
+        provider_id: provider_id.to_owned(),
+        model_id: model.to_owned(),
+        messages: vec![NormalizedMessage {
+            role: MessageRole::User,
+            content: "Reply with the single word OK. This is a bounded connectivity test."
+                .to_owned(),
+            tool_call_id: None,
+        }],
+        tools: Vec::new(),
+        maximum_output_tokens: maximum_output_tokens.min(SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS),
+        deadline_at_ms,
+    };
+    let output = provider
+        .complete(&request, &SubscriptionProbeCancellation)
+        .map_err(|error| {
+            CliError::ProviderConnectivity(format!(
+                "official subscription client returned {}",
+                error.class.as_str()
+            ))
+        })?;
+    if !matches!(output.response, ProviderResponse::Final { ref text } if !text.is_empty()) {
+        return Err(CliError::ProviderConnectivity(
+            "official subscription client did not return bounded final text".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn provider_probe_client() -> Result<reqwest::blocking::Client, CliError> {

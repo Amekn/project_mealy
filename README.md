@@ -43,9 +43,11 @@ scripts/build-release-binaries.sh
 ```
 
 For a real model, run `target/release/mealyctl --home "$HOME/.mealy" setup` while the daemon is
-stopped; the wizard supports OpenAI, Anthropic, OpenRouter, or a literal-loopback
-Responses-compatible model and prints the exact next commands. For an immediate offline
-conformance run, skip setup and use the deterministic fixture provider.
+stopped; the wizard supports API-key-backed OpenAI, Anthropic, OpenRouter, or a literal-loopback
+Responses-compatible model and prints the exact next commands. Advanced stopped-home commands
+also support authenticated private Responses endpoints and owner-local OpenAI/Claude subscription
+sign-in through the official Codex or Claude client. For an immediate offline conformance run,
+skip setup and use the deterministic fixture provider.
 
 Start the daemon in terminal 1 and chat in terminal 2:
 
@@ -75,6 +77,12 @@ package.
 > `mealyctl setup` wizard reviews non-secret provider/model/limit/price inputs,
 > consumes credentials only from standard environment variables, performs the existing bounded
 > activation probe, brokers the key, and prints exact daemon/doctor/chat handoff commands. A
+> separate official-client bridge supports existing ChatGPT and Claude subscription sessions
+> without importing OAuth tokens: it pins the canonical client executable and SHA-256, clears API
+> key variables, disables client tools/connectors/session persistence, validates structured output
+> and usage, and fails activation when the official client is not signed in. ChatGPT subscriptions
+> are not OpenAI API keys, and these owner-local bridges are not the unattended release-acceptance
+> provider path. A
 > concurrent first-party chat REPL provides durable queue/steer/interrupt controls, bounded
 > owner-selected local UTF-8 text-file admission, model/tool
 > progress, and exact-subject approval commands. On Linux, real-provider runs can use bounded,
@@ -125,7 +133,7 @@ package.
 > arbitrary browser events/clicking, POST forms, uploads, unbounded/owner-path downloads,
 > persistent or personal profiles,
 > HTTP or credential-bearing MCP,
-> verified provider-wide price coverage, an explicit public-use project license, the checked
+> verified provider-wide price coverage, the checked
 > 24-hour candidate report, owner-reviewed live-provider acceptance, and published clean-host
 > release evidence remain in progress. Credential-scoped live model discovery is available
 > for both supported provider protocols, alongside a credentialless, literal-loopback

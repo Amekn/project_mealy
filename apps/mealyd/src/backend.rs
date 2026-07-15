@@ -4523,6 +4523,7 @@ fn provider_doctor_candidate(
             input_modalities: BTreeSet::from(["text".to_owned()]),
             context_tokens: 8_192,
             maximum_output_tokens: 1_024,
+            input_token_overhead: 0,
             tool_calling: true,
             structured_output: true,
             reasoning_controls: BTreeSet::from(["none".to_owned()]),
