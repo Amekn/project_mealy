@@ -72,7 +72,8 @@ case $(uname -m) in
     ;;
 esac
 
-for command in awk basename chmod curl find getconf gh grep jq mktemp rm sha256sum sort stat uname wc; do
+for command in awk basename chmod curl find getconf gh grep jq mktemp readlink rm sha256sum sort stat \
+  uname wc; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required release-bootstrap command is unavailable: $command" >&2
     exit 69
@@ -212,8 +213,12 @@ chmod 0755 "$temporary/$manager"
   --prefix "$prefix" \
   --home "$home"
 
-printf '%s\n' \
-  "Installed Mealy $release_version for $target." \
-  "Next:" \
-  "  $prefix/bin/mealyctl --home $home setup" \
-  "  $prefix/bin/mealyctl --home $home service install"
+installed_prefix=$(readlink -f -- "$prefix")
+installed_home=$(readlink -m -- "$home")
+if [[ -z $installed_prefix || -z $installed_home ]]; then
+  echo "installed Mealy handoff paths could not be canonicalized" >&2
+  exit 65
+fi
+printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
+printf '  %q --home %q setup\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+printf '  %q --home %q service install\n' "$installed_prefix/bin/mealyctl" "$installed_home"

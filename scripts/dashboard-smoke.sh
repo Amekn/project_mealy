@@ -20,7 +20,7 @@ case "$profile" in
     ;;
 esac
 
-for dependency in awk curl jq ldd sed sha256sum sort; do
+for dependency in awk curl jq ldd sed seq sha256sum sort tail; do
   if ! command -v "$dependency" >/dev/null 2>&1; then
     echo "dashboard smoke requires $dependency" >&2
     exit 69
@@ -42,6 +42,12 @@ cargo build --locked "${cargo_profile[@]}" -p mealyd --bin mealy-sample-extensio
 mealyd="$binary_directory/mealyd"
 mealyctl="$binary_directory/mealyctl"
 sample_extension="$binary_directory/mealy-sample-extension"
+for binary in "$mealyd" "$mealyctl" "$sample_extension"; do
+  if [[ ! -f $binary || ! -x $binary ]]; then
+    echo "dashboard smoke build did not produce executable $binary" >&2
+    exit 66
+  fi
+done
 
 temporary_root=${TMPDIR:-/tmp}
 home=$(mktemp -d "$temporary_root/mealy-dashboard-smoke.XXXXXX")
@@ -71,13 +77,30 @@ trap cleanup EXIT
   >"$home/daemon.stdout" 2>"$home/daemon.stderr" &
 daemon_pid=$!
 
-for _ in $(seq 1 200); do
+daemon_ready=false
+for _ in $(seq 1 600); do
   if [[ -s $home/connection.json ]] && "$mealyctl" --home "$home" health >/dev/null 2>&1; then
+    daemon_ready=true
     break
+  fi
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    if wait "$daemon_pid"; then
+      daemon_status=0
+    else
+      daemon_status=$?
+    fi
+    daemon_pid=
+    echo "dashboard-smoke daemon exited before readiness (status $daemon_status)" >&2
+    tail -n 80 "$home/daemon.stderr" >&2
+    exit 70
   fi
   sleep 0.05
 done
-"$mealyctl" --home "$home" health >/dev/null
+if [[ $daemon_ready != true ]]; then
+  echo "dashboard-smoke daemon did not become healthy within 30 seconds" >&2
+  tail -n 80 "$home/daemon.stderr" >&2
+  exit 70
+fi
 
 "$mealyctl" --home "$home" dashboard \
   >"$home/dashboard.stdout" 2>"$home/dashboard.stderr" &

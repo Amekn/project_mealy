@@ -47,18 +47,33 @@ mapfile -t expressions < <(awk '
     print value
   }
 ' "$workspace_manifest")
-if [[ ${#expressions[@]} -ne 1 ]]; then
-  echo "workspace.package must declare exactly one public SPDX license expression" >&2
-  exit 65
-fi
-expression=${expressions[0]}
-if awk '
+mapfile -t license_files < <(awk '
   $0 == "[workspace.package]" { in_package = 1; next }
   in_package && /^\[/ { exit }
-  in_package && /^[[:space:]]*license-file[[:space:]]*=/ { found = 1 }
-  END { exit found ? 0 : 1 }
-' "$workspace_manifest"; then
-  echo "public release must use the reviewed SPDX expression, not license-file metadata" >&2
+  in_package && /^[[:space:]]*license-file[[:space:]]*=[[:space:]]*"[^"]+"[[:space:]]*$/ {
+    value = $0
+    sub(/^[^"]*"/, "", value)
+    sub(/"[[:space:]]*$/, "", value)
+    print value
+  }
+' "$workspace_manifest")
+mapfile -t declarations < <(awk '
+  $0 == "[workspace.package]" { in_package = 1; next }
+  in_package && /^\[/ { exit }
+  in_package && /^[[:space:]]*license(-file)?[[:space:]]*=/ { print }
+' "$workspace_manifest")
+if [[ ${#declarations[@]} -ne 1 ]]; then
+  echo "workspace.package must contain exactly one license declaration" >&2
+  exit 65
+elif [[ ${#expressions[@]} -eq 1 && ${#license_files[@]} -eq 0 ]]; then
+  declaration=spdx
+  expression=${expressions[0]}
+elif [[ ${#expressions[@]} -eq 0 && ${#license_files[@]} -eq 1 \
+  && ${license_files[0]} == LICENSE ]]; then
+  declaration=license-file
+  expression=
+else
+  echo "workspace.package must declare one reviewed SPDX expression or license-file = \"LICENSE\"" >&2
   exit 65
 fi
 
@@ -70,27 +85,39 @@ fi
 
 apache=false
 mit=false
-case $expression in
-  Apache-2.0) apache=true ;;
-  MIT) mit=true ;;
-  'MIT OR Apache-2.0') apache=true; mit=true ;;
-  *)
-    echo "unsupported public release license expression: $expression" >&2
-    exit 65
-    ;;
-esac
-if [[ $apache == true ]] \
-  && { ! grep -Fq 'Apache License' "$license_file" \
-    || ! grep -Fq 'Version 2.0, January 2004' "$license_file" \
-    || ! grep -Fq 'http://www.apache.org/licenses/' "$license_file"; }; then
-  echo "LICENSE does not contain the declared Apache-2.0 terms" >&2
+if grep -Fq 'Apache License' "$license_file" \
+  && grep -Fq 'Version 2.0, January 2004' "$license_file" \
+  && grep -Fq 'http://www.apache.org/licenses/' "$license_file"; then
+  apache=true
+fi
+if grep -Fq 'Permission is hereby granted, free of charge' "$license_file" \
+  && grep -Fq 'THE SOFTWARE IS PROVIDED "AS IS"' "$license_file"; then
+  mit=true
+fi
+if [[ $apache == true && $mit == true ]]; then
+  detected_expression='MIT OR Apache-2.0'
+elif [[ $apache == true ]]; then
+  detected_expression=Apache-2.0
+elif [[ $mit == true ]]; then
+  detected_expression=MIT
+else
+  echo "LICENSE does not contain complete recognized Apache-2.0 or MIT markers" >&2
   exit 65
 fi
-if [[ $mit == true ]] \
-  && { ! grep -Fq 'Permission is hereby granted, free of charge' "$license_file" \
-    || ! grep -Fq 'THE SOFTWARE IS PROVIDED "AS IS"' "$license_file"; }; then
-  echo "LICENSE does not contain the declared MIT terms" >&2
-  exit 65
+if [[ $declaration == spdx ]]; then
+  case $expression in
+    Apache-2.0|MIT|'MIT OR Apache-2.0') ;;
+    *)
+      echo "unsupported public release license expression: $expression" >&2
+      exit 65
+      ;;
+  esac
+  if [[ $expression != "$detected_expression" ]]; then
+    echo "workspace SPDX expression does not match the reviewed LICENSE text" >&2
+    exit 65
+  fi
+else
+  expression=$detected_expression
 fi
 
 mapfile -t package_manifests < <(
@@ -101,14 +128,23 @@ if [[ ${#package_manifests[@]} -lt 1 ]]; then
   exit 65
 fi
 for manifest in "${package_manifests[@]}"; do
-  if [[ -L $manifest ]] \
-    || ! grep -Eq '^[[:space:]]*license\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
+  valid_inheritance=false
+  if [[ $declaration == spdx ]] \
+    && grep -Eq '^[[:space:]]*license\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
       "$manifest" \
-    || grep -Eq '^[[:space:]]*license-file(\.workspace)?[[:space:]]*=' "$manifest"; then
+    && ! grep -Eq '^[[:space:]]*license-file(\.workspace)?[[:space:]]*=' "$manifest"; then
+    valid_inheritance=true
+  elif [[ $declaration == license-file ]] \
+    && grep -Eq '^[[:space:]]*license-file\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
+      "$manifest" \
+    && ! grep -Eq '^[[:space:]]*license(\.workspace)?[[:space:]]*=' "$manifest"; then
+    valid_inheritance=true
+  fi
+  if [[ -L $manifest || $valid_inheritance != true ]]; then
     echo "workspace package does not inherit the reviewed public license: $manifest" >&2
     exit 65
   fi
 done
 
-printf 'public release license: ok (%s, %s packages)\n' \
-  "$expression" "${#package_manifests[@]}"
+printf 'public release license: ok (%s via %s, %s packages)\n' \
+  "$expression" "$declaration" "${#package_manifests[@]}"

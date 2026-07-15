@@ -22,13 +22,21 @@ make_fixture() {
   local directory=$1
   local expression=$2
   local terms=$3
+  local declaration=${4:-spdx}
   mkdir -p "$directory/apps/example" "$directory/crates/example"
-  printf '[workspace]\nmembers = ["apps/example", "crates/example"]\n\n[workspace.package]\nversion = "0.1.0"\nlicense = "%s"\npublish = false\n' \
-    "$expression" >"$directory/Cargo.toml"
+  if [[ $declaration == spdx ]]; then
+    printf '[workspace]\nmembers = ["apps/example", "crates/example"]\n\n[workspace.package]\nversion = "0.1.0"\nlicense = "%s"\npublish = false\n' \
+      "$expression" >"$directory/Cargo.toml"
+    inheritance='license.workspace = true'
+  else
+    printf '[workspace]\nmembers = ["apps/example", "crates/example"]\n\n[workspace.package]\nversion = "0.1.0"\nlicense-file = "LICENSE"\npublish = false\n' \
+      >"$directory/Cargo.toml"
+    inheritance='license-file.workspace = true'
+  fi
   for manifest in "$directory/apps/example/Cargo.toml" \
     "$directory/crates/example/Cargo.toml"; do
-    printf '[package]\nname = "fixture"\nversion.workspace = true\nlicense.workspace = true\npublish.workspace = true\n' \
-      >"$manifest"
+    printf '[package]\nname = "fixture"\nversion.workspace = true\n%s\npublish.workspace = true\n' \
+      "$inheritance" >"$manifest"
   done
   case $terms in
     apache)
@@ -53,9 +61,11 @@ make_fixture() {
 make_fixture "$temporary/apache" Apache-2.0 apache
 make_fixture "$temporary/mit" MIT mit
 make_fixture "$temporary/dual" 'MIT OR Apache-2.0' dual
+make_fixture "$temporary/license-file" unused apache license-file
 "$validator" "$temporary/apache" >/dev/null
 "$validator" "$temporary/mit" >/dev/null
 "$validator" "$temporary/dual" >/dev/null
+"$validator" "$temporary/license-file" >/dev/null
 
 expect_rejection() {
   local name=$1
@@ -73,8 +83,8 @@ expect_rejection() {
 make_restrictive() {
   printf 'All rights reserved. No license is granted to use this software.\n' >>"$1/LICENSE"
 }
-use_license_file() {
-  sed -i 's/^license = .*/license-file = "LICENSE"/' "$1/Cargo.toml"
+redirect_license_file() {
+  sed -i 's/^license-file = .*/license-file = "COPYING"/' "$1/Cargo.toml"
 }
 drop_package_inheritance() {
   sed -i '/license\.workspace/d' "$1/apps/example/Cargo.toml"
@@ -82,10 +92,18 @@ drop_package_inheritance() {
 use_unsupported_expression() {
   sed -i 's/^license = .*/license = "GPL-3.0-only"/' "$1/Cargo.toml"
 }
+mismatch_expression() {
+  sed -i 's/^license = .*/license = "MIT"/' "$1/Cargo.toml"
+}
+duplicate_declaration() {
+  sed -i '/^license = /a license-file = "LICENSE"' "$1/Cargo.toml"
+}
 
 expect_rejection restrictive "$temporary/apache" make_restrictive
-expect_rejection license-file "$temporary/apache" use_license_file
+expect_rejection redirected-license-file "$temporary/license-file" redirect_license_file
 expect_rejection package-without-license "$temporary/apache" drop_package_inheritance
 expect_rejection unsupported-expression "$temporary/apache" use_unsupported_expression
+expect_rejection mismatched-expression "$temporary/apache" mismatch_expression
+expect_rejection duplicate-declaration "$temporary/apache" duplicate_declaration
 
 echo "public release license validator: ok"

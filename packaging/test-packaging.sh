@@ -312,10 +312,16 @@ MEALY_TEST_GH_LOG="$temporary/bootstrap-gh.log" \
 PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
     --version v0.1.0 --repository Amekn/project_mealy \
-    --prefix "$temporary/bootstrap-prefix" --home "$temporary/bootstrap-home" \
-    >/dev/null
-[[ $("$temporary/bootstrap-prefix/bin/mealyd") == mealyd-v1 ]]
-[[ $("$temporary/bootstrap-prefix/bin/mealyctl") == mealyctl-v1 ]]
+    --prefix "$temporary/bootstrap prefix" --home "$temporary/bootstrap home" \
+    >"$temporary/bootstrap-output"
+[[ $("$temporary/bootstrap prefix/bin/mealyd") == mealyd-v1 ]]
+[[ $("$temporary/bootstrap prefix/bin/mealyctl") == mealyctl-v1 ]]
+printf -v expected_setup '  %q --home %q setup' \
+  "$temporary/bootstrap prefix/bin/mealyctl" "$temporary/bootstrap home"
+printf -v expected_service '  %q --home %q service install' \
+  "$temporary/bootstrap prefix/bin/mealyctl" "$temporary/bootstrap home"
+grep -Fqx "$expected_setup" "$temporary/bootstrap-output"
+grep -Fqx "$expected_service" "$temporary/bootstrap-output"
 for asset in "$archive" "SHA256SUMS-${target}" install-mealy.sh \
   install-mealy-release.sh; do
   grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
