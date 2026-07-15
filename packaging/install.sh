@@ -63,6 +63,7 @@ release_documents=(
   benchmarks/2026-07-13-thirty-minute-paced-soak.json
   benchmarks/2026-07-13-ubuntu-24.04-installed-package-smoke.md
   benchmarks/2026-07-14-nine-hour-supervisor-interruption.md
+  benchmarks/2026-07-15-fedora-44-installed-package-smoke.md
   benchmarks/README.md
   decisions/0001-modular-monolith-and-workers.md
   decisions/0002-transactional-journal.md
