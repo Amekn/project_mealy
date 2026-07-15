@@ -30,7 +30,9 @@ job validate the complete merged inventory, add and attest the common
 installer, retain all assets, and create the GitHub release. Third-party actions are pinned by
 commit and supply-chain tools by version. Explicit macOS 15 ARM64 and Intel jobs run locked
 control-plane tests, build and binary-audit native executables, generate normalized CycloneDX SBOMs
-and license notices, then retain deterministic, attested conversation-only preview archives. These
+and license notices, then retain deterministic, attested conversation-only preview archives. A
+separate native `/bin/zsh` path completes a quoted-path conversation, recorded replay, bounded
+drain, and LaunchAgent rendering against both the build output and the extracted package. These
 archives are useful installable control planes, not production worker targets: every governed
 worker/tool sandbox profile remains denied. Windows is outside the release-one support and CI contract.
 
@@ -83,8 +85,8 @@ After publication, the same tag workflow downloads the immutable public assets w
 state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on
 native Linux x86-64/ARM64 and macOS ARM64/Intel runners. Linux repeats the tokenless bootstrap plus
 archive and Debian lifecycle smokes; macOS repeats the packaged conversation, replay,
-backup/restore, and LaunchAgent-drain smoke. A release workflow is green only after all four public
-delivery checks pass.
+backup/restore, LaunchAgent-drain, and native-zsh quoted-path smokes. A release workflow is green
+only after all four public delivery checks pass.
 
 ## Verify and install a published release
 

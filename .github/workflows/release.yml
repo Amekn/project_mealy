@@ -349,6 +349,8 @@ jobs:
         env:
           MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
         run: scripts/macos-control-plane-smoke.sh target/release/mealyd target/release/mealyctl
+      - name: Verify native zsh preview commands and quoted paths
+        run: /bin/zsh scripts/macos-zsh-preview-smoke.zsh target/release/mealyd target/release/mealyctl
       - name: Prepare bounded SBOM input
         shell: bash
         run: |
@@ -389,6 +391,8 @@ jobs:
           test "$("extracted/$package/bin/mealyd" --version)" = "mealyd $version"
           test "$("extracted/$package/bin/mealyctl" --version)" = "mealyctl $version"
           scripts/macos-control-plane-smoke.sh \
+            "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"
+          /bin/zsh scripts/macos-zsh-preview-smoke.zsh \
             "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"
       - name: Attest macOS preview release assets
         id: attest-preview
@@ -739,4 +743,6 @@ jobs:
             and .capabilityBoundary == "conversation-only-control-plane-preview"
           ' "extracted/$package/BUILD-MANIFEST.json" >/dev/null
           scripts/macos-control-plane-smoke.sh \
+            "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"
+          /bin/zsh scripts/macos-zsh-preview-smoke.zsh \
             "extracted/$package/bin/mealyd" "extracted/$package/bin/mealyctl"

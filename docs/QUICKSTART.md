@@ -94,6 +94,11 @@ In `zsh`, add `$HOME/.local/bin` to `PATH` if needed, then run `mealyctl --home
 licenses, and operating guidance. Upgrades are manual replacement after a clean drain; the Linux
 archive manager's automatic previous-slot rollback does not claim macOS support.
 
+The native ARM64 and Intel release gates run the extracted commands through `/bin/zsh`, including
+an owner home and Mealy state path containing spaces, then complete a conversation, recorded replay,
+bounded drain, and LaunchAgent rendering. These checks cover the shell and quoting used by this
+procedure; they do not broaden the preview into a macOS worker-sandbox claim.
+
 `mealyctl --home "$HOME/.mealy" service install` generates a `RunAtLoad` LaunchAgent that starts
 once when bootstrapped and deliberately has no unconditional `KeepAlive`. Consequently,
 `mealyctl --home "$HOME/.mealy" drain` leaves an intentionally stopped daemon stopped. Restart a
