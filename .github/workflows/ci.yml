@@ -74,6 +74,7 @@ jobs:
       - name: Generate reproducible third-party license notice
         run: |
           cargo install --locked --features cli cargo-about --version 0.9.1
+          cargo fetch --locked
           scripts/generate-third-party-licenses.sh \
             "$(command -v cargo-about)" "$RUNNER_TEMP/THIRD-PARTY-LICENSES.html"
       - name: Validate shell entry points

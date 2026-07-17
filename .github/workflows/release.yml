@@ -218,9 +218,10 @@ jobs:
             and ([.components[].name] | index("mealyctl") != null)
           ' sbom/mealy.cdx.json >/dev/null
       - name: Generate reproducible third-party license notice
-        run: >-
-          scripts/generate-third-party-licenses.sh
-          "$(command -v cargo-about)" third-party-licenses.html
+        run: |
+          cargo fetch --locked
+          scripts/generate-third-party-licenses.sh \
+            "$(command -v cargo-about)" third-party-licenses.html
       - name: Build reproducible release archive
         env:
           MEALY_SYSTEMD_SMOKE_ALLOW_HOST: 'true'
@@ -370,9 +371,10 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
       - name: Generate reproducible third-party license notice
-        run: >-
-          scripts/generate-third-party-licenses.sh
-          "$(command -v cargo-about)" third-party-licenses.html
+        run: |
+          cargo fetch --locked
+          scripts/generate-third-party-licenses.sh \
+            "$(command -v cargo-about)" third-party-licenses.html
       - name: Build and verify deterministic macOS preview archive
         env:
           MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
