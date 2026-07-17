@@ -62,6 +62,7 @@ release_documents=(
   benchmarks/2026-07-15-fedora-44-installed-package-smoke.md
   benchmarks/2026-07-16-schema15-long-soak-contention-failure.md
   benchmarks/README.md
+  benchmarks/release-soak.json
   decisions/0001-modular-monolith-and-workers.md
   decisions/0002-transactional-journal.md
   decisions/0003-effect-recovery.md

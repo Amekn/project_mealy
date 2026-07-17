@@ -101,7 +101,7 @@ after disabling the stock slim-image rule that intentionally discards `/usr/shar
 Lintian 2.122.0 emitted informational tags only and exited successfully with error and warning tags
 fatal.
 
-This package necessarily predates this paragraph and the pending 24-hour report. Its exact daemon
+This package necessarily predates this paragraph and the then-pending 24-hour report. Its exact daemon
 bytes are the ones under soak; the final archive/`.deb` must be reproduced after the report and
 documentation enter the checksummed payload. The dirty-tree, unattested, x86_64 limitations remain.
 
@@ -140,6 +140,6 @@ exact executable and terminal service state. A clean auditable rebuild at that v
 commit reproduced both hashes above exactly, and all seven protected CI contexts passed in
 [run 29374834884](https://github.com/Amekn/project_mealy/actions/runs/29374834884).
 
-This is still pre-report, unpublished x86_64 evidence. The current 24-hour run uses the exact
-`mealyd` hash above, and its report plus this documentation must enter a fresh reproducible package
-before any release claim.
+This was pre-report, unpublished x86_64 evidence. That exact candidate was later superseded; the
+corrected external package daemon and complete result are bound by the checked
+[release soak](release-soak.json). This historical package is not relabeled as the final asset.

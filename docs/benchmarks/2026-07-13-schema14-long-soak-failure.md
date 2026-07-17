@@ -28,8 +28,8 @@ one-second skill descriptor and the corrected five-second descriptor, and fixtur
 to validate its exact recorded positive timeout and digest rather than substituting current policy.
 
 The failed run cannot support any durability claim and will not be relabeled as schema-15 or
-release evidence. The reproduced current-runtime defect is fixed and bounded-regression-covered,
-but production readiness remains blocked until a fresh current-runtime 24-hour soak completes
+release evidence. The reproduced current-runtime defect was fixed and bounded-regression-covered,
+but production readiness remained blocked until a fresh current-runtime 24-hour soak completed
 cleanly. The earlier paced schema-15 run was deliberately stopped after the diagnosis because
 changing the runtime invalidated it.
 
@@ -48,4 +48,4 @@ two read-tool retry recoveries; its maximum task latency was 4.002 seconds while
 archive/Debian, Lintian, clean-container install, and real-browser gates overlapped on the same host.
 These probes cross the old failure's approximate per-session history depth or aggregate turn count,
 but not its wall-clock duration. They regression-cover the reproduced timeout defect; they do not
-erase the negative observation or replace the required fresh 24-hour gate.
+erase the negative observation or replace the later clean [release soak](release-soak.json).
