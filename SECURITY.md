@@ -1,9 +1,10 @@
 # Security Policy
 
-Mealy is an active pre-1.0 release candidate. The binaries execute model requests and governed
+Mealy is active pre-1.0 software. The binaries execute model requests and governed
 tools, persist durable personal-agent state, broker credentials, and can mediate external effects.
-No published production release exists yet, so do not treat an arbitrary checkout or development
-archive as an attested release.
+Treat only a non-draft, non-prerelease GitHub release whose exact tag workflow and dependent public
+acceptance jobs completed successfully as an attested production release. Never treat an arbitrary
+checkout or development archive as one.
 
 The supported production worker boundary is a single-owner Linux host whose `mealyctl doctor`
 report marks the required sandbox profiles enforceable. macOS is a packaged control-plane preview but
@@ -34,10 +35,11 @@ threat model is in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 ## Supported versions
 
-There is currently no generally available supported version. Security fixes are developed on the
-reviewed `main` branch and become release claims only after the tag workflow publishes attested
-x86_64 and ARM64 Linux assets. Development snapshots receive no compatibility or response-time
-guarantee.
+Supported versions are the non-draft, non-prerelease entries on the repository's GitHub Releases
+page whose exact tag workflow and dependent public-acceptance jobs completed successfully. Security
+fixes are developed on the reviewed `main` branch and become release claims only after that workflow
+publishes attested x86_64 and ARM64 Linux assets. Development snapshots receive no compatibility or
+response-time guarantee.
 
 ## Reporting a vulnerability
 

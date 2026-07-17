@@ -447,7 +447,7 @@ remove it before uninstalling.
    live/release run links automatically; review that deterministic body and use the linked final
    workflow result as authority for the post-publication native install observations.
 
-The workflow does not publish from an untagged branch or silently invent a tag. The repeatable soak
-harness and a dirty-worktree development baseline now exist, but the paced long clean-revision run,
-live-provider opt-in, and published-tag clean-machine evidence on both architectures are still open
-gates.
+The workflow does not publish from an untagged branch or silently invent a tag. A release is
+qualified only when its exact linked live-provider, tag, native-package, publication, and dependent
+public clean-host jobs are all green; an untagged checkout or partial workflow run never inherits
+that status.
