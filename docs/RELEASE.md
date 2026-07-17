@@ -12,8 +12,11 @@ against RustSec, and generates a bounded CycloneDX SBOM with pinned Syft. Each a
 and attests a reproducible archive, root-owned Debian package, target checksum manifest, and SBOM.
 A tag's native x86-64 job also rejects publication unless the checked
 `docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report for
-at least 86,400 seconds, names an ancestor of the tagged commit, and has the exact SHA-256/version
-of the newly built auditable daemon. The validator independently requires complete turn/recovery
+at least 86,400 seconds, has the exact SHA-256/version of the newly built auditable daemon, and
+either names an ancestor of the tagged commit or carries the checked identical-tree rebase proof
+in `docs/benchmarks/release-soak-lineage.json`. That proof preserves and rehashes the exact
+report-named commit payload, requires its Git tree to equal a mapped commit tree in the release
+history, and binds the unedited report SHA-256. The validator independently requires complete turn/recovery
 accounting, SQLite integrity, ordered latency measurements, and zero residual work; protected CI
 exercises its positive fixture and short/dirty/wrong-binary/volatile-home/residue/recovery/integrity
 rejections.
@@ -63,7 +66,9 @@ Two clean builds then reproduced the corrected `mealyd` SHA-256
 `4db797fd085ab845b7b30752a822168c670e6420df1edb22726c3e18eba64c97` and `mealyctl` SHA-256
 `9f7f53894352536040594777289d86842ab25723f121332ab94e2617879b9c63`. The exact daemon completed
 the clean [release soak](benchmarks/release-soak.json); the report-bearing tree still receives the
-same fresh comparison in the tag workflow. The native tag jobs run
+same fresh comparison in the tag workflow. The checked
+[lineage proof](benchmarks/release-soak-lineage.json) preserves the unedited report across the
+required linear-history rebase without relabeling its observed revision. The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
 package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,
@@ -426,7 +431,9 @@ remove it before uninstalling.
 3. Run the paced long soak from `docs/benchmarks/README.md` against a clean revision, retain its
    unedited report as `docs/benchmarks/release-soak.json`, and run
    `scripts/validate-release-soak.sh docs/benchmarks/release-soak.json MEALYD TAG_COMMIT` against
-   the exact auditable release daemon. Investigate any integrity, replay, residue, recovery, or
+   the exact auditable release daemon, adding
+   `docs/benchmarks/release-soak-lineage.json` only when a required rebase changed the observed
+   commit ID while retaining its exact Git tree. Investigate any identity, integrity, replay, residue, recovery, or
    identity failure before tagging; the tag workflow repeats this gate and cannot publish without
    it.
 4. Run the manual `mealy-live-provider-smoke` workflow against the exact protected commit, approve

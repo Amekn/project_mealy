@@ -200,6 +200,8 @@ trap cleanup EXIT
     "$peak_rss" "$database_bytes"
   printf -- "- Unedited soak report: [\`docs/benchmarks/release-soak.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak.json)\n\n" \
     "$repository" "$tag"
+  printf -- "- Rebase-safe identical-tree lineage proof: [\`docs/benchmarks/release-soak-lineage.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak-lineage.json)\n\n" \
+    "$repository" "$tag"
   printf '%s\n\n' 'The linked release workflow is the final authority: the release is complete only when its native Linux/macOS package jobs and all dependent public-download acceptance jobs are green.'
   printf '%s\n' '## Security and licensing'
   printf 'Review the tag-pinned [security policy](https://github.com/%s/blob/%s/SECURITY.md), [threat model](https://github.com/%s/blob/%s/docs/THREAT_MODEL.md), project [license](https://github.com/%s/blob/%s/LICENSE), per-asset CycloneDX SBOMs, third-party license notices, checksums, and offline Sigstore bundles before deployment.\n' \
