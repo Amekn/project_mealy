@@ -1584,7 +1584,7 @@ impl DurableProviderProgressSink {
         }
     }
 
-    fn flush(&self, force: bool) {
+    fn flush(&self, force: bool, recorded_at: SystemTime) {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
@@ -1641,7 +1641,7 @@ impl DurableProviderProgressSink {
                         delta,
                         cumulative_bytes,
                         event_id: SystemIdGenerator.generate_event_id(),
-                        recorded_at: SystemClock.now(),
+                        recorded_at,
                     })
                     .map_err(|_| ())
             });
@@ -1679,7 +1679,7 @@ impl ProviderProgressSink for DurableProviderProgressSink {
             let end = utf8_prefix_length(&delta, maximum);
             state.pending.push_str(&delta[..end]);
         }
-        self.flush(false);
+        self.flush(false, SystemClock.now());
     }
 }
 
@@ -2654,7 +2654,10 @@ fn dispatch_model(
     // store contention. A timely result must not become late merely because another transition
     // held the SQLite mutex while this worker waited to commit it.
     let completed_at = SystemClock.now();
-    progress.flush(true);
+    // The provider boundary completed before this potentially contended durable flush. Stamp its
+    // remaining progress at that boundary so replay cannot observe progress after the terminal
+    // attempt timestamp.
+    progress.flush(true, completed_at);
     let output = match result {
         Ok(output) => output,
         Err(error) => {

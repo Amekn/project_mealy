@@ -1300,6 +1300,7 @@ async fn configured_provider_completes_validates_and_replays_without_live_dispat
         .find(|event| event.event_type == "model.attempt.completed")
         .expect("terminal provider event");
     assert!(deltas[0].cursor.0 < completion.cursor.0);
+    assert!(deltas[0].occurred_at_ms <= completion.occurred_at_ms);
 
     let replay: TaskReplayResponse =
         authorized_get(&client, &connection, &format!("/v1/tasks/{task_id}/replay")).await;
