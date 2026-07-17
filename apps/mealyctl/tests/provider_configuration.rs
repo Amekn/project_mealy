@@ -167,7 +167,7 @@ fn provider_model_discovery_is_bounded_protocol_specific_and_read_only() {
         "data": [
             {
                 "id": "anthropic/claude-test",
-                "name": "Claude Test",
+                "name": "Claude Test ",
                 "created": 50,
                 "context_length": 180_000,
                 "pricing": {
@@ -226,6 +226,7 @@ fn provider_model_discovery_is_bounded_protocol_specific_and_read_only() {
     assert_eq!(response["pricingIncluded"], true);
     assert_eq!(response["returnedCount"], 1);
     assert_eq!(response["models"][0]["id"], "anthropic/claude-test");
+    assert_eq!(response["models"][0]["displayName"], "Claude Test");
     assert_eq!(response["models"][0]["contextTokens"], 200_000);
     assert_eq!(response["models"][0]["maximumOutputTokens"], 64_000);
     assert_eq!(
