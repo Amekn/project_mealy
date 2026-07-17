@@ -69,7 +69,7 @@ install/upgrade/rollback behavior. Treat a build as published only when its exac
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.
 
-> **Implementation status (not yet a public production release):** the durable release-one runtime
+> **Implementation status (verify the exact installed tag):** the durable release-one runtime
 > proof is complete, and Mealy now supports
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
 > Messages adapters, including explicit mixed-protocol fallback chains, plus a guarded OpenRouter
@@ -127,15 +127,15 @@ package.
 > expiry/rejection, and content-scrubbing deletion. A manifest-derived extension view exposes
 > bounded inventory/detail and exact-grant enable, disable, and terminal revoke with safe duplicate
 > reconciliation; install/stage/invoke remain CLI-only. These controls sit alongside operational status without
-> exposing the daemon bearer to the browser or providing an arbitrary proxy. It is not yet a
-> production general-purpose assistant: recursive tree mutation, directory moves, overwrite/chmod,
+> exposing the daemon bearer to the browser or providing an arbitrary proxy. It is not an
+> unrestricted general-purpose host assistant: recursive tree mutation, directory moves, overwrite/chmod,
 > interactive
 > arbitrary browser events/clicking, POST forms, uploads, unbounded/owner-path downloads,
 > persistent or personal profiles,
 > HTTP or credential-bearing MCP,
 > verified provider-wide price coverage, owner-reviewed live-provider acceptance, and published
-> clean-host release evidence remain in progress. The checked clean 24-hour packaged-binary report
-> is complete. Credential-scoped live model discovery is available
+> clean-host release evidence must be verified in the exact tag's linked workflows. The checked
+> clean 24-hour packaged-binary report is complete. Credential-scoped live model discovery is available
 > for both supported provider protocols, alongside a credentialless, literal-loopback
 > Responses-compatible discovery/activation preset. See the
 > [quickstart](docs/QUICKSTART.md) for exactly what can be run today.
