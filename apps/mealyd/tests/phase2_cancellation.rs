@@ -1,5 +1,6 @@
 //! Public-API process-boundary cancellation scenario for the Phase 2 agent loop.
 
+use mealy_application::default_daemon_config_document;
 use mealy_protocol::{
     API_VERSION, ApiErrorResponse, CancelTaskRequest, CreateSessionRequest, CreateSessionResponse,
     DeliveryMode, InputAdmissionResponse, LocalConnectionInfo, ReadinessResponse,
@@ -8,6 +9,7 @@ use mealy_protocol::{
 };
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
+use serde_json::json;
 use std::{
     fs,
     path::Path,
@@ -20,6 +22,7 @@ use tokio::time::{Instant, sleep};
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
 const AGENT_DELAY_MS: u64 = 1_000;
+const PROVIDER_TIMEOUT_TEST_MS: u64 = 1_000;
 
 struct Daemon {
     child: Child,
@@ -407,6 +410,7 @@ async fn cancellation_after_prepare_releases_undispatched_reservation_without_ch
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provider_timeout_is_terminal_bounded_and_stops_its_dispatch_thread() {
     let home = TempDir::new().expect("temporary daemon home should be created");
+    write_provider_timeout_test_config(home.path());
     let client = Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -509,6 +513,16 @@ fn assert_cancelled_task(task: &TaskResponse, ids: &WorkIds) {
     assert_eq!(task.usage.reserved_output_tokens, 0);
     assert_eq!(task.usage.reserved_cost_microunits, 0);
     assert_eq!(task.usage.reserved_output_bytes, 0);
+}
+
+fn write_provider_timeout_test_config(home: &Path) {
+    let mut config = default_daemon_config_document();
+    config["agentLoopLimits"]["providerTimeoutMs"] = json!(PROVIDER_TIMEOUT_TEST_MS);
+    fs::write(
+        home.join("config.json"),
+        serde_json::to_vec_pretty(&config).expect("encode timeout-test config"),
+    )
+    .expect("write timeout-test config");
 }
 
 async fn wait_until_ready(client: &Client, home: &Path) -> LocalConnectionInfo {
