@@ -211,25 +211,35 @@ jobs:
           marker="Live provider smoke $session_id: use workspace.read with workspaceId live-smoke and path evidence.txt, then cite workspace://live-smoke/evidence.txt and briefly report its LIVE_PROVIDER_EVIDENCE canary."
           target/release/mealyctl --home "$home" session send "$session_id" "$marker" \
             --idempotency-key live-provider-smoke-1 >"$RUNNER_TEMP/mealy-live-admission.json"
-          task_id=
-          for _ in $(seq 1 1200); do
-            search=$(target/release/mealyctl --home "$home" session search --limit 1 "$marker")
-            task_id=$(jq -r '.hits[0].taskId // empty' <<<"$search")
-            if [[ -n $task_id ]]; then
-              task=$(target/release/mealyctl --home "$home" task status "$task_id")
-              status=$(jq -r '.status' <<<"$task")
-              if [[ $status == succeeded || $status == failed || $status == cancelled ]]; then
-                break
-              fi
+          admission_cursor=$(jq -er '.cursor' "$RUNNER_TEMP/mealy-live-admission.json")
+          timeline="$RUNNER_TEMP/mealy-live-promotion.ndjson"
+          if ! timeout 30s target/release/mealyctl --home "$home" session watch \
+            "$session_id" --after "$admission_cursor" --limit 1 >"$timeline"; then
+            echo "live provider did not promote the admitted input within 30 seconds" >&2
+            exit 70
+          fi
+          task_id=$(jq -er \
+            'select(.eventType == "task.created") | .aggregateId' "$timeline")
+          status=
+          for _ in $(seq 1 3000); do
+            task=$(target/release/mealyctl --home "$home" task status "$task_id")
+            status=$(jq -r '.status' <<<"$task")
+            if [[ $status == succeeded || $status == failed || $status == cancelled ]]; then
+              break
             fi
             sleep 0.1
           done
-          if [[ -z $task_id ]]; then
-            echo "live provider did not publish a canonical task" >&2
+          if [[ $status != succeeded && $status != failed && $status != cancelled ]]; then
+            echo "live provider task did not become terminal within 300 seconds" >&2
             exit 70
           fi
           printf '%s\n' "$task" >"$RUNNER_TEMP/mealy-live-task.json"
-          jq -e '
+          if [[ $status != succeeded ]]; then
+            jq '{taskId, status, modelAttempts, toolCalls, usage}' \
+              "$RUNNER_TEMP/mealy-live-task.json" >&2
+            exit 70
+          fi
+          if ! jq -e '
             .status == "succeeded"
             and (.finalResponse | type == "string" and length > 0)
             and (.finalResponse | contains("workspace://live-smoke/evidence.txt"))
@@ -240,7 +250,21 @@ jobs:
             and .usage.reservedModelCalls == 0
             and .usage.reservedToolCalls == 0
             and .usage.reservedCostMicrounits == 0
-          ' "$RUNNER_TEMP/mealy-live-task.json" >/dev/null
+          ' "$RUNNER_TEMP/mealy-live-task.json" >/dev/null; then
+            jq '{
+              taskId,
+              status,
+              modelAttempts,
+              toolCalls,
+              usage,
+              hasFinalResponse: (.finalResponse | type == "string" and length > 0),
+              hasExpectedCitation: (
+                .finalResponse | type == "string"
+                and contains("workspace://live-smoke/evidence.txt")
+              )
+            }' "$RUNNER_TEMP/mealy-live-task.json" >&2
+            exit 70
+          fi
           target/release/mealyctl --home "$home" task replay "$task_id" \
             >"$RUNNER_TEMP/mealy-live-replay.json"
           jq -e '

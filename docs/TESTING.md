@@ -585,7 +585,10 @@ and has read-only repository permission. The `live-provider-smoke` Environment r
 explicit repository-owner review; add a credential only when its reviewed run is ready. The job
 resolves exactly one of its secrets
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, or `LOCAL_API_KEY` from the selected adapter; unused
-provider secrets are never added to the step environment.
+provider secrets are never added to the step environment. The gate binds terminal polling to the
+exact durable `task.created` event after the admission cursor rather than relying on transcript
+search, allows at most five minutes for a congested free model to settle, and prints only a
+credential-free task/usage summary when that bounded terminal contract fails.
 The job has a 20-minute hard timeout and a single non-cancelling concurrency group so two reviewed
 manual probes cannot overlap or terminate each other midway through settlement.
 
