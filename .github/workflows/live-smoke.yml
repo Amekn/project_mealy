@@ -214,12 +214,16 @@ jobs:
           admission_cursor=$(jq -er '.cursor' "$RUNNER_TEMP/mealy-live-admission.json")
           timeline="$RUNNER_TEMP/mealy-live-promotion.ndjson"
           if ! timeout 30s target/release/mealyctl --home "$home" session watch \
-            "$session_id" --after "$admission_cursor" --limit 1 >"$timeline"; then
+            "$session_id" --after "$admission_cursor" --limit 2 >"$timeline"; then
             echo "live provider did not promote the admitted input within 30 seconds" >&2
             exit 70
           fi
-          task_id=$(jq -er \
-            'select(.eventType == "task.created") | .aggregateId' "$timeline")
+          if ! task_id=$(jq -er \
+            'select(.eventType == "task.created") | .aggregateId' "$timeline"); then
+            echo "live provider promotion did not publish the expected task.created event" >&2
+            jq -s '[.[] | {cursor, aggregateKind, eventType}]' "$timeline" >&2
+            exit 70
+          fi
           status=
           for _ in $(seq 1 3000); do
             task=$(target/release/mealyctl --home "$home" task status "$task_id")
