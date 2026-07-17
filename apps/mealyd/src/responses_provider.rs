@@ -1,8 +1,9 @@
 use mealy_application::{
-    CancellationProbe, MAXIMUM_PROVIDER_CREDENTIAL_BYTES, MessageRole, ModelProvider, ModelUsage,
-    ProviderCapabilities, ProviderError, ProviderErrorClass, ProviderFailureDisposition,
-    ProviderOutput, ProviderPricing, ProviderProgress, ProviderProgressSink, ProviderRequest,
-    ProviderResponse, estimate_tokens, sha256_digest,
+    CancellationProbe, DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD, MAXIMUM_PROVIDER_CREDENTIAL_BYTES,
+    MessageRole, ModelProvider, ModelUsage, ProviderCapabilities, ProviderError,
+    ProviderErrorClass, ProviderFailureDisposition, ProviderOutput, ProviderPricing,
+    ProviderProgress, ProviderProgressSink, ProviderRequest, ProviderResponse, estimate_tokens,
+    sha256_digest,
 };
 use reqwest::{Client, StatusCode, Url, redirect::Policy};
 use serde::Deserialize;
@@ -250,6 +251,7 @@ impl OpenAiResponsesProvider {
             || !valid_label(&settings.model, 256)
             || !valid_label(&settings.residency, 128)
             || settings.context_tokens == 0
+            || settings.context_tokens <= DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD
             || settings.maximum_output_tokens == 0
             || settings.maximum_output_tokens > settings.context_tokens
             || settings.maximum_concurrent_requests == 0
@@ -279,7 +281,7 @@ impl OpenAiResponsesProvider {
                 input_modalities: BTreeSet::from(["text".to_owned()]),
                 context_tokens: settings.context_tokens,
                 maximum_output_tokens: settings.maximum_output_tokens,
-                input_token_overhead: 0,
+                input_token_overhead: DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD,
                 tool_calling: true,
                 structured_output: true,
                 reasoning_controls: BTreeSet::from(["none".to_owned()]),
@@ -1294,9 +1296,10 @@ mod tests {
         OpenAiResponsesSettings,
     };
     use mealy_application::{
-        CancellationProbe, MessageRole, ModelProvider, NormalizedMessage, ProviderErrorClass,
-        ProviderFailureDisposition, ProviderPricing, ProviderProgress, ProviderProgressSink,
-        ProviderRequest, ProviderResponse, ProviderToolDefinition, sha256_digest,
+        CancellationProbe, DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD, MessageRole, ModelProvider,
+        NormalizedMessage, ProviderErrorClass, ProviderFailureDisposition, ProviderPricing,
+        ProviderProgress, ProviderProgressSink, ProviderRequest, ProviderResponse,
+        ProviderToolDefinition, sha256_digest,
     };
     use mealy_domain::{AttemptId, ContextManifestId, RunId};
     use serde_json::{Value, json};
@@ -1604,6 +1607,10 @@ mod tests {
         assert_eq!(output.usage.cost_microunits, 20);
         assert_eq!(output.provider_request_id.as_deref(), Some("req-test"));
         assert_eq!(provider.health_status(), "healthy");
+        assert_eq!(
+            provider.capabilities().input_token_overhead,
+            DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD
+        );
         let (headers, body) = capture.recv().expect("captured request");
         assert!(headers.lines().any(|line| {
             line.split_once(':').is_some_and(|(name, value)| {

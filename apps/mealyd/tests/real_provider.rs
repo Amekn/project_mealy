@@ -8,8 +8,8 @@ use axum::{
     routing::{get, post},
 };
 use mealy_application::{
-    BROWSER_CDP_PROTOCOL_VERSION, BrowserConfig, MCP_PROTOCOL_VERSION, McpServerConfig,
-    McpToolGrant, sha256_digest,
+    BROWSER_CDP_PROTOCOL_VERSION, BrowserConfig, DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD,
+    MCP_PROTOCOL_VERSION, McpServerConfig, McpToolGrant, sha256_digest,
 };
 use mealy_infrastructure::{
     FileProviderSecretStore, discover_mcp_stdio_server, inspect_browser_bundle,
@@ -1270,6 +1270,36 @@ async fn configured_provider_completes_validates_and_replays_without_live_dispat
             .body
             .to_string()
             .contains("process-proof-secret")
+    );
+
+    let database = rusqlite::Connection::open(home.path().join("mealy.sqlite3"))
+        .expect("open direct-provider evidence database");
+    let (reserved_input, normalized_input, capability_json) = database
+        .query_row(
+            "SELECT reservation.input_tokens, manifest.total_token_estimate, \
+                    attempt.capability_snapshot_json \
+             FROM model_attempt attempt \
+             JOIN budget_reservation reservation USING(attempt_id) \
+             JOIN context_manifest manifest ON manifest.id = attempt.context_manifest_id",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .expect("durable direct-provider reservation");
+    assert_eq!(
+        reserved_input,
+        normalized_input + i64::try_from(DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD).unwrap()
+    );
+    let capabilities: Value =
+        serde_json::from_str(&capability_json).expect("capability snapshot JSON");
+    assert_eq!(
+        capabilities["inputTokenOverhead"],
+        DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD
     );
 
     let timeline: TimelinePageResponse = authorized_get(

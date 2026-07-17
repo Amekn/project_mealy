@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, collections::BTreeSet};
 use thiserror::Error;
 
+/// Conservative allowance for provider-side HTTP message framing, tool schemas, and tokenizer
+/// variance that are not part of Mealy's normalized context estimate.
+pub const DIRECT_PROVIDER_INPUT_TOKEN_OVERHEAD: u64 = 2_048;
+
 /// Versioned capability contract used for routing and request validation.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

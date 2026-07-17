@@ -14,7 +14,7 @@ on:
           - openai
           - anthropic
       model:
-        description: Exact model ID for private/direct probes; ignored for OpenRouter free
+        description: Exact model ID; OpenRouter accepts it only if the live catalog proves it free and eligible
         required: false
         type: string
       context_tokens:
@@ -131,7 +131,7 @@ jobs:
               echo "provider credential appeared in the OpenRouter catalog" >&2
               exit 70
             fi
-            selected=$(jq -cer '
+            if ! selected=$(jq -cer --arg requested "$LIVE_MODEL" '
               [.models[] | select(
                 (.id | endswith(":free"))
                 and .toolCapable == true
@@ -140,10 +140,18 @@ jobs:
                 and .inputMicrounitsPerMillionTokens == 0
                 and .outputMicrounitsPerMillionTokens == 0
                 and (.unsupportedPricingAxes | type == "array" and length == 0)
-                and (.contextTokens | type == "number" and . > 256)
+                and (.contextTokens | type == "number" and . > 2048)
                 and (.maximumOutputTokens | type == "number" and . >= 256)
-              )] | sort_by(.id) | first
-            ' "$catalog")
+              )] as $eligible
+              | if $requested == "" then
+                  $eligible | sort_by(.id) | first
+                else
+                  $eligible | map(select(.id == $requested)) | first
+                end
+            ' "$catalog"); then
+              echo "the requested OpenRouter model is not an eligible exact free model" >&2
+              exit 70
+            fi
             LIVE_MODEL=$(jq -er '.id' <<<"$selected")
             LIVE_CONTEXT_TOKENS=$(jq -er '.contextTokens' <<<"$selected")
             LIVE_INPUT_PRICE=$(jq -er '.inputMicrounitsPerMillionTokens' <<<"$selected")

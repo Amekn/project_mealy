@@ -571,8 +571,11 @@ BRAVE_SEARCH_API_KEY='...' cargo test -p mealy-infrastructure --all-features --t
 The manual `mealy-live-provider-smoke` GitHub workflow provides the corresponding account-scoped
 release gate. Its default `openrouter-free` path discovers the account-visible catalog and selects
 only a tool-capable exact `:free` model with complete token limits, exact zero input/output prices,
-and no unsupported pricing axes. Direct OpenAI or Anthropic runs instead require current
-model/limit/price inputs and the selected `live-provider-smoke` GitHub Environment secret. The
+and no unsupported pricing axes. Its optional exact model input can only narrow that eligible set;
+it cannot bypass any free-route check. Direct HTTP adapters reserve 2,048 additional normalized
+input tokens for provider-side framing, tool schemas, and tokenizer variance. Direct OpenAI or
+Anthropic runs instead require current model/limit/price inputs and the selected
+`live-provider-smoke` GitHub Environment secret. The
 `private-responses` choice fixes the destination to
 `https://the-beast.taile6fad0.ts.net/v1`, requires an exact model and verified context limit, and
 forces zero prices; neither a dispatch input nor a pull request can redirect `LOCAL_API_KEY`. It performs the real setup
