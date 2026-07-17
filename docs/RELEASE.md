@@ -59,8 +59,11 @@ content and reproduced the then-active soak subject exactly: `mealyd` SHA-256
 `e96d0012fb07b62d033d385257e3cc3a1c75f93d3a256a8804e213405c2dcf90`. That soak later failed and
 is superseded by the corrected candidate described in the
 [negative contention observation](benchmarks/2026-07-16-schema15-long-soak-contention-failure.md).
-The selected canonical terms still require the same fresh clean-build comparison before
-publication. The native tag jobs run
+Two clean builds then reproduced the corrected `mealyd` SHA-256
+`4db797fd085ab845b7b30752a822168c670e6420df1edb22726c3e18eba64c97` and `mealyctl` SHA-256
+`9f7f53894352536040594777289d86842ab25723f121332ab94e2617879b9c63`. The exact daemon completed
+the clean [release soak](benchmarks/release-soak.json); the report-bearing tree still receives the
+same fresh comparison in the tag workflow. The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
 package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,

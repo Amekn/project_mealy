@@ -35,13 +35,15 @@ scripts/run-soak.sh --release \
   --report target/soak/24-hour.json
 ```
 
-The newest checked-in durability observation is the paced
-[`2026-07-13-thirty-minute-paced-soak.json`](2026-07-13-thirty-minute-paced-soak.json): 2,008
-completed turns across eight sessions, 12 hard restarts, 117 duplicate admissions, 47 interrupted
-provider turns, SQLite integrity `ok`, and zero residual work after 1,804.862 seconds. Peak RSS was
-67,116 KiB. Its 2.948-second p95 and 5.717-second p99 include concurrent workspace compilation,
-real-Chrome conformance, and release-gate load on the same host, so they are resilience evidence,
-not a clean latency baseline.
+The checked [release soak](release-soak.json) is the clean packaged-binary durability observation.
+It ran for 86,425.217 seconds, completed 15,824 turns across eight sessions, survived 39 hard
+restarts, retained 929 exact duplicate admissions, recovered 62 interrupted-provider turns and 15
+read-tool retries, and finished with SQLite integrity `ok`, complete recorded-only replay, clean
+drain, and zero residual work. It binds clean revision `d346803`, exact external `mealyd` SHA-256
+`4db797fd085ab845b7b30752a822168c670e6420df1edb22726c3e18eba64c97`, and a retained disk-backed
+Btrfs home. Peak RSS was 160,256 KiB; p95/p99 latency was 20.691/23.846 seconds while the database
+grew to 2,718,826,496 bytes. These are observed durability measurements, not portable resource or
+latency guarantees.
 
 The checked
 [`2026-07-13-storage-optimized-soak.json`](2026-07-13-storage-optimized-soak.json) is the newest
@@ -61,15 +63,17 @@ smaller. Digests remain over the original canonical JSON; old uncompressed rows 
 declared size, decompressed size, UTF-8, JSON-object shape, and the 64/256-KiB logical ceilings are
 checked before use.
 
-The five-minute paced report remains the newest isolated throughput comparison. Every checked-in
-report is deliberately marked `dirty_worktree`; use the unedited JSON as development evidence only,
-and never relabel it as clean packaged-release or 24-hour durability evidence.
+The five-minute paced report remains the newest isolated throughput comparison. Except for the
+explicit clean [release soak](release-soak.json), historical comparison reports are deliberately
+marked `dirty_worktree`; use them as development evidence only and never relabel them as clean
+packaged-release durability evidence.
 The [superseded schema-14 long-soak failure](2026-07-13-schema14-long-soak-failure.md) is retained
 as negative evidence: it cannot satisfy a durability gate and motivated failure-report retention.
 That retained path reproduced a current one-second read-tool timeout under contention. After both
 in-memory read descriptors were aligned with the five-second run ceiling, the same accelerated
 contention shape completed 2,376 turns in 602.413 seconds with complete replay, integrity, drain,
-and zero residue. The focused regression resolves the reproduced defect, not the open 24-hour gate.
+and zero residue. That focused regression was followed by the clean corrected release soak above;
+it is not itself substituted for the 24-hour evidence.
 
 The later
 [`2026-07-14-nine-hour-supervisor-interruption.md`](2026-07-14-nine-hour-supervisor-interruption.md)
@@ -100,8 +104,8 @@ package-owned approved-mutation boundary.
 Both records append a 2026-07-14 repeat against the exact corrected web-policy candidate. They bind
 the byte-identical audited binaries, SBOM, license notice, archive, and Debian package hashes to
 fresh archive/`.deb` install smokes and real Debian 13/Ubuntu 24.04 package-owned user-service
-mutations. Those packages predate the appended evidence and pending 24-hour report, so a final
-documentation-inclusive reproduction is still required.
+mutations. Those packages predate the appended evidence and completed 24-hour report, so the
+report-bearing documentation-inclusive reproduction remains a separate final packaging gate.
 That daemon was subsequently superseded when a browser lifetime audit found completed proxy thread
 handles retained until call shutdown. The replacement candidate is reproducible at `mealyd`
 SHA-256 `bda5e8c4250612e6882711e70e15fa47e3f7661535160983dff906ffe1f4907e`; it reaps handlers during
@@ -115,6 +119,7 @@ without a promotable report. The retained
 [schema-15 contention-failure observation](2026-07-16-schema15-long-soak-contention-failure.md)
 records their 15-hour-51-minute and 12-hour-9-minute failure timelines, intact SQLite databases,
 root cause, correction, and a successful 176-turn dense diagnostic against a 1.5 GB retained-home
-clone. No duration or turn count from either failed run is carried forward. Until a fresh corrected
-run emits and passes its final report, the checked 30-minute paced report remains the newest
-positive long-form durability observation.
+clone. No duration or turn count from either failed run was carried forward. The corrected
+`d346803` subject subsequently produced the independent-validator-accepted
+[release soak](release-soak.json) above, closing the long-duration runtime gate without relabeling
+either failed attempt.

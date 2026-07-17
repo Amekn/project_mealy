@@ -133,9 +133,9 @@ package.
 > arbitrary browser events/clicking, POST forms, uploads, unbounded/owner-path downloads,
 > persistent or personal profiles,
 > HTTP or credential-bearing MCP,
-> verified provider-wide price coverage, the checked
-> 24-hour candidate report, owner-reviewed live-provider acceptance, and published clean-host
-> release evidence remain in progress. Credential-scoped live model discovery is available
+> verified provider-wide price coverage, owner-reviewed live-provider acceptance, and published
+> clean-host release evidence remain in progress. The checked clean 24-hour packaged-binary report
+> is complete. Credential-scoped live model discovery is available
 > for both supported provider protocols, alongside a credentialless, literal-loopback
 > Responses-compatible discovery/activation preset. See the
 > [quickstart](docs/QUICKSTART.md) for exactly what can be run today.

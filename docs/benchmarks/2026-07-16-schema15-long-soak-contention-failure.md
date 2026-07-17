@@ -62,6 +62,8 @@ dirty-worktree check binds daemon SHA-256
 harness path but is not promotable release evidence.
 
 This retained-history diagnostic exercises the reproduced contention boundary but is not the
-release soak. A single fresh, non-overlapping, empty-home run of at least 86,400 seconds against an
-audited external release binary must still complete, emit its final report, pass the independent
-report verifier, and leave zero residual work before the durability gate can close.
+release soak. The subsequent clean, non-overlapping [release soak](release-soak.json) ran
+86,425.217 seconds against the audited corrected external package daemon, completed 15,824 turns,
+survived 39 hard restarts, recovered 62 interrupted-provider turns and 15 read-tool retries,
+passed SQLite integrity and complete recorded-only replay, drained cleanly, and left zero residual
+work. The failed durations above remain negative evidence and were not carried into that result.
