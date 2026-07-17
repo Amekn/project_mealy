@@ -8494,6 +8494,11 @@ fn normalize_openrouter_model(
     model: OpenRouterModelWire,
     filter: Option<&str>,
 ) -> Result<Option<ProviderModelDiscoveryItem>, CliError> {
+    let Some(display_name) = normalize_openrouter_display_name(&model.name) else {
+        return Err(CliError::ProviderDiscovery(
+            "provider returned invalid model metadata".to_owned(),
+        ));
+    };
     if !valid_openrouter_model_metadata(&model) {
         return Err(CliError::ProviderDiscovery(
             "provider returned invalid model metadata".to_owned(),
@@ -8535,7 +8540,7 @@ fn normalize_openrouter_model(
     let owner = model.id.split_once('/').map(|(owner, _)| owner.to_owned());
     Ok(Some(ProviderModelDiscoveryItem {
         id: model.id,
-        display_name: Some(model.name),
+        display_name: Some(display_name.to_owned()),
         created_at: None,
         created_at_unix_seconds: Some(u64::try_from(model.created).map_err(|_| {
             CliError::ProviderDiscovery("provider returned invalid model metadata".to_owned())
@@ -8552,6 +8557,14 @@ fn normalize_openrouter_model(
     }))
 }
 
+fn normalize_openrouter_display_name(value: &str) -> Option<&str> {
+    if value.len() > 256 || value.chars().any(char::is_control) {
+        return None;
+    }
+    let value = value.trim();
+    valid_provider_discovery_text(value, 256).then_some(value)
+}
+
 fn valid_openrouter_model_metadata(model: &OpenRouterModelWire) -> bool {
     let parameters = model
         .supported_parameters
@@ -8560,7 +8573,6 @@ fn valid_openrouter_model_metadata(model: &OpenRouterModelWire) -> bool {
         .collect::<BTreeSet<_>>();
     model.created >= 0
         && valid_provider_discovery_text(&model.id, 256)
-        && valid_provider_discovery_text(&model.name, 256)
         && model.supported_parameters.len() <= 128
         && parameters.len() == model.supported_parameters.len()
         && parameters
@@ -12299,10 +12311,10 @@ mod tests {
         SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
         TelegramPairUpdate, TelegramPairUser, configure_workspace_grant, decode,
         generate_discord_pair_challenge, generate_telegram_pair_challenge, initialize_setup_home,
-        inspect_mcp_executable, load_connection, observe_discord_pair_messages,
-        observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
-        openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
-        resolve_setup, setup_provider_config, telegram_pair_api_url,
+        inspect_mcp_executable, load_connection, normalize_openrouter_display_name,
+        observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
+        openrouter_price_is_zero, openrouter_price_microunits_per_million, parse_chat_line,
+        prepare_local_text_attachment, resolve_setup, setup_provider_config, telegram_pair_api_url,
         validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
         validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
@@ -13083,6 +13095,16 @@ mod tests {
 
     #[test]
     fn openrouter_price_conversion_and_command_presets_are_exact() {
+        assert_eq!(
+            normalize_openrouter_display_name(" OpenRouter model "),
+            Some("OpenRouter model")
+        );
+        for invalid in ["", "   ", "model\nname", "model\t"] {
+            assert_eq!(normalize_openrouter_display_name(invalid), None);
+        }
+        let oversized_name = "m".repeat(257);
+        assert_eq!(normalize_openrouter_display_name(&oversized_name), None);
+
         assert_eq!(
             openrouter_price_microunits_per_million("0.00003"),
             Some(30_000_000)
