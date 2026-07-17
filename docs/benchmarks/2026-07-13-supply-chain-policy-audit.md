@@ -509,6 +509,14 @@ storage, integrity, and residue bindings. The report-bearing documentation chang
 so the native tag workflow must still reproduce and revalidate the final packages before
 publication; no pre-report package hash is presented as a final release asset.
 
+GitHub's later required rebase merge retained the observed commit's exact Git tree
+`057fd9ce226af587da3cef41b60d3d6f8678b8d7` while changing its commit identity. The checked
+[lineage proof](release-soak-lineage.json) embeds and rehashes the original commit payload to the
+report-named `d346803`, binds the unedited report SHA-256 above, and maps only that identical tree
+to rebased main-line commit `1523eef`. The release validator requires the mapped commit to be an
+ancestor of the candidate tag and rejects any altered payload, report, tree, transformation, or
+unrelated revision; the raw soak report remains byte-for-byte unchanged.
+
 ## Reproduction
 
 ```sh

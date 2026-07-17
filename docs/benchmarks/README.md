@@ -45,6 +45,15 @@ Btrfs home. Peak RSS was 160,256 KiB; p95/p99 latency was 20.691/23.846 seconds 
 grew to 2,718,826,496 bytes. These are observed durability measurements, not portable resource or
 latency guarantees.
 
+The report remains byte-for-byte identical to the harness output and therefore names its original
+pre-merge commit. GitHub's required linear-history rebase rewrote that commit identity while
+retaining the exact Git tree. The checked
+[`release-soak-lineage.json`](release-soak-lineage.json) preserves the original commit payload,
+recomputes its report-named object ID, and binds its tree to the identical-tree rebased commit that
+is an ancestor of the release. The release validator independently verifies the report SHA-256,
+both tree identities, reconstructed observed commit, and release ancestry; it rejects a relabeled
+report or merely similar source tree.
+
 The checked
 [`2026-07-13-storage-optimized-soak.json`](2026-07-13-storage-optimized-soak.json) is the newest
 isolated 60-second storage observation. It completed 536 turns with six hard restarts, SQLite

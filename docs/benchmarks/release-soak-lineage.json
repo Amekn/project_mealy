@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "mealy.soak-lineage.v1",
+  "reportSha256": "52387407d59cfe11bf22e92de389e4bd554bb9566a8cbee54c7c9a25700645d5",
+  "observedRevision": "d346803d4dd014244684f5a57ac0f96f0b0ea035",
+  "observedGitTree": "057fd9ce226af587da3cef41b60d3d6f8678b8d7",
+  "observedCommitPayload": "tree 057fd9ce226af587da3cef41b60d3d6f8678b8d7\nparent 26a9b033eb6cd9e59363ce99769dbf25bd0f9f80\nauthor Amekn <dadaogcd4@gamil.com> 1784153642 +1200\ncommitter Amekn <dadaogcd4@gamil.com> 1784153642 +1200\n\nFix Debian Apache license metadata\n",
+  "releaseLineageRevision": "1523eef3a44445ecd8afff216a7fa868ebd271ea",
+  "releaseLineageGitTree": "057fd9ce226af587da3cef41b60d3d6f8678b8d7",
+  "transformation": "github_rebase_merge"
+}
