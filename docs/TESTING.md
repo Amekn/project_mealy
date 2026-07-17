@@ -589,7 +589,9 @@ provider secrets are never added to the step environment. The gate binds termina
 exact durable `task.created` event after the admission cursor rather than relying on transcript
 search. It observes the atomic promotion's `input.promoted` and `task.created` events in order,
 allows at most five minutes for a congested free model to settle, and prints only a
-credential-free task/usage summary when that bounded terminal contract fails.
+credential-free task/usage and durable run-failure summary when that bounded terminal contract
+fails. The default 30-second provider-call budget admits the 30-second routing estimate written by
+every guided provider setup.
 The job has a 20-minute hard timeout and a single non-cancelling concurrency group so two reviewed
 manual probes cannot overlap or terminate each other midway through settlement.
 

@@ -99,7 +99,7 @@ impl Default for AgentLoopLimits {
             maximum_cost_microunits: 1_000_000,
             maximum_output_bytes: 4 * 1024 * 1024,
             maximum_wall_time_ms: 120_000,
-            provider_timeout_ms: 5_000,
+            provider_timeout_ms: 30_000,
             tool_timeout_ms: 5_000,
             inline_output_bytes: 1_024,
             maximum_artifact_bytes: 4 * 1024 * 1024,
@@ -910,10 +910,9 @@ mod tests {
 
     #[test]
     fn default_loop_limits_are_enforceable() {
-        assert_eq!(
-            AgentLoopLimits::default().validate(),
-            Ok(AgentLoopLimits::default())
-        );
+        let defaults = AgentLoopLimits::default();
+        assert_eq!(defaults.provider_timeout_ms, 30_000);
+        assert_eq!(defaults.validate(), Ok(defaults));
     }
 
     #[test]

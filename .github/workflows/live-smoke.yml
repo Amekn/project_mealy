@@ -241,6 +241,21 @@ jobs:
           if [[ $status != succeeded ]]; then
             jq '{taskId, status, modelAttempts, toolCalls, usage}' \
               "$RUNNER_TEMP/mealy-live-task.json" >&2
+            failure_timeline="$RUNNER_TEMP/mealy-live-failure.ndjson"
+            watch_status=0
+            timeout 2s stdbuf -oL target/release/mealyctl --home "$home" session watch \
+              "$session_id" --after "$admission_cursor" >"$failure_timeline" \
+              || watch_status=$?
+            if [[ $watch_status -ne 0 && $watch_status -ne 124 ]]; then
+              echo "live provider failure timeline could not be read" >&2
+            elif contains_credential "$failure_timeline"; then
+              echo "live provider failure summary was redacted" >&2
+            else
+              jq -rs '{failureSummary: (
+                [.[] | select(.eventType == "run.failed") | .payload.summary
+                  | select(type == "string" and length > 0)] | last // "unavailable"
+              )}' "$failure_timeline" >&2
+            fi
             exit 70
           fi
           if ! jq -e '

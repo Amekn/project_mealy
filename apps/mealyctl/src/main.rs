@@ -113,6 +113,7 @@ const PROVIDER_PROBE_MAXIMUM_BYTES: u64 = 1024 * 1024;
 const PROVIDER_PROBE_MAXIMUM_TEXT_BYTES: usize = 64 * 1024;
 const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 64;
 const SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
+const SETUP_PROVIDER_ESTIMATED_LATENCY_MS: u64 = 30_000;
 const PROVIDER_DISCOVERY_MAXIMUM_MODELS: usize = 500;
 const PROVIDER_DISCOVERY_MAXIMUM_WIRE_MODELS: usize = 2_000;
 const TELEGRAM_PAIR_GET_ME_MAXIMUM_BYTES: usize = 64 * 1024;
@@ -6768,7 +6769,7 @@ fn setup_provider_config(setup: &ResolvedSetup) -> (ProviderConfig, Option<Strin
                 streaming: common.4,
                 input_microunits_per_million_tokens: common.5,
                 output_microunits_per_million_tokens: common.6,
-                estimated_latency_ms: 30_000,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
             },
             Some("openai-primary".to_owned()),
         ),
@@ -6786,7 +6787,7 @@ fn setup_provider_config(setup: &ResolvedSetup) -> (ProviderConfig, Option<Strin
                 streaming: common.4,
                 input_microunits_per_million_tokens: common.5,
                 output_microunits_per_million_tokens: common.6,
-                estimated_latency_ms: 30_000,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
             },
             Some("anthropic-primary".to_owned()),
         ),
@@ -6804,7 +6805,7 @@ fn setup_provider_config(setup: &ResolvedSetup) -> (ProviderConfig, Option<Strin
                 streaming: common.4,
                 input_microunits_per_million_tokens: common.5,
                 output_microunits_per_million_tokens: common.6,
-                estimated_latency_ms: 30_000,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
             },
             Some("openrouter-primary".to_owned()),
         ),
@@ -6820,7 +6821,7 @@ fn setup_provider_config(setup: &ResolvedSetup) -> (ProviderConfig, Option<Strin
                 streaming: common.4,
                 input_microunits_per_million_tokens: 0,
                 output_microunits_per_million_tokens: 0,
-                estimated_latency_ms: 30_000,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
             },
             None,
         ),
@@ -12307,14 +12308,15 @@ mod tests {
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
         EffectCommand, ExtensionCommand, MAXIMUM_DAEMON_RESPONSE_BYTES,
-        MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand, ResumableChatTask, ScheduleCommand,
-        SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
-        TelegramPairUpdate, TelegramPairUser, configure_workspace_grant, decode,
-        generate_discord_pair_challenge, generate_telegram_pair_challenge, initialize_setup_home,
-        inspect_mcp_executable, load_connection, normalize_openrouter_display_name,
-        observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
-        openrouter_price_is_zero, openrouter_price_microunits_per_million, parse_chat_line,
-        prepare_local_text_attachment, resolve_setup, setup_provider_config, telegram_pair_api_url,
+        MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand, ResumableChatTask,
+        SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, SetupProviderArgument, SkillCommand,
+        TelegramPairChat, TelegramPairMessage, TelegramPairUpdate, TelegramPairUser,
+        configure_workspace_grant, decode, generate_discord_pair_challenge,
+        generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
+        load_connection, normalize_openrouter_display_name, observe_discord_pair_messages,
+        observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
+        openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
+        resolve_setup, setup_provider_config, telegram_pair_api_url,
         validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
         validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
@@ -12327,6 +12329,7 @@ mod tests {
     use super::{macos_activation_command, service_definition};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
+    use mealy_application::{AgentLoopLimits, ProviderConfig};
     use mealy_protocol::{
         API_VERSION, DeliveryMode, LocalConnectionInfo, TimelineCursor, TimelineEvent,
     };
@@ -13088,6 +13091,18 @@ mod tests {
         let (provider, secret_id) = setup_provider_config(&resolved);
         assert!(provider.validate().is_ok());
         assert_eq!(secret_id, None);
+        let ProviderConfig::OpenAiResponses {
+            estimated_latency_ms,
+            ..
+        } = provider
+        else {
+            panic!("expected Responses provider");
+        };
+        assert_eq!(estimated_latency_ms, SETUP_PROVIDER_ESTIMATED_LATENCY_MS);
+        assert!(
+            SETUP_PROVIDER_ESTIMATED_LATENCY_MS <= AgentLoopLimits::default().provider_timeout_ms,
+            "guided setup must produce a route admitted by the default agent budget"
+        );
         let prompt = String::from_utf8(prompt).expect("UTF-8 prompt");
         assert!(prompt.contains("Select a provider"));
         assert!(!prompt.to_ascii_lowercase().contains("api key"));
