@@ -4,8 +4,8 @@ use mealy_application::default_daemon_config_document;
 use mealy_protocol::{
     API_VERSION, ApiErrorResponse, CancelTaskRequest, CreateSessionRequest, CreateSessionResponse,
     DeliveryMode, InputAdmissionResponse, LocalConnectionInfo, ReadinessResponse,
-    SessionStatusResponse, SubmitInputRequest, TaskCancellationReceipt, TaskResponse, TaskStatus,
-    TimelineEvent, TimelinePageResponse,
+    SessionStatusResponse, SubmitInputRequest, TaskCancellationReceipt, TaskReplayResponse,
+    TaskResponse, TaskStatus, TimelineEvent, TimelinePageResponse,
 };
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
@@ -85,6 +85,11 @@ impl Daemon {
             })
             .filter(|name| name.starts_with("mealy-provider"))
             .collect()
+    }
+
+    fn hard_kill(&mut self) {
+        self.child.kill().expect("daemon should accept a hard kill");
+        self.child.wait().expect("hard-killed daemon should exit");
     }
 }
 
@@ -483,6 +488,110 @@ async fn provider_timeout_is_terminal_bounded_and_stops_its_dispatch_thread() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn elapsed_pre_dispatch_deadline_retries_without_phantom_usage() {
+    let home = TempDir::new().expect("temporary daemon home should be created");
+    write_provider_timeout_test_config(home.path());
+    let client = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("HTTP client should build");
+    let mut delayed_daemon = Daemon::spawn_with_boundary_delay(home.path(), 0, 0, 1_250);
+    let first_connection = wait_until_ready(&client, home.path()).await;
+    let session: CreateSessionResponse = authorized_post(
+        &client,
+        &first_connection,
+        "/v1/sessions",
+        &CreateSessionRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    let admission: InputAdmissionResponse = authorized_post(
+        &client,
+        &first_connection,
+        &format!("/v1/sessions/{}/inputs", session.session_id),
+        &SubmitInputRequest {
+            api_version: API_VERSION.to_owned(),
+            idempotency_key: "phase-2-expired-pre-dispatch-input".to_owned(),
+            delivery_mode: DeliveryMode::Queue,
+            content: "Retry an undispatched provider attempt after scheduler contention."
+                .to_owned(),
+        },
+    )
+    .await;
+    let ids = wait_for_promoted_work(
+        &client,
+        &first_connection,
+        &session.session_id,
+        admission.cursor.0,
+    )
+    .await;
+    let expired_attempt_id = wait_for_expired_pre_dispatch_attempt(home.path(), &ids.run_id).await;
+    delayed_daemon.hard_kill();
+    drop(delayed_daemon);
+    fs::remove_file(home.path().join("connection.json"))
+        .expect("ephemeral endpoint descriptor can be recreated after interruption");
+
+    let _replacement_daemon = Daemon::spawn_with_delays(home.path(), 0, 0);
+    let replacement_connection = wait_until_ready(&client, home.path()).await;
+    let task = wait_until_succeeded(&client, &replacement_connection, &ids.task_id).await;
+    assert_eq!(task.status, TaskStatus::Succeeded);
+    assert_eq!(task.model_attempts, 3);
+    assert_eq!(task.tool_calls, 1);
+    assert_eq!(task.usage.used_model_calls, 2);
+    assert_eq!(task.usage.used_retries, 0);
+    assert_eq!(task.usage.used_tool_calls, 1);
+    assert_eq!(task.usage.reserved_model_calls, 0);
+    assert_eq!(task.usage.reserved_tool_calls, 0);
+
+    let database = open_database(home.path());
+    let (state, dispatched_at_ms, deadline_at_ms, completed_at_ms, error_class, reservation): (
+        String,
+        Option<i64>,
+        i64,
+        i64,
+        String,
+        String,
+    ) = database
+        .query_row(
+            "SELECT ma.state, ma.dispatched_at_ms, ma.deadline_at_ms, ma.completed_at_ms, \
+                    ma.error_class, br.state \
+             FROM model_attempt ma \
+             JOIN budget_reservation br ON br.attempt_id = ma.attempt_id \
+             WHERE ma.attempt_id = ?1 AND ma.run_id = ?2",
+            [expired_attempt_id.as_str(), ids.run_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("expired preparation evidence should remain queryable");
+    assert_eq!(state, "interrupted");
+    assert_eq!(dispatched_at_ms, None);
+    assert!(completed_at_ms >= deadline_at_ms);
+    assert_eq!(error_class, "provider_dispatch_deadline_elapsed");
+    assert_eq!(reservation, "released");
+
+    let replay: TaskReplayResponse = authorized_get(
+        &client,
+        &replacement_connection,
+        &format!("/v1/tasks/{}/replay", ids.task_id),
+    )
+    .await;
+    assert!(replay.evidence_complete);
+    assert_eq!(replay.model_attempts, 3);
+    assert_eq!(replay.tool_calls, 1);
+    assert_eq!(replay.live_provider_calls, 0);
+    assert_eq!(replay.live_tool_calls, 0);
+}
+
 fn assert_duplicate_receipt(
     duplicate: &TaskCancellationReceipt,
     original: &TaskCancellationReceipt,
@@ -672,6 +781,59 @@ async fn wait_until_failed(
         assert!(
             Instant::now() < deadline,
             "provider timeout did not reach a terminal failure: {task:?}"
+        );
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_until_succeeded(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    task_id: &str,
+) -> TaskResponse {
+    let deadline = Instant::now() + COMPLETION_TIMEOUT;
+    loop {
+        let task: TaskResponse =
+            authorized_get(client, connection, &format!("/v1/tasks/{task_id}")).await;
+        match task.status {
+            TaskStatus::Succeeded => return task,
+            TaskStatus::Failed | TaskStatus::Cancelled => {
+                panic!("retried task reached the wrong terminal state: {task:?}")
+            }
+            TaskStatus::Queued
+            | TaskStatus::Running
+            | TaskStatus::Waiting
+            | TaskStatus::Paused
+            | TaskStatus::Cancelling => {}
+        }
+        assert!(
+            Instant::now() < deadline,
+            "retried task did not succeed: {task:?}"
+        );
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_for_expired_pre_dispatch_attempt(home: &Path, run_id: &str) -> String {
+    let deadline = Instant::now() + COMPLETION_TIMEOUT;
+    loop {
+        let candidate = open_database(home)
+            .query_row(
+                "SELECT attempt_id FROM model_attempt \
+                 WHERE run_id = ?1 AND state = 'interrupted' \
+                   AND dispatched_at_ms IS NULL \
+                   AND error_class = 'provider_dispatch_deadline_elapsed' \
+                 ORDER BY ordinal LIMIT 1",
+                [run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+        if let Some(attempt_id) = candidate {
+            return attempt_id;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "prepared provider attempt did not retire after its immutable deadline"
         );
         sleep(Duration::from_millis(20)).await;
     }

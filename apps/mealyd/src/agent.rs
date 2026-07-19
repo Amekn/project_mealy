@@ -12,14 +12,14 @@ use mealy_application::{
     DispatchReadToolCommit, EffectAttemptOutcome, EffectLedgerStore, EffectLedgerStoreError,
     ExecutorError, ExecutorTerminal, ExpireApprovalCommit, FinalMessageCommit, IdGenerator,
     LaunchAgentDelegationCommit, LeaseClaimOutcome, LeaseConcurrencyLimits, LeaseLimits,
-    MarkEffectAttemptRunningCommit, MessageRole, ModelProvider, ModelUsage, OwnershipContext,
-    ParkAgentEffectRunCommit, PolicyDecision, PolicyRequest, PrepareDelegationCommit,
-    PrepareEffectAttemptCommit, ProviderCapabilities, ProviderConfig, ProviderCredentialReference,
-    ProviderError, ProviderErrorClass, ProviderFailureDisposition, ProviderFallbackPolicy,
-    ProviderLocality, ProviderOutput, ProviderPricing, ProviderProgress, ProviderProgressSink,
-    ProviderRequest, ProviderResponse, ProviderRouteCandidate, ProviderRoutingPolicy,
-    ProviderToolDefinition, ReadOnlyTool, ReadToolDescriptor, ReadToolError, ReadToolOutput,
-    RecordAgentEffectObservationCommit, RecordAgentEffectProposalCommit,
+    MarkEffectAttemptRunningCommit, MessageRole, ModelDispatchReceipt, ModelProvider, ModelUsage,
+    OwnershipContext, ParkAgentEffectRunCommit, PolicyDecision, PolicyRequest,
+    PrepareDelegationCommit, PrepareEffectAttemptCommit, ProviderCapabilities, ProviderConfig,
+    ProviderCredentialReference, ProviderError, ProviderErrorClass, ProviderFailureDisposition,
+    ProviderFallbackPolicy, ProviderLocality, ProviderOutput, ProviderPricing, ProviderProgress,
+    ProviderProgressSink, ProviderRequest, ProviderResponse, ProviderRouteCandidate,
+    ProviderRoutingPolicy, ProviderToolDefinition, ReadOnlyTool, ReadToolDescriptor, ReadToolError,
+    ReadToolOutput, RecordAgentEffectObservationCommit, RecordAgentEffectProposalCommit,
     RecordEffectAttemptOutcomeCommit, RecordEffectProposalCommit, RecordModelFailureCommit,
     RecordModelProgressCommit, RecordModelResultCommit, RecordReadToolResultCommit,
     RecordValidationCommit, ResumeAgentEffectRunCommit, RunCompletionStatus,
@@ -2585,12 +2585,18 @@ fn dispatch_model(
     heartbeat(store, fence)?;
     {
         let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
-        guard.dispatch_model_attempt(DispatchModelAttemptCommit {
+        let receipt = guard.dispatch_model_attempt(DispatchModelAttemptCommit {
             fence,
             attempt_id,
             event_id: SystemIdGenerator.generate_event_id(),
             dispatched_at: SystemClock.now(),
         })?;
+        if receipt == ModelDispatchReceipt::DeadlineElapsed {
+            tracing::warn!(
+                "provider attempt expired before dispatch; retired without charging usage"
+            );
+            return Ok(false);
+        }
     }
     let request = load_provider_request(store, attempt_id)?;
     let provider_timeout = remaining_deadline_duration(

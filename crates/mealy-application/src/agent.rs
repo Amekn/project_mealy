@@ -320,6 +320,15 @@ pub struct DispatchModelAttemptCommit {
     pub dispatched_at: SystemTime,
 }
 
+/// Durable outcome of crossing the provider dispatch boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelDispatchReceipt {
+    /// The attempt became externally dispatchable before its immutable deadline.
+    Dispatched,
+    /// The undispatched preparation expired and was atomically retired without charging usage.
+    DeadlineElapsed,
+}
+
 /// Appends one bounded non-authoritative provider text delta while an attempt is dispatching.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordModelProgressCommit {
@@ -660,15 +669,17 @@ pub trait AgentExecutionStore {
         commit: PrepareModelAttemptCommit,
     ) -> Result<(), AgentStoreError>;
 
-    /// Durably marks an attempt immediately before invoking the provider.
+    /// Durably marks an attempt immediately before invoking the provider, or atomically retires
+    /// an undispatched preparation whose immutable deadline has elapsed without charging usage.
     ///
     /// # Errors
     ///
-    /// Returns [`AgentStoreError`] for stale ownership, conflict, or persistence failure.
+    /// Returns the exact dispatch outcome, or [`AgentStoreError`] for stale ownership, unrelated
+    /// canonical conflict, or persistence failure.
     fn dispatch_model_attempt(
         &mut self,
         commit: DispatchModelAttemptCommit,
-    ) -> Result<(), AgentStoreError>;
+    ) -> Result<ModelDispatchReceipt, AgentStoreError>;
 
     /// Appends one bounded non-authoritative text delta without settling the provider attempt.
     ///
