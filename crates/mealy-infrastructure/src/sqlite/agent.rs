@@ -5,10 +5,10 @@ use mealy_application::{
     AgentArtifactCommit, AgentBudgetUsage, AgentContextSource, AgentEvidenceStore,
     AgentExecutionStore, AgentLoopLimits, AgentNextAction, AgentReplayReport, AgentRunSnapshot,
     AgentStoreError, AgentTaskView, ContextEpoch, ContextMemoryEvidence,
-    ContextMemorySourceCitation, MessageRole, NormalizedMessage, OwnershipContext,
-    PrepareModelAttemptCommit, ProviderCapabilities, ProviderRequest, ProviderResponse,
-    ReadToolDescriptor, estimate_tokens, sha256_digest, validate_context_manifest,
-    validate_fixture_read_arguments, web_url_authorized_by_capabilities,
+    ContextMemorySourceCitation, MessageRole, ModelDispatchReceipt, NormalizedMessage,
+    OwnershipContext, PrepareModelAttemptCommit, ProviderCapabilities, ProviderRequest,
+    ProviderResponse, ReadToolDescriptor, estimate_tokens, sha256_digest,
+    validate_context_manifest, validate_fixture_read_arguments, web_url_authorized_by_capabilities,
 };
 use mealy_domain::{
     CapabilityGrant, CompactionId, ContextItemId, CorrelationId, EffectClass, EventId, LeaseFence,
@@ -503,7 +503,7 @@ impl AgentExecutionStore for SqliteStore {
     fn dispatch_model_attempt(
         &mut self,
         commit: mealy_application::DispatchModelAttemptCommit,
-    ) -> Result<(), AgentStoreError> {
+    ) -> Result<ModelDispatchReceipt, AgentStoreError> {
         let dispatched_at_ms = epoch_milliseconds(commit.dispatched_at)?;
         let transaction = self
             .connection
@@ -530,20 +530,22 @@ impl AgentExecutionStore for SqliteStore {
                 ],
             )
             .map_err(map_sqlite_error)?;
-        if changed != 1 {
-            return Err(AgentStoreError::Conflict);
+        if changed == 1 {
+            append_agent_event(
+                &transaction,
+                commit.event_id,
+                "model_attempt",
+                &commit.attempt_id.to_string(),
+                "model.attempt.dispatched",
+                dispatched_at_ms,
+                owner.correlation_id,
+                json!({"run_id": commit.fence.run_id()}),
+            )?;
+            transaction.commit().map_err(map_sqlite_error)?;
+            return Ok(ModelDispatchReceipt::Dispatched);
         }
-        append_agent_event(
-            &transaction,
-            commit.event_id,
-            "model_attempt",
-            &commit.attempt_id.to_string(),
-            "model.attempt.dispatched",
-            dispatched_at_ms,
-            owner.correlation_id,
-            json!({"run_id": commit.fence.run_id()}),
-        )?;
-        transaction.commit().map_err(map_sqlite_error)
+
+        retire_expired_model_dispatch(transaction, &commit, dispatched_at_ms, owner.correlation_id)
     }
 
     fn record_model_result(
@@ -600,6 +602,138 @@ impl AgentExecutionStore for SqliteStore {
         commit: mealy_application::TaskControlCommit,
     ) -> Result<mealy_application::TaskControlCommitReceipt, AgentStoreError> {
         control_task(self, &commit)
+    }
+}
+
+fn retire_expired_model_dispatch(
+    transaction: Transaction<'_>,
+    commit: &mealy_application::DispatchModelAttemptCommit,
+    completed_at_ms: i64,
+    correlation_id: CorrelationId,
+) -> Result<ModelDispatchReceipt, AgentStoreError> {
+    let deadline_at_ms = load_prepared_model_deadline(&transaction, commit)?;
+    if deadline_at_ms > completed_at_ms {
+        return Err(AgentStoreError::Conflict);
+    }
+    let attempt_changed = transaction
+        .execute(
+            "UPDATE model_attempt SET state = 'interrupted', completed_at_ms = ?1, \
+                error_class = 'provider_dispatch_deadline_elapsed', \
+                error_message = 'provider attempt deadline elapsed before dispatch', \
+                retryable = 1 \
+             WHERE attempt_id = ?2 AND run_id = ?3 AND state = 'prepared' \
+               AND deadline_at_ms <= ?1 AND prepared_lease_id = ?4 \
+               AND prepared_owner_id = ?5 AND prepared_fencing_token = ?6",
+            params![
+                completed_at_ms,
+                commit.attempt_id.to_string(),
+                commit.fence.run_id().to_string(),
+                commit.fence.lease_id().to_string(),
+                commit.fence.owner_id().to_string(),
+                to_i64(commit.fence.fencing_token().get(), "fencing token")?,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    let loop_changed = transaction
+        .execute(
+            "UPDATE run_loop_state SET revision = revision + 1, \
+                next_action = 'compile_context', updated_at_ms = ?1 \
+             WHERE run_id = ?2 AND next_action = 'dispatch_model' \
+               AND current_attempt_id = ?3",
+            params![
+                completed_at_ms,
+                commit.fence.run_id().to_string(),
+                commit.attempt_id.to_string(),
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    release_undispatched_model_reservation(&transaction, commit, completed_at_ms)?;
+    if attempt_changed != 1 || loop_changed != 1 {
+        return Err(AgentStoreError::Conflict);
+    }
+    append_checkpoint(
+        &transaction,
+        commit.fence.run_id(),
+        AgentNextAction::CompileContext,
+        None,
+        Some(commit.attempt_id.to_string()),
+        None,
+        commit.event_id,
+        completed_at_ms,
+        correlation_id,
+        json!({
+            "reason": "provider_dispatch_deadline_elapsed",
+            "deadlineAtMs": deadline_at_ms,
+        }),
+    )?;
+    transaction.commit().map_err(map_sqlite_error)?;
+    Ok(ModelDispatchReceipt::DeadlineElapsed)
+}
+
+fn load_prepared_model_deadline(
+    transaction: &Transaction<'_>,
+    commit: &mealy_application::DispatchModelAttemptCommit,
+) -> Result<i64, AgentStoreError> {
+    transaction
+        .query_row(
+            "SELECT deadline_at_ms FROM model_attempt \
+             WHERE attempt_id = ?1 AND run_id = ?2 AND state = 'prepared' \
+               AND prepared_lease_id = ?3 AND prepared_owner_id = ?4 \
+               AND prepared_fencing_token = ?5 \
+               AND EXISTS(SELECT 1 FROM run_loop_state \
+                          WHERE run_id = ?2 AND next_action = 'dispatch_model' \
+                            AND current_attempt_id = ?1)",
+            params![
+                commit.attempt_id.to_string(),
+                commit.fence.run_id().to_string(),
+                commit.fence.lease_id().to_string(),
+                commit.fence.owner_id().to_string(),
+                to_i64(commit.fence.fencing_token().get(), "fencing token")?,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .ok_or(AgentStoreError::Conflict)
+}
+
+fn release_undispatched_model_reservation(
+    transaction: &Transaction<'_>,
+    commit: &mealy_application::DispatchModelAttemptCommit,
+    completed_at_ms: i64,
+) -> Result<(), AgentStoreError> {
+    let reservation = load_active_reservation(transaction, commit.attempt_id)?;
+    let reservation_changed = transaction
+        .execute(
+            "UPDATE budget_reservation SET state = 'released', settled_at_ms = ?1 \
+             WHERE attempt_id = ?2 AND state = 'active'",
+            params![completed_at_ms, commit.attempt_id.to_string()],
+        )
+        .map_err(map_sqlite_error)?;
+    let budget_changed = transaction
+        .execute(
+            "UPDATE run_budget_usage SET revision = revision + 1, \
+                reserved_model_calls = reserved_model_calls - 1, \
+                reserved_input_tokens = reserved_input_tokens - ?1, \
+                reserved_output_tokens = reserved_output_tokens - ?2, \
+                reserved_cost_microunits = reserved_cost_microunits - ?3, \
+                reserved_output_bytes = reserved_output_bytes - ?4 \
+             WHERE run_id = ?5 AND reserved_model_calls >= 1 \
+               AND reserved_input_tokens >= ?1 AND reserved_output_tokens >= ?2 \
+               AND reserved_cost_microunits >= ?3 AND reserved_output_bytes >= ?4",
+            params![
+                reservation.input_tokens,
+                reservation.output_tokens,
+                reservation.cost_microunits,
+                reservation.output_bytes,
+                commit.fence.run_id().to_string(),
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    if reservation_changed == 1 && budget_changed == 1 {
+        Ok(())
+    } else {
+        Err(AgentStoreError::Conflict)
     }
 }
 
@@ -4503,7 +4637,15 @@ fn verify_replay_attempt(
                     || retryable != Some(false)
                     || row.retry_after_ms.is_some())
             || row.state == "interrupted"
-                && (row.error_message.as_deref() != Some("lease expired before durable completion")
+                && (row.error_message.as_deref()
+                    != Some(
+                        if row.error_class.as_deref() == Some("provider_dispatch_deadline_elapsed")
+                        {
+                            "provider attempt deadline elapsed before dispatch"
+                        } else {
+                            "lease expired before durable completion"
+                        },
+                    )
                     || retryable != Some(true)
                     || row.retry_after_ms.is_some())
             || row.state == "failed"
@@ -7294,6 +7436,8 @@ fn verify_checkpoint_chain(
             return Ok(false);
         }
         let recovery = decision.get("reason").and_then(Value::as_str) == Some("lease_expired");
+        let dispatch_deadline_elapsed = decision.get("reason").and_then(Value::as_str)
+            == Some("provider_dispatch_deadline_elapsed");
         let provider_retry_lifecycle_valid =
             if decision.get("reason").and_then(Value::as_str) == Some("provider_retry_scheduled") {
                 verify_provider_retry_lifecycle(
@@ -7358,6 +7502,30 @@ fn verify_checkpoint_chain(
                 &mut recovered_boundaries,
             );
             if !(event_valid && timeline_valid && lifecycle_valid && checkpoint_valid) {
+                return Ok(false);
+            }
+        } else if dispatch_deadline_elapsed {
+            let checkpoint_valid = event_type.as_deref() == Some("agent.loop.checkpoint")
+                && payload
+                    == json!({
+                        "checkpoint_sequence": sequence,
+                        "next_action": next_action,
+                        "checkpoint_digest": checkpoint_digest,
+                    })
+                && verify_dispatch_deadline_checkpoint(
+                    connection,
+                    next_action,
+                    created_at_ms,
+                    manifest_id.as_deref(),
+                    attempt_id.as_deref(),
+                    tool_call_id.as_deref(),
+                    &decision,
+                    attempts,
+                    attempt_indexes,
+                    u64::try_from(checkpoint_cursor.unwrap_or(-1)).unwrap_or(0),
+                    &mut recovered_boundaries,
+                )?;
+            if !checkpoint_valid {
                 return Ok(false);
             }
         } else if event_type.as_deref() != Some("agent.loop.checkpoint")
@@ -7904,6 +8072,57 @@ fn verify_checkpoint_timeline_order(
         }
         AgentNextAction::DispatchReadTool | AgentNextAction::Terminal => Ok(false),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_dispatch_deadline_checkpoint(
+    connection: &rusqlite::Connection,
+    action: AgentNextAction,
+    created_at_ms: i64,
+    manifest_id: Option<&str>,
+    attempt_id: Option<&str>,
+    tool_call_id: Option<&str>,
+    decision: &Value,
+    attempts: &[ReplayAttempt],
+    attempt_indexes: &HashMap<&str, usize>,
+    checkpoint_cursor: u64,
+    recovered_boundaries: &mut HashSet<String>,
+) -> Result<bool, AgentStoreError> {
+    let (None, Some(attempt_id), None) = (manifest_id, attempt_id, tool_call_id) else {
+        return Ok(false);
+    };
+    let Some(index) = attempt_indexes.get(attempt_id) else {
+        return Ok(false);
+    };
+    let attempt = &attempts[*index];
+    let prepared_cursor = exact_event_cursor(
+        connection,
+        "model_attempt",
+        attempt_id,
+        "model.attempt.prepared",
+    )?;
+    let dispatched_cursor = exact_event_cursor(
+        connection,
+        "model_attempt",
+        attempt_id,
+        "model.attempt.dispatched",
+    )?;
+    Ok(action == AgentNextAction::CompileContext
+        && attempt.state == "interrupted"
+        && attempt.dispatched_at_ms.is_none()
+        && attempt.error_class.as_deref() == Some("provider_dispatch_deadline_elapsed")
+        && attempt.retryable == Some(true)
+        && attempt.reservation_state == ReplayReservationState::Released
+        && attempt.completed_at_ms == created_at_ms
+        && attempt.request.deadline_at_ms <= created_at_ms
+        && decision
+            == &json!({
+                "reason": "provider_dispatch_deadline_elapsed",
+                "deadlineAtMs": attempt.request.deadline_at_ms,
+            })
+        && prepared_cursor.is_some_and(|cursor| cursor < checkpoint_cursor)
+        && dispatched_cursor.is_none()
+        && recovered_boundaries.insert(format!("model:{attempt_id}")))
 }
 
 fn agent_effect_observation_cursor(
