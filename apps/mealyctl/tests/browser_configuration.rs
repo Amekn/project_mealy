@@ -84,7 +84,7 @@ fn inspect_add_disable_enable_revoke_is_approved_verified_and_rollback_safe() {
 
     let inspected = run_success(home.path(), &["config", "browser-inspect", &bundle]);
     assert_eq!(inspected["protocolVersion"], "1.3");
-    assert_eq!(inspected["product"], "HeadlessChrome/150.0.7871.124");
+    assert_eq!(inspected["product"], "HeadlessChrome/151.0.7922.34");
     assert!(
         !run(home.path(), &["config", "browser-add", &bundle])
             .status

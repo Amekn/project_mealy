@@ -77,6 +77,13 @@ Do not reuse the schema-15 report to publish schema 16: rebuild final packages, 
 exact-package 24-hour soak, run the protected and reviewed live-provider gates, then publish and
 verify new attestations.
 
+The 2026-07-21 schema-16 freeze review advanced the exact Chrome for Testing Headless Shell pin to
+stable `151.0.7922.34` (120,231,126 bytes, SHA-256
+`3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14`), `actions/attest` to
+commit `f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6` (`v4.2.0`), and Syft to `v1.48.0` before the
+formal soak subject was built. Checkout, artifact upload/download, Cargo audit/about/auditable,
+and the remaining reviewed pins were already current at that boundary.
+
 The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace

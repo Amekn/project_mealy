@@ -690,7 +690,7 @@ mod tests {
             digest.clone(),
             "chrome-headless-shell".to_owned(),
             "b".repeat(64),
-            "HeadlessChrome/150.0.7871.124".to_owned(),
+            "HeadlessChrome/151.0.7922.34".to_owned(),
             BROWSER_CDP_PROTOCOL_VERSION.to_owned(),
         )
         .expect("valid config");
@@ -708,7 +708,7 @@ mod tests {
                 digest,
                 "chrome-headless-shell".to_owned(),
                 "b".repeat(64),
-                "HeadlessChrome/0150.0.7871.124".to_owned(),
+                "HeadlessChrome/0151.0.7922.34".to_owned(),
                 BROWSER_CDP_PROTOCOL_VERSION.to_owned(),
             )
             .is_err()
@@ -827,7 +827,7 @@ mod tests {
         let validator = jsonschema::validator_for(&descriptor.output_schema).expect("schema");
         let output = json!({
             "activatedElement": null,
-            "browserProduct": "HeadlessChrome/150.0.7871.124",
+            "browserProduct": "HeadlessChrome/151.0.7922.34",
             "download": null,
             "elements": [{"name": "Details", "occurrence": 1, "role": "link"}],
             "filledElement": null,
