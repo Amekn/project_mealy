@@ -43,6 +43,22 @@ impl Daemon {
         provider_delay_ms: u64,
         boundary_delay_ms: u64,
     ) -> Self {
+        Self::spawn_with_boundary_delay_and_estimate(
+            home,
+            agent_delay_ms,
+            provider_delay_ms,
+            1,
+            boundary_delay_ms,
+        )
+    }
+
+    fn spawn_with_boundary_delay_and_estimate(
+        home: &Path,
+        agent_delay_ms: u64,
+        provider_delay_ms: u64,
+        provider_estimated_latency_ms: u64,
+        boundary_delay_ms: u64,
+    ) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_mealyd"))
             .arg("--home")
             .arg(home)
@@ -56,6 +72,8 @@ impl Daemon {
             .arg(agent_delay_ms.to_string())
             .arg("--fake-provider-delay-ms")
             .arg(provider_delay_ms.to_string())
+            .arg("--fake-provider-estimated-latency-ms")
+            .arg(provider_estimated_latency_ms.to_string())
             .arg("--agent-boundary-delay-ms")
             .arg(boundary_delay_ms.to_string())
             .env("RUST_LOG", "error")
@@ -527,7 +545,12 @@ async fn elapsed_pre_dispatch_deadline_retries_without_phantom_usage() {
         admission.cursor.0,
     )
     .await;
-    let expired_attempt_id = wait_for_expired_pre_dispatch_attempt(home.path(), &ids.run_id).await;
+    let expired_attempt_id = wait_for_retired_pre_dispatch_attempt(
+        home.path(),
+        &ids.run_id,
+        "provider_dispatch_deadline_elapsed",
+    )
+    .await;
     delayed_daemon.hard_kill();
     drop(delayed_daemon);
     fs::remove_file(home.path().join("connection.json"))
@@ -535,15 +558,7 @@ async fn elapsed_pre_dispatch_deadline_retries_without_phantom_usage() {
 
     let _replacement_daemon = Daemon::spawn_with_delays(home.path(), 0, 0);
     let replacement_connection = wait_until_ready(&client, home.path()).await;
-    let task = wait_until_succeeded(&client, &replacement_connection, &ids.task_id).await;
-    assert_eq!(task.status, TaskStatus::Succeeded);
-    assert_eq!(task.model_attempts, 3);
-    assert_eq!(task.tool_calls, 1);
-    assert_eq!(task.usage.used_model_calls, 2);
-    assert_eq!(task.usage.used_retries, 0);
-    assert_eq!(task.usage.used_tool_calls, 1);
-    assert_eq!(task.usage.reserved_model_calls, 0);
-    assert_eq!(task.usage.reserved_tool_calls, 0);
+    assert_successful_undispatched_retry(&client, &replacement_connection, &ids).await;
 
     let database = open_database(home.path());
     let (state, dispatched_at_ms, deadline_at_ms, completed_at_ms, error_class, reservation): (
@@ -579,9 +594,126 @@ async fn elapsed_pre_dispatch_deadline_retries_without_phantom_usage() {
     assert_eq!(error_class, "provider_dispatch_deadline_elapsed");
     assert_eq!(reservation, "released");
 
-    let replay: TaskReplayResponse = authorized_get(
+    assert_complete_undispatched_retry_replay(&client, &replacement_connection, &ids).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn insufficient_pre_dispatch_execution_window_retries_without_phantom_usage() {
+    let home = TempDir::new().expect("temporary daemon home should be created");
+    write_provider_timeout_test_config(home.path());
+    let client = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("HTTP client should build");
+    let mut delayed_daemon =
+        Daemon::spawn_with_boundary_delay_and_estimate(home.path(), 0, 250, 250, 800);
+    let first_connection = wait_until_ready(&client, home.path()).await;
+    let session: CreateSessionResponse = authorized_post(
         &client,
-        &replacement_connection,
+        &first_connection,
+        "/v1/sessions",
+        &CreateSessionRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    let admission: InputAdmissionResponse = authorized_post(
+        &client,
+        &first_connection,
+        &format!("/v1/sessions/{}/inputs", session.session_id),
+        &SubmitInputRequest {
+            api_version: API_VERSION.to_owned(),
+            idempotency_key: "phase-2-short-pre-dispatch-window-input".to_owned(),
+            delivery_mode: DeliveryMode::Queue,
+            content: "Retry before dispatch when contention consumed the provider window."
+                .to_owned(),
+        },
+    )
+    .await;
+    let ids = wait_for_promoted_work(
+        &client,
+        &first_connection,
+        &session.session_id,
+        admission.cursor.0,
+    )
+    .await;
+    let retired_attempt_id = wait_for_retired_pre_dispatch_attempt(
+        home.path(),
+        &ids.run_id,
+        "provider_dispatch_window_exhausted",
+    )
+    .await;
+    delayed_daemon.hard_kill();
+    drop(delayed_daemon);
+    fs::remove_file(home.path().join("connection.json"))
+        .expect("ephemeral endpoint descriptor can be recreated after interruption");
+
+    let _replacement_daemon = Daemon::spawn_with_delays(home.path(), 0, 0);
+    let replacement_connection = wait_until_ready(&client, home.path()).await;
+    assert_successful_undispatched_retry(&client, &replacement_connection, &ids).await;
+
+    let database = open_database(home.path());
+    let (state, dispatched_at_ms, deadline_at_ms, completed_at_ms, error_class, reservation): (
+        String,
+        Option<i64>,
+        i64,
+        i64,
+        String,
+        String,
+    ) = database
+        .query_row(
+            "SELECT ma.state, ma.dispatched_at_ms, ma.deadline_at_ms, ma.completed_at_ms, \
+                    ma.error_class, br.state \
+             FROM model_attempt ma \
+             JOIN budget_reservation br ON br.attempt_id = ma.attempt_id \
+             WHERE ma.attempt_id = ?1 AND ma.run_id = ?2",
+            [retired_attempt_id.as_str(), ids.run_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("short dispatch-window evidence should remain queryable");
+    assert_eq!(state, "interrupted");
+    assert_eq!(dispatched_at_ms, None);
+    assert!(completed_at_ms < deadline_at_ms);
+    assert!(deadline_at_ms - completed_at_ms < 250);
+    assert_eq!(error_class, "provider_dispatch_window_exhausted");
+    assert_eq!(reservation, "released");
+
+    assert_complete_undispatched_retry_replay(&client, &replacement_connection, &ids).await;
+}
+
+async fn assert_successful_undispatched_retry(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    ids: &WorkIds,
+) {
+    let task = wait_until_succeeded(client, connection, &ids.task_id).await;
+    assert_eq!(task.status, TaskStatus::Succeeded);
+    assert_eq!(task.model_attempts, 3);
+    assert_eq!(task.tool_calls, 1);
+    assert_eq!(task.usage.used_model_calls, 2);
+    assert_eq!(task.usage.used_retries, 0);
+    assert_eq!(task.usage.used_tool_calls, 1);
+    assert_eq!(task.usage.reserved_model_calls, 0);
+    assert_eq!(task.usage.reserved_tool_calls, 0);
+}
+
+async fn assert_complete_undispatched_retry_replay(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    ids: &WorkIds,
+) {
+    let replay: TaskReplayResponse = authorized_get(
+        client,
+        connection,
         &format!("/v1/tasks/{}/replay", ids.task_id),
     )
     .await;
@@ -814,7 +946,11 @@ async fn wait_until_succeeded(
     }
 }
 
-async fn wait_for_expired_pre_dispatch_attempt(home: &Path, run_id: &str) -> String {
+async fn wait_for_retired_pre_dispatch_attempt(
+    home: &Path,
+    run_id: &str,
+    error_class: &str,
+) -> String {
     let deadline = Instant::now() + COMPLETION_TIMEOUT;
     loop {
         let candidate = open_database(home)
@@ -822,9 +958,9 @@ async fn wait_for_expired_pre_dispatch_attempt(home: &Path, run_id: &str) -> Str
                 "SELECT attempt_id FROM model_attempt \
                  WHERE run_id = ?1 AND state = 'interrupted' \
                    AND dispatched_at_ms IS NULL \
-                   AND error_class = 'provider_dispatch_deadline_elapsed' \
+                   AND error_class = ?2 \
                  ORDER BY ordinal LIMIT 1",
-                [run_id],
+                [run_id, error_class],
                 |row| row.get::<_, String>(0),
             )
             .ok();
@@ -833,7 +969,28 @@ async fn wait_for_expired_pre_dispatch_attempt(home: &Path, run_id: &str) -> Str
         }
         assert!(
             Instant::now() < deadline,
-            "prepared provider attempt did not retire after its immutable deadline"
+            "prepared provider attempt did not retire before unsafe dispatch: {:?}",
+            open_database(home)
+                .prepare(
+                    "SELECT state, dispatched_at_ms, deadline_at_ms - prepared_at_ms, \
+                            deadline_at_ms - COALESCE(dispatched_at_ms, completed_at_ms), \
+                            error_class \
+                     FROM model_attempt WHERE run_id = ?1 ORDER BY ordinal"
+                )
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([run_id], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, Option<i64>>(1)?,
+                                row.get::<_, i64>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
+                                row.get::<_, Option<String>>(4)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap_or_default()
         );
         sleep(Duration::from_millis(20)).await;
     }

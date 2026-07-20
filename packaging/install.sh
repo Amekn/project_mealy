@@ -65,6 +65,7 @@ release_documents=(
   benchmarks/2026-07-14-nine-hour-supervisor-interruption.md
   benchmarks/2026-07-15-fedora-44-installed-package-smoke.md
   benchmarks/2026-07-16-schema15-long-soak-contention-failure.md
+  benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md
   benchmarks/README.md
   benchmarks/release-soak-lineage.json
   benchmarks/release-soak.json

@@ -163,6 +163,8 @@ impl Daemon {
             .arg("0")
             .arg("--fake-provider-delay-ms")
             .arg(provider_delay_ms.to_string())
+            .arg("--fake-provider-estimated-latency-ms")
+            .arg(provider_delay_ms.to_string())
             .arg("--outbox-delay-ms")
             .arg("0")
             .env("RUST_LOG", "error")
