@@ -24,7 +24,7 @@ make_binary() {
 #!/usr/bin/env bash
 case \${1-} in
   --version) printf '%s\\n' '$name 0.1.0' ;;
-  --print-supported-schema-version) printf '%s\\n' '15' ;;
+  --print-supported-schema-version) printf '%s\\n' '16' ;;
   *) exit 64 ;;
 esac
 SCRIPT
@@ -48,7 +48,7 @@ for output in first second; do
   python3 "$repository_root/packaging/build-macos-preview.py" \
     0.1.0 macos-arm64-preview "$temporary/bin" "$temporary/raw-sbom.json" \
     "$temporary/third-party-licenses.html" "$temporary/$output" \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1735689600 15 >/dev/null
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1735689600 16 >/dev/null
 done
 
 archive=mealy-v0.1.0-macos-arm64-preview.tar.gz
@@ -96,7 +96,7 @@ sed -i 's#"dependencies":\[\]#"metadata":{"tools":[{"name":"/home/release/privat
 if python3 "$repository_root/packaging/build-macos-preview.py" \
   0.1.0 macos-arm64-preview "$temporary/bin" "$temporary/path-leaking-sbom.json" \
   "$temporary/third-party-licenses.html" "$temporary/rejected" \
-  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1735689600 15 >/dev/null 2>&1; then
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1735689600 16 >/dev/null 2>&1; then
   echo "macOS preview builder accepted a local-path SBOM" >&2
   exit 1
 fi

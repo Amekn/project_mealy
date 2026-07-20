@@ -303,6 +303,8 @@ pub struct PrepareModelAttemptCommit {
     pub checkpoint_event_id: EventId,
     /// Commit time.
     pub prepared_at: SystemTime,
+    /// Overall run-budget anchor observed before context compilation and writer-lane wait.
+    pub run_budget_started_at: SystemTime,
     /// Absolute attempt deadline.
     pub deadline_at: SystemTime,
 }

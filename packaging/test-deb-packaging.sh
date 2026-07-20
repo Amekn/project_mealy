@@ -42,7 +42,7 @@ for binary in mealyd mealyctl; do
     "if [[ \${1-} == --version ]]; then" \
     "  printf '$binary $version\\n'" \
     "elif [[ $binary == mealyd && \${1-} == --print-supported-schema-version ]]; then" \
-    "  printf '15\\n'" \
+    "  printf '16\\n'" \
     'else' \
     "  printf '$binary-debian-fixture\\n'" \
     'fi' \
@@ -66,7 +66,7 @@ for output in first second; do
   mkdir -p "$temporary/$output"
   "$repository_root/packaging/build-release.sh" "$version" "$target" \
     "$temporary/bin" "$temporary/sbom.json" "$temporary/third-party-licenses.html" \
-    "$temporary/$output" "$commit" "$epoch" 15 \
+    "$temporary/$output" "$commit" "$epoch" 16 \
     >/dev/null
   "$repository_root/packaging/build-deb.sh" "$version" "$target" \
     "$temporary/$output/$archive_name" "$temporary/$output/SHA256SUMS" \

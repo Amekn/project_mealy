@@ -312,7 +312,7 @@ second command, disable and reconcile, re-enable from the new revision, and term
 Unit evidence independently mutates mount access and secret-reference subsets.
 
 `scripts/dashboard-smoke.sh` then builds both public binaries and crosses the complete real-process
-chain: fresh schema-15 home, `mealyd`, dashboard preflight, browser capability extraction, bearer
+chain: fresh schema-16 home, `mealyd`, dashboard preflight, browser capability extraction, bearer
 non-disclosure, canonical effect/reconciliation not-found propagation plus mutation-Origin denial,
 session creation, real UUIDv7-keyed dashboard schedule creation, identical replay, semantic-conflict
 denial, exact dashboard definition/history reads, missing-Origin denial, pause, stale-revision

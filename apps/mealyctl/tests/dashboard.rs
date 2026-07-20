@@ -1769,7 +1769,7 @@ async fn status(State(state): State<MockState>, headers: HeaderMap) -> Response 
             "admissionOpen": true,
             "configDigest": "a".repeat(64),
             "policyBundleDigest": "b".repeat(64),
-            "schemaVersion": 15,
+            "schemaVersion": 16,
             "pendingInputs": 1,
             "nonterminalRuns": 1,
             "activeLeases": 1,

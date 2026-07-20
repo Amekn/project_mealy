@@ -1,7 +1,9 @@
 use mealy_domain::{
     CorrelationId, EventId, OutboxId, PrincipalId, TaskId, TaskState, TaskStatus, TaskTransition,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use serde_json::Value;
 use std::{path::Path, time::Duration};
 use thiserror::Error;
@@ -43,10 +45,11 @@ const MIGRATION_0012: &str = include_str!("../migrations/0012_agent_schedules.sq
 const MIGRATION_0013: &str = include_str!("../migrations/0013_telegram_channel.sql");
 const MIGRATION_0014: &str = include_str!("../migrations/0014_discord_dm_channel.sql");
 const MIGRATION_0015: &str = include_str!("../migrations/0015_usage_reporting.sql");
+const MIGRATION_0016: &str = include_str!("../migrations/0016_context_manifest_bundles.sql");
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SYNCHRONOUS_POLICY: &str = "FULL";
 /// Latest canonical schema revision understood by this binary.
-pub const LATEST_SCHEMA_VERSION: i64 = 15;
+pub const LATEST_SCHEMA_VERSION: i64 = 16;
 
 /// SQLite-backed transition store.
 pub struct SqliteStore {
@@ -74,6 +77,73 @@ impl SqliteStore {
     pub fn open_in_memory(applied_at_ms: i64) -> Result<Self, StoreError> {
         let connection = Connection::open_in_memory()?;
         Self::from_connection(connection, applied_at_ms, false)
+    }
+
+    /// Opens a query-only connection to an already-migrated file-backed canonical store.
+    ///
+    /// Reader connections are intended for bounded WAL snapshot pools. They never run migrations
+    /// and reject writes at the `SQLite` connection boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the database cannot be opened, is not in WAL mode, or does not
+    /// have the exact schema revision understood by this binary.
+    pub fn open_reader(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+        connection.busy_timeout(BUSY_TIMEOUT)?;
+        let journal_mode: String =
+            connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            return Err(StoreError::JournalModeUnavailable { journal_mode });
+        }
+        let version = connection.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if version < 0 {
+            return Err(StoreError::InvalidSchemaVersion(version));
+        }
+        if version > LATEST_SCHEMA_VERSION {
+            return Err(StoreError::NewerSchema {
+                found: version,
+                supported: LATEST_SCHEMA_VERSION,
+            });
+        }
+        if version != LATEST_SCHEMA_VERSION {
+            return Err(StoreError::NotReady(format!(
+                "reader schema version {version} is not {LATEST_SCHEMA_VERSION}"
+            )));
+        }
+        connection.pragma_update(None, "query_only", "ON")?;
+        Ok(Self { connection })
+    }
+
+    /// Begins one deferred, query-only snapshot on this reader connection.
+    ///
+    /// The snapshot is established by the first subsequent read and remains stable until
+    /// [`Self::end_read_snapshot`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if a snapshot is already active or `SQLite` rejects the boundary.
+    pub fn begin_read_snapshot(&self) -> Result<(), StoreError> {
+        self.connection.execute_batch("BEGIN DEFERRED")?;
+        Ok(())
+    }
+
+    /// Ends the active query-only snapshot without changing canonical state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if no snapshot is active or `SQLite` rejects the boundary.
+    pub fn end_read_snapshot(&self) -> Result<(), StoreError> {
+        self.connection.execute_batch("ROLLBACK")?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -228,6 +298,14 @@ impl SqliteStore {
             transaction.execute_batch(MIGRATION_0015)?;
             transaction.execute(
                 "INSERT INTO schema_version(version, applied_at_ms) VALUES (15, ?1)",
+                [applied_at_ms],
+            )?;
+            existing_version = 15;
+        }
+        if existing_version == 15 {
+            transaction.execute_batch(MIGRATION_0016)?;
+            transaction.execute(
+                "INSERT INTO schema_version(version, applied_at_ms) VALUES (16, ?1)",
                 [applied_at_ms],
             )?;
         }
@@ -2094,13 +2172,18 @@ mod tests {
     }
 
     #[test]
-    fn usage_reporting_upgrade_installs_only_the_terminal_completion_index() {
+    fn v14_upgrade_installs_usage_index_and_compact_manifest_schema() {
         let store = SqliteStore::open_in_memory(NOW).expect("current in-memory store");
         store
             .connection
             .execute_batch(
                 "DROP INDEX run_terminal_completion_idx;
-                 DELETE FROM schema_version WHERE version = 15;",
+                 DROP TRIGGER model_attempt_manifest_token_total_insert;
+                 DROP TABLE context_manifest_bundle_memory_citation;
+                 DROP TABLE context_manifest_bundle_compaction;
+                 DROP TABLE context_manifest_bundle_artifact;
+                 DROP TABLE context_manifest_bundle;
+                 DELETE FROM schema_version WHERE version IN (15, 16);",
             )
             .expect("construct exact v14 predecessor");
         let connection = store.connection;
@@ -2121,6 +2204,16 @@ mod tests {
             .expect("terminal completion index");
         assert!(index_sql.contains("ON run(completed_at_ms, id)"));
         assert!(index_sql.contains("status IN ('succeeded', 'failed', 'cancelled')"));
+        let bundle_table: bool = upgraded
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema \
+                 WHERE type = 'table' AND name = 'context_manifest_bundle')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("compact manifest table");
+        assert!(bundle_table);
         upgraded
             .verify_storage_integrity()
             .expect("upgraded integrity");

@@ -46,6 +46,7 @@ release_documents=(
   benchmarks/2026-07-15-fedora-44-installed-package-smoke.md
   benchmarks/2026-07-16-schema15-long-soak-contention-failure.md
   benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md
+  benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
   benchmarks/README.md
   benchmarks/release-soak-lineage.json
   benchmarks/release-soak.json
@@ -57,6 +58,7 @@ release_documents=(
   decisions/0006-context-and-memory.md
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
+  decisions/0009-sqlite-writer-and-snapshot-readers.md
   decisions/README.md
   research/GAP_MATRIX.md
   research/REFERENCE_SYSTEMS.md

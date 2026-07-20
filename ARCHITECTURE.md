@@ -271,6 +271,15 @@ publish in-process wakeup hint
 
 The wakeup is only a latency optimization. Polling the database is sufficient after a missed notification or restart.
 
+Runtime connection ownership is explicit. `mealyd` has one canonical writer connection and a
+bounded pool of read-only, query-only connections. Every compound query borrows one reader, begins
+a deferred WAL snapshot, and releases it at the use-case boundary; it cannot block the writer lane
+by holding the same process mutex. Mutations remain serialized through the writer and retain the
+transaction shape above. Provider, tool, browser, channel, and extension I/O never holds either
+lane. Reader-pool exhaustion applies bounded backpressure, while cancellation probes use a
+non-blocking reader attempt and do not interpret contention as cancellation. See
+[`ADR 0009`](docs/decisions/0009-sqlite-writer-and-snapshot-readers.md).
+
 ### 7.3 Core tables
 
 The initial schema is organized by responsibility:
@@ -281,12 +290,20 @@ The initial schema is organized by responsibility:
 | Conversation | `sessions`, `session_inbox`, `turns`, `messages` |
 | Work | `tasks`, `runs`, `run_edges`, `attempts`, `work_leases`, `resource_claims` |
 | Effects | `tool_calls`, `effect_intents`, `approvals`, `effect_outcomes` |
-| Context | `context_epochs`, `context_manifests`, `context_items`, `compactions` |
+| Context | `context_epoch`, `context_manifest`, schema-16 `context_manifest_bundle`, sparse bundle provenance, legacy `context_manifest_item`, compactions |
 | Memory | `memories`, `memory_sources`, `memory_revisions`, FTS tables |
 | Evidence | `artifacts`, `artifact_links`, `validations`, `validation_evidence` |
 | Operations | `journal_events`, `aggregate_sequences`, `outbox`, `config_versions`, `migration_history` |
 
 Foreign keys are enabled. SQLite uses WAL mode, a busy timeout, and explicit durability settings selected by profile. Schema constraints enforce unique aggregate sequence, inbox dedupe keys, active lease ownership, and stable effect idempotency keys.
+
+Every new schema-16 context manifest persists its complete ordered items as one bounded canonical
+JSON object. The digest is over the uncompressed canonical bytes; storage may use the same bounded
+zlib/base64url envelope as other large durable JSON. Summary counts are independently recomputed
+on read, and sparse foreign-key rows retain artifact ownership, compaction identity, and governed
+memory citations. Legacy row-per-item manifests are not rewritten during migration and remain
+fully replayable. This append-forward representation removes complete-prefix row/index fan-out
+from the writer's critical transaction without weakening inspectability.
 
 ### 7.4 Journal envelope
 

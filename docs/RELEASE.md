@@ -68,7 +68,16 @@ Two clean builds then reproduced the corrected `mealyd` SHA-256
 the clean [release soak](benchmarks/release-soak.json); the report-bearing tree still receives the
 same fresh comparison in the tag workflow. The checked
 [lineage proof](benchmarks/release-soak-lineage.json) preserves the unedited report across the
-required linear-history rebase without relabeling its observed revision. The native tag jobs run
+required linear-history rebase without relabeling its observed revision.
+
+That clean soak qualifies only its exact schema-15 daemon. The current schema-16 source follows a
+later stopped soak and the accepted SQLite runtime/storage redesign documented in the
+[interrupted-soak remediation record](benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md).
+Do not reuse the schema-15 report to publish schema 16: rebuild final packages, complete a fresh
+exact-package 24-hour soak, run the protected and reviewed live-provider gates, then publish and
+verify new attestations.
+
+The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
 package that does not inherit the reviewed declaration remains. This is a legal-distribution gate,
