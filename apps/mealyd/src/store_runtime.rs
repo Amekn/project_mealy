@@ -36,6 +36,10 @@ impl RuntimeStore {
         database_path: &Path,
         reader_capacity: usize,
     ) -> Result<Self, StoreError> {
+        // Deep SQLite/FTS diagnostics require a quiescent boundary. Prove the canonical writer
+        // before any pooled reader or background worker can overlap it; live request paths use
+        // the cheaper online readiness check instead.
+        writer.verify_storage_integrity()?;
         let reader_capacity = reader_capacity.max(1);
         let mut readers = Vec::with_capacity(reader_capacity);
         for _ in 0..reader_capacity {

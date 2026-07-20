@@ -285,6 +285,66 @@ async fn corrupt_database_open_preserves_original_and_sidecars_before_failure() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quiescent_integrity_gate_preserves_deep_check_failure_before_serving() {
+    let home = TempDir::new().expect("temporary daemon home");
+    let client = http_client();
+    let mut initial = Daemon::spawn(home.path(), &["--safe-mode"]);
+    let connection = wait_until_ready(&client, home.path()).await;
+    let _: DrainDaemonResponse = authorized_post(
+        &client,
+        &connection,
+        "/v1/admin/drain",
+        &DrainDaemonRequest {
+            api_version: API_VERSION.to_owned(),
+        },
+    )
+    .await;
+    assert!(initial.wait().await.success());
+
+    let database = home.path().join("mealy.sqlite3");
+    let connection = rusqlite::Connection::open(&database).expect("open stopped database");
+    connection
+        .execute_batch(
+            "CREATE TABLE deep_integrity_probe(value INTEGER CHECK (value > 0));
+             PRAGMA ignore_check_constraints = ON;
+             INSERT INTO deep_integrity_probe(value) VALUES (0);
+             PRAGMA ignore_check_constraints = OFF;",
+        )
+        .expect("construct deep-check-only violation");
+    drop(connection);
+
+    let mut restart = Command::new(env!("CARGO_BIN_EXE_mealyd"))
+        .arg("--home")
+        .arg(home.path())
+        .arg("--safe-mode")
+        .env("RUST_LOG", "error")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("deep-check restart should launch far enough to verify storage");
+    assert!(!wait_for_process(&mut restart).await.success());
+    assert!(!home.path().join("connection.json").exists());
+
+    let forensic_root = home.path().join("forensics");
+    let directories = fs::read_dir(&forensic_root)
+        .expect("forensic root")
+        .map(|entry| entry.expect("forensic entry").path())
+        .collect::<Vec<_>>();
+    assert_eq!(directories.len(), 1);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(directories[0].join("manifest.json")).expect("forensic manifest"),
+    )
+    .expect("valid forensic manifest");
+    assert!(
+        manifest["openFailure"]
+            .as_str()
+            .is_some_and(|text| text.contains("SQLite quick check failed"))
+    );
+    assert!(directories[0].join("mealy.sqlite3").is_file());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
 async fn recurring_schedule_api_is_revision_fenced_auditable_and_operationally_visible() {
     let home = TempDir::new().expect("temporary daemon home");

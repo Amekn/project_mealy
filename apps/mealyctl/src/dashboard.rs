@@ -544,12 +544,19 @@ async fn snapshot(State(state): State<DashboardState>, headers: HeaderMap) -> Ax
             &state,
         );
     };
-    let response = match dashboard_connection(&state) {
-        Ok(connection) => match fetch_snapshot(&state.client, &connection).await {
+    let response = if let Ok(connection) = dashboard_connection(&state) {
+        match fetch_snapshot(&state.client, &connection).await {
             Ok(snapshot) => Json(snapshot).into_response(),
-            Err(error) => dashboard_backend_error(&error, "snapshot"),
-        },
-        Err(()) => dashboard_connection_error(),
+            Err(error) => {
+                eprintln!("dashboard snapshot refresh failed: {error}");
+                let _ = std::io::stderr().flush();
+                dashboard_backend_error(&error, "snapshot")
+            }
+        }
+    } else {
+        eprintln!("dashboard snapshot refresh could not load the connection descriptor");
+        let _ = std::io::stderr().flush();
+        dashboard_connection_error()
     };
     secure_response(response, &state)
 }
@@ -2259,32 +2266,51 @@ async fn fetch_snapshot(
     let usage_from_ms = usage_to_ms
         .checked_sub(DASHBOARD_USAGE_DAYS * USAGE_DAY_MS)
         .ok_or_else(|| CliError::Protocol("dashboard usage range underflowed".to_owned()))?;
-    let status = fetch::<AdminStatusResponse>(client, connection, "/v1/admin/status");
-    let doctor = fetch::<DoctorResponse>(client, connection, "/v1/admin/doctor");
-    let sessions = fetch::<SessionsResponse>(client, connection, "/v1/sessions?limit=20");
-    let approvals = fetch::<PendingApprovalsResponse>(client, connection, "/v1/approvals");
-    let schedules = fetch::<SchedulesResponse>(client, connection, "/v1/schedules");
+    // A dashboard refresh is one control-plane reader. Keep its projections serial so the
+    // refresh cannot exceed the runtime's reserved reader capacity by fanning out internally.
+    let status = dashboard_snapshot_source(
+        fetch::<AdminStatusResponse>(client, connection, "/v1/admin/status").await,
+        "status",
+    )?;
+    let doctor = dashboard_snapshot_source(
+        fetch::<DoctorResponse>(client, connection, "/v1/admin/doctor").await,
+        "doctor",
+    )?;
+    let sessions = dashboard_snapshot_source(
+        fetch::<SessionsResponse>(client, connection, "/v1/sessions?limit=20").await,
+        "sessions",
+    )?;
+    let approvals = dashboard_snapshot_source(
+        fetch::<PendingApprovalsResponse>(client, connection, "/v1/approvals").await,
+        "approvals",
+    )?;
+    let schedules = dashboard_snapshot_source(
+        fetch::<SchedulesResponse>(client, connection, "/v1/schedules").await,
+        "schedules",
+    )?;
     let usage_query = [
         ("fromMs", usage_from_ms.to_string()),
         ("toMs", usage_to_ms.to_string()),
     ];
-    let usage = fetch_with_query::<_, AdminUsageReportResponse>(
-        client,
-        connection,
-        "/v1/admin/usage",
-        &usage_query,
-    );
-    let (status, doctor, sessions, approvals, schedules, usage) =
-        tokio::join!(status, doctor, sessions, approvals, schedules, usage);
+    let usage = dashboard_snapshot_source(
+        fetch_with_query::<_, AdminUsageReportResponse>(
+            client,
+            connection,
+            "/v1/admin/usage",
+            &usage_query,
+        )
+        .await,
+        "usage",
+    )?;
     let snapshot = DashboardSnapshot {
         api_version: API_VERSION.to_owned(),
         generated_at_ms,
-        status: status?,
-        doctor: doctor?,
-        sessions: sessions?,
-        approvals: approvals?,
-        schedules: schedules?,
-        usage: usage?,
+        status,
+        doctor,
+        sessions,
+        approvals,
+        schedules,
+        usage,
     };
     if !valid_api_version(&snapshot.status.api_version)
         || !valid_api_version(&snapshot.doctor.api_version)
@@ -2309,6 +2335,14 @@ async fn fetch_snapshot(
         ));
     }
     Ok(snapshot)
+}
+
+fn dashboard_snapshot_source<T>(result: Result<T, CliError>, source: &str) -> Result<T, CliError> {
+    result.map_err(|error| {
+        CliError::Protocol(format!(
+            "dashboard {source} projection request failed: {error}"
+        ))
+    })
 }
 
 async fn fetch<T: DeserializeOwned>(

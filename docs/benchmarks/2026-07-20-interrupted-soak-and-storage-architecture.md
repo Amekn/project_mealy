@@ -76,6 +76,22 @@ attempts remained dispatchable and completed without retry churn. Individual tas
 8.12 to 8.33 seconds. After clean drain, schema version was 16, `PRAGMA quick_check` returned
 `ok`, foreign-key violations were zero, and nonterminal runs and active leases were both zero.
 
+## Hot diagnostic boundary correction
+
+Protected CI subsequently exposed a separate control-plane issue: a terminal dashboard refresh
+could ask `doctor` to run `PRAGMA quick_check` while another connection was settling an FTS5 memory
+write. SQLite transiently reported `fts5: checksum mismatch for table "memory_fts"`; immediately
+after the daemon stopped, both `quick_check` and `integrity_check` returned `ok` and foreign-key
+violations remained zero. Repeated long diagnostics against a hot database were also an
+unacceptable refresh-time cost for the retained 3.1 GB home.
+
+The runtime now performs full SQLite, FTS5, and foreign-key verification once before opening the
+reader pool or starting workers. Live readiness and doctor paths use bounded online schema and
+connection checks; backup, restore, stopped-soak, and release gates retain deep integrity checks.
+The dashboard also composes its six projections serially so one refresh never exceeds the
+control-plane reader reserve. The real-process dashboard smoke preserves response bodies and
+process logs on failure, making any future source-specific 503 actionable.
+
 This is deliberately a bounded dirty-worktree diagnostic, not a replacement for the clean,
 exact-package soak gate. Its purpose is to show that the final migration and storage shape address
 the reproduced retained-history failure before consuming another day on the formal soak.

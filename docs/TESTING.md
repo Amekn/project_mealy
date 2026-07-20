@@ -321,10 +321,13 @@ admission, empty governed-memory inspection, proposal plus duplicate reconciliat
 activation, sensitivity-bounded search, pin/unpin, correction plus duplicate reconciliation,
 expiry, content-scrubbing deletion, rejection, and deleted-tombstone listing, followed by live
 active-task discovery, exact task cancellation, and the cancelled task's canonical usage/cost
-evidence. The post-settlement snapshot and `mealyctl usage --days 30` must both include the terminal
-run with exact range/cost types and no bearer disclosure. A second real session admits one
-digest-framed local Markdown attachment through `session send-file`; units reject symlinks,
-unsupported extensions, invalid UTF-8/NUL, whitespace-drifted prompts, and 256-KiB-plus-one input,
+evidence. The terminal dashboard refresh regression-proves that live doctor/readiness uses the
+online schema path while an FTS-backed task is settling; deep integrity already passed before the
+runtime reader pool opened. The post-settlement snapshot and `mealyctl usage --days 30` must both
+include the terminal run with exact range/cost types and no bearer disclosure. A second real
+session admits one digest-framed local Markdown attachment through `session send-file`; units
+reject symlinks, unsupported extensions, invalid UTF-8/NUL, whitespace-drifted prompts, and
+256-KiB-plus-one input,
 plus any file below the private daemon home, and prove no host path enters the framed content. The
 chat pseudo-terminal test additionally sends
 `/attach` with a spaced path, observes the same path-free untrusted frame at the API, and proves the
