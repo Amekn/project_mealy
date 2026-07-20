@@ -1437,14 +1437,14 @@ BROWSER_BUNDLE="$("$FETCH_BROWSER" "$HOME/.cache/mealy/browser-runtimes")"
 "$MEALYCTL" --home "$HOME/.mealy" config browser-inspect "$BROWSER_BUNDLE"
 ```
 
-The helper currently pins Chrome for Testing Headless Shell `150.0.7871.124`, archive size
-`120351731`, and SHA-256
-`98de0bcdc661d14b2fc122ae99a27df35d47e464e8d38a4a5e01f81a4ce295c2`. It uses HTTPS, rejects an
+The helper currently pins Chrome for Testing Headless Shell `151.0.7922.34`, archive size
+`120231126`, and SHA-256
+`3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14`. It uses HTTPS, rejects an
 unexpected redirect protocol/count, connection or total-time overrun, transfer size, archive
 path/type/count, and never silently selects “latest.” `browser-inspect` then
 performs complete no-symlink bundle inspection and executes only `--version` in a no-network,
 no-home Bubblewrap namespace. Review the returned bundle/executable digests, product
-`HeadlessChrome/150.0.7871.124`, and CDP `1.3` identity.
+`HeadlessChrome/151.0.7922.34`, and CDP `1.3` identity.
 
 Drain the daemon, install the exact bytes, and approve model-visible authority:
 

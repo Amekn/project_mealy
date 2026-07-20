@@ -2718,7 +2718,7 @@ mod tests {
             inspection.bundle_digest().to_owned(),
             "chrome-headless-shell".to_owned(),
             inspection.executable_digest().to_owned(),
-            "HeadlessChrome/150.0.7871.124".to_owned(),
+            "HeadlessChrome/151.0.7922.34".to_owned(),
             BROWSER_CDP_PROTOCOL_VERSION.to_owned(),
         )
         .expect("browser config");
