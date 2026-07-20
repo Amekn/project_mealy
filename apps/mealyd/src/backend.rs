@@ -5036,6 +5036,7 @@ mod tests {
                     None,
                     Duration::ZERO,
                     1,
+                    1,
                     600,
                 )
                 .expect("fixture provider"),

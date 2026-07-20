@@ -663,6 +663,7 @@ pub struct BuiltinPhaseTwoProvider {
     requests_per_minute: u32,
     rate_window: Mutex<ProviderRateWindow>,
     delay: Duration,
+    estimated_latency_ms: u64,
 }
 
 #[derive(Debug)]
@@ -676,6 +677,7 @@ impl BuiltinPhaseTwoProvider {
     #[must_use]
     pub const fn new(
         delay: Duration,
+        estimated_latency_ms: u64,
         maximum_concurrent_requests: u32,
         requests_per_minute: u32,
     ) -> Self {
@@ -689,6 +691,7 @@ impl BuiltinPhaseTwoProvider {
                 requests: 0,
             }),
             delay,
+            estimated_latency_ms,
         }
     }
 
@@ -696,6 +699,10 @@ impl BuiltinPhaseTwoProvider {
     #[must_use]
     pub fn invocation_count(&self) -> u64 {
         self.invocations.load(Ordering::SeqCst)
+    }
+
+    fn estimated_latency_ms(&self) -> u64 {
+        self.estimated_latency_ms.max(1)
     }
 
     fn requests_in_current_minute(&self) -> u64 {
@@ -733,7 +740,7 @@ impl BuiltinPhaseTwoProvider {
 
 impl Default for BuiltinPhaseTwoProvider {
     fn default() -> Self {
-        Self::new(Duration::ZERO, 1, 600)
+        Self::new(Duration::ZERO, 1, 1, 600)
     }
 }
 
@@ -1089,6 +1096,7 @@ impl RuntimeModelProvider {
         config: &ProviderConfig,
         provider_secrets: Option<&FileProviderSecretStore>,
         fake_delay: Duration,
+        fake_estimated_latency_ms: u64,
         maximum_concurrent_requests: u32,
         requests_per_minute: u32,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -1097,6 +1105,7 @@ impl RuntimeModelProvider {
             &[],
             provider_secrets,
             fake_delay,
+            fake_estimated_latency_ms,
             maximum_concurrent_requests,
             requests_per_minute,
         )
@@ -1113,6 +1122,7 @@ impl RuntimeModelProvider {
         fallbacks: &[ProviderConfig],
         provider_secrets: Option<&FileProviderSecretStore>,
         fake_delay: Duration,
+        fake_estimated_latency_ms: u64,
         maximum_concurrent_requests: u32,
         requests_per_minute: u32,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -1120,6 +1130,7 @@ impl RuntimeModelProvider {
         match primary {
             ProviderConfig::BuiltinFixture => Ok(Self::Builtin(BuiltinPhaseTwoProvider::new(
                 fake_delay,
+                fake_estimated_latency_ms,
                 maximum_concurrent_requests,
                 requests_per_minute,
             ))),
@@ -1324,7 +1335,7 @@ impl RuntimeModelProvider {
             Self::Builtin(provider) => vec![ProviderRouteCandidate {
                 capabilities: provider.capabilities(),
                 available: true,
-                estimated_latency_ms: 1,
+                estimated_latency_ms: provider.estimated_latency_ms(),
                 trust_tier: 10,
             }],
             Self::External { providers } => providers
@@ -1364,6 +1375,34 @@ impl RuntimeModelProvider {
         }
     }
 
+    fn estimated_latency_ms_for(
+        &self,
+        request: &ProviderRequest,
+    ) -> Result<u64, Box<dyn Error + Send + Sync>> {
+        match self {
+            Self::Builtin(provider) => {
+                let capabilities = provider.capabilities();
+                if request.provider_id != capabilities.provider_id
+                    || request.model_id != capabilities.model_id
+                {
+                    return Err("prepared request does not identify the fixture provider".into());
+                }
+                Ok(provider.estimated_latency_ms())
+            }
+            Self::External { providers } => providers
+                .iter()
+                .find(|entry| {
+                    let capabilities = entry.provider.capabilities();
+                    request.provider_id == capabilities.provider_id
+                        && request.model_id == capabilities.model_id
+                })
+                .map(|entry| entry.estimated_latency_ms.max(1))
+                .ok_or_else(|| {
+                    "prepared request does not identify a configured provider endpoint".into()
+                }),
+        }
+    }
+
     /// Complete configured capability material bound into a context epoch.
     #[must_use]
     pub fn policy_capabilities(&self) -> Vec<ProviderCapabilities> {
@@ -1387,7 +1426,7 @@ impl RuntimeModelProvider {
                     local: capabilities.local,
                     streaming: capabilities.streaming,
                     health: "healthy".to_owned(),
-                    estimated_latency_ms: 1,
+                    estimated_latency_ms: provider.estimated_latency_ms(),
                     invocation_count: provider.invocation_count(),
                     in_flight_requests: provider.in_flight.load(Ordering::Acquire),
                     maximum_concurrent_requests: capabilities.maximum_concurrent_requests,
@@ -2583,6 +2622,12 @@ fn dispatch_model(
     );
     let _entered = trace_span.enter();
     heartbeat(store, fence)?;
+    // Load the immutable request while the attempt is still undispatched. Crossing the durable
+    // boundary must be the final canonical-store operation before invoking the provider, so store
+    // contention cannot silently consume the execution window after dispatch was recorded.
+    let request = load_provider_request(store, attempt_id)?;
+    let minimum_execution_window =
+        Duration::from_millis(provider.estimated_latency_ms_for(&request)?);
     {
         let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
         let receipt = guard.dispatch_model_attempt(DispatchModelAttemptCommit {
@@ -2590,15 +2635,16 @@ fn dispatch_model(
             attempt_id,
             event_id: SystemIdGenerator.generate_event_id(),
             dispatched_at: SystemClock.now(),
+            minimum_execution_window,
         })?;
-        if receipt == ModelDispatchReceipt::DeadlineElapsed {
+        if receipt != ModelDispatchReceipt::Dispatched {
             tracing::warn!(
-                "provider attempt expired before dispatch; retired without charging usage"
+                ?receipt,
+                "provider attempt had no safe dispatch window; retired without charging usage"
             );
             return Ok(false);
         }
     }
-    let request = load_provider_request(store, attempt_id)?;
     let provider_timeout = remaining_deadline_duration(
         request.deadline_at_ms,
         epoch_milliseconds(SystemClock.now())?,
@@ -4731,7 +4777,7 @@ mod tests {
 
     #[test]
     fn builtin_provider_enforces_its_declared_rate_capacity() {
-        let provider = BuiltinPhaseTwoProvider::new(Duration::ZERO, 1, 2);
+        let provider = BuiltinPhaseTwoProvider::new(Duration::ZERO, 1, 1, 2);
         assert!(provider.reserve_rate_capacity());
         assert!(provider.reserve_rate_capacity());
         assert!(!provider.reserve_rate_capacity());

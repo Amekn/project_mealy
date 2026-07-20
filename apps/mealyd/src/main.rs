@@ -110,6 +110,9 @@ struct Arguments {
     /// Test-only delay inside each deterministic fake-provider call.
     #[arg(long, default_value_t = 0)]
     fake_provider_delay_ms: u64,
+    /// Test-only latency estimate used to guard the deterministic provider dispatch window.
+    #[arg(long, default_value_t = 1, hide = true)]
+    fake_provider_estimated_latency_ms: u64,
     /// Test-only pause after each committed agent-loop boundary.
     #[arg(long, default_value_t = 0)]
     agent_boundary_delay_ms: u64,
@@ -389,6 +392,7 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
         .then(|| FileProviderSecretStore::new(arguments.home.join("provider-secrets")))
         .transpose()?;
     let fake_provider_delay = Duration::from_millis(arguments.fake_provider_delay_ms);
+    let fake_provider_estimated_latency_ms = arguments.fake_provider_estimated_latency_ms;
     let maximum_provider_requests = daemon_config.maximum_provider_requests();
     let provider_requests_per_minute = daemon_config.provider_requests_per_minute();
     let provider = Arc::new(
@@ -398,6 +402,7 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
                     &provider_config,
                     provider_secret_store.as_ref(),
                     fake_provider_delay,
+                    fake_provider_estimated_latency_ms,
                     maximum_provider_requests,
                     provider_requests_per_minute,
                 )
@@ -407,6 +412,7 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
                     &provider_fallbacks,
                     provider_secret_store.as_ref(),
                     fake_provider_delay,
+                    fake_provider_estimated_latency_ms,
                     maximum_provider_requests,
                     provider_requests_per_minute,
                 )

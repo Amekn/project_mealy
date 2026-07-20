@@ -114,7 +114,7 @@ impl SqliteStore {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentStoreError`] when the attempt is absent, no longer dispatching, or corrupt.
+    /// Returns [`AgentStoreError`] when the attempt is absent, no longer dispatchable, or corrupt.
     pub fn prepared_provider_request(
         &self,
         attempt_id: mealy_domain::AttemptId,
@@ -123,7 +123,7 @@ impl SqliteStore {
             .connection
             .query_row(
                 "SELECT request_json, request_digest FROM model_attempt \
-                 WHERE attempt_id = ?1 AND state = 'dispatching'",
+                 WHERE attempt_id = ?1 AND state IN ('prepared', 'dispatching')",
                 [attempt_id.to_string()],
                 |result| Ok((result.get::<_, String>(0)?, result.get::<_, String>(1)?)),
             )
@@ -505,6 +505,14 @@ impl AgentExecutionStore for SqliteStore {
         commit: mealy_application::DispatchModelAttemptCommit,
     ) -> Result<ModelDispatchReceipt, AgentStoreError> {
         let dispatched_at_ms = epoch_milliseconds(commit.dispatched_at)?;
+        let minimum_execution_window_ms =
+            i64::try_from(commit.minimum_execution_window.as_millis())
+                .map_err(|_| invariant("provider minimum execution window is too large"))?;
+        if minimum_execution_window_ms <= 0 {
+            return Err(invariant(
+                "provider minimum execution window must be positive",
+            ));
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -515,7 +523,7 @@ impl AgentExecutionStore for SqliteStore {
             .execute(
                 "UPDATE model_attempt SET state = 'dispatching', dispatched_at_ms = ?1 \
                  WHERE attempt_id = ?2 AND run_id = ?3 AND state = 'prepared' \
-                   AND deadline_at_ms > ?1 AND prepared_lease_id = ?4 \
+                   AND deadline_at_ms - ?7 >= ?1 AND prepared_lease_id = ?4 \
                    AND prepared_owner_id = ?5 AND prepared_fencing_token = ?6 \
                    AND EXISTS(SELECT 1 FROM run_loop_state \
                               WHERE run_id = ?3 AND next_action = 'dispatch_model' \
@@ -527,6 +535,7 @@ impl AgentExecutionStore for SqliteStore {
                     commit.fence.lease_id().to_string(),
                     commit.fence.owner_id().to_string(),
                     to_i64(commit.fence.fencing_token().get(), "fencing token")?,
+                    minimum_execution_window_ms,
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -545,7 +554,13 @@ impl AgentExecutionStore for SqliteStore {
             return Ok(ModelDispatchReceipt::Dispatched);
         }
 
-        retire_expired_model_dispatch(transaction, &commit, dispatched_at_ms, owner.correlation_id)
+        retire_unviable_model_dispatch(
+            transaction,
+            &commit,
+            dispatched_at_ms,
+            minimum_execution_window_ms,
+            owner.correlation_id,
+        )
     }
 
     fn record_model_result(
@@ -605,24 +620,45 @@ impl AgentExecutionStore for SqliteStore {
     }
 }
 
-fn retire_expired_model_dispatch(
+fn retire_unviable_model_dispatch(
     transaction: Transaction<'_>,
     commit: &mealy_application::DispatchModelAttemptCommit,
     completed_at_ms: i64,
+    minimum_execution_window_ms: i64,
     correlation_id: CorrelationId,
 ) -> Result<ModelDispatchReceipt, AgentStoreError> {
-    let deadline_at_ms = load_prepared_model_deadline(&transaction, commit)?;
-    if deadline_at_ms > completed_at_ms {
+    let (deadline_at_ms, timeout_ms) = load_prepared_model_window(&transaction, commit)?;
+    if minimum_execution_window_ms > timeout_ms {
+        return Err(invariant(
+            "provider minimum execution window exceeds the attempt timeout",
+        ));
+    }
+    let deadline_elapsed = deadline_at_ms <= completed_at_ms;
+    let execution_window_unavailable = deadline_at_ms
+        .checked_sub(minimum_execution_window_ms)
+        .is_some_and(|latest_dispatch_at_ms| latest_dispatch_at_ms < completed_at_ms);
+    if !deadline_elapsed && !execution_window_unavailable {
         return Err(AgentStoreError::Conflict);
     }
+    let (error_class, error_message, receipt) = if deadline_elapsed {
+        (
+            "provider_dispatch_deadline_elapsed",
+            "provider attempt deadline elapsed before dispatch",
+            ModelDispatchReceipt::DeadlineElapsed,
+        )
+    } else {
+        (
+            "provider_dispatch_window_exhausted",
+            "provider execution window was exhausted before dispatch",
+            ModelDispatchReceipt::ExecutionWindowUnavailable,
+        )
+    };
     let attempt_changed = transaction
         .execute(
             "UPDATE model_attempt SET state = 'interrupted', completed_at_ms = ?1, \
-                error_class = 'provider_dispatch_deadline_elapsed', \
-                error_message = 'provider attempt deadline elapsed before dispatch', \
-                retryable = 1 \
+                error_class = ?7, error_message = ?8, retryable = 1 \
              WHERE attempt_id = ?2 AND run_id = ?3 AND state = 'prepared' \
-               AND deadline_at_ms <= ?1 AND prepared_lease_id = ?4 \
+               AND deadline_at_ms - ?9 < ?1 AND prepared_lease_id = ?4 \
                AND prepared_owner_id = ?5 AND prepared_fencing_token = ?6",
             params![
                 completed_at_ms,
@@ -631,6 +667,9 @@ fn retire_expired_model_dispatch(
                 commit.fence.lease_id().to_string(),
                 commit.fence.owner_id().to_string(),
                 to_i64(commit.fence.fencing_token().get(), "fencing token")?,
+                error_class,
+                error_message,
+                minimum_execution_window_ms,
             ],
         )
         .map_err(map_sqlite_error)?;
@@ -651,6 +690,18 @@ fn retire_expired_model_dispatch(
     if attempt_changed != 1 || loop_changed != 1 {
         return Err(AgentStoreError::Conflict);
     }
+    let decision = if deadline_elapsed {
+        json!({
+            "reason": "provider_dispatch_deadline_elapsed",
+            "deadlineAtMs": deadline_at_ms,
+        })
+    } else {
+        json!({
+            "reason": "provider_dispatch_window_exhausted",
+            "deadlineAtMs": deadline_at_ms,
+            "minimumExecutionWindowMs": minimum_execution_window_ms,
+        })
+    };
     append_checkpoint(
         &transaction,
         commit.fence.run_id(),
@@ -661,22 +712,19 @@ fn retire_expired_model_dispatch(
         commit.event_id,
         completed_at_ms,
         correlation_id,
-        json!({
-            "reason": "provider_dispatch_deadline_elapsed",
-            "deadlineAtMs": deadline_at_ms,
-        }),
+        decision,
     )?;
     transaction.commit().map_err(map_sqlite_error)?;
-    Ok(ModelDispatchReceipt::DeadlineElapsed)
+    Ok(receipt)
 }
 
-fn load_prepared_model_deadline(
+fn load_prepared_model_window(
     transaction: &Transaction<'_>,
     commit: &mealy_application::DispatchModelAttemptCommit,
-) -> Result<i64, AgentStoreError> {
+) -> Result<(i64, i64), AgentStoreError> {
     transaction
         .query_row(
-            "SELECT deadline_at_ms FROM model_attempt \
+            "SELECT deadline_at_ms, timeout_ms FROM model_attempt \
              WHERE attempt_id = ?1 AND run_id = ?2 AND state = 'prepared' \
                AND prepared_lease_id = ?3 AND prepared_owner_id = ?4 \
                AND prepared_fencing_token = ?5 \
@@ -690,7 +738,7 @@ fn load_prepared_model_deadline(
                 commit.fence.owner_id().to_string(),
                 to_i64(commit.fence.fencing_token().get(), "fencing token")?,
             ],
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()
         .map_err(map_sqlite_error)?
@@ -4638,14 +4686,15 @@ fn verify_replay_attempt(
                     || row.retry_after_ms.is_some())
             || row.state == "interrupted"
                 && (row.error_message.as_deref()
-                    != Some(
-                        if row.error_class.as_deref() == Some("provider_dispatch_deadline_elapsed")
-                        {
+                    != Some(match row.error_class.as_deref() {
+                        Some("provider_dispatch_deadline_elapsed") => {
                             "provider attempt deadline elapsed before dispatch"
-                        } else {
-                            "lease expired before durable completion"
-                        },
-                    )
+                        }
+                        Some("provider_dispatch_window_exhausted") => {
+                            "provider execution window was exhausted before dispatch"
+                        }
+                        _ => "lease expired before durable completion",
+                    })
                     || retryable != Some(true)
                     || row.retry_after_ms.is_some())
             || row.state == "failed"
@@ -7436,8 +7485,10 @@ fn verify_checkpoint_chain(
             return Ok(false);
         }
         let recovery = decision.get("reason").and_then(Value::as_str) == Some("lease_expired");
-        let dispatch_deadline_elapsed = decision.get("reason").and_then(Value::as_str)
-            == Some("provider_dispatch_deadline_elapsed");
+        let undispatched_provider_window_retired = matches!(
+            decision.get("reason").and_then(Value::as_str),
+            Some("provider_dispatch_deadline_elapsed" | "provider_dispatch_window_exhausted")
+        );
         let provider_retry_lifecycle_valid =
             if decision.get("reason").and_then(Value::as_str) == Some("provider_retry_scheduled") {
                 verify_provider_retry_lifecycle(
@@ -7504,7 +7555,7 @@ fn verify_checkpoint_chain(
             if !(event_valid && timeline_valid && lifecycle_valid && checkpoint_valid) {
                 return Ok(false);
             }
-        } else if dispatch_deadline_elapsed {
+        } else if undispatched_provider_window_retired {
             let checkpoint_valid = event_type.as_deref() == Some("agent.loop.checkpoint")
                 && payload
                     == json!({
@@ -7512,7 +7563,7 @@ fn verify_checkpoint_chain(
                         "next_action": next_action,
                         "checkpoint_digest": checkpoint_digest,
                     })
-                && verify_dispatch_deadline_checkpoint(
+                && verify_undispatched_provider_window_checkpoint(
                     connection,
                     next_action,
                     created_at_ms,
@@ -8075,7 +8126,7 @@ fn verify_checkpoint_timeline_order(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_dispatch_deadline_checkpoint(
+fn verify_undispatched_provider_window_checkpoint(
     connection: &rusqlite::Connection,
     action: AgentNextAction,
     created_at_ms: i64,
@@ -8107,19 +8158,55 @@ fn verify_dispatch_deadline_checkpoint(
         attempt_id,
         "model.attempt.dispatched",
     )?;
+    let reason = decision.get("reason").and_then(Value::as_str);
+    let (expected_error_class, decision_valid) = match reason {
+        Some("provider_dispatch_deadline_elapsed") => (
+            "provider_dispatch_deadline_elapsed",
+            attempt.request.deadline_at_ms <= created_at_ms
+                && decision
+                    == &json!({
+                        "reason": "provider_dispatch_deadline_elapsed",
+                        "deadlineAtMs": attempt.request.deadline_at_ms,
+                    }),
+        ),
+        Some("provider_dispatch_window_exhausted") => {
+            let minimum_execution_window_ms = decision
+                .get("minimumExecutionWindowMs")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let timeout_ms = attempt
+                .request
+                .deadline_at_ms
+                .checked_sub(attempt.prepared_at_ms)
+                .unwrap_or(0);
+            (
+                "provider_dispatch_window_exhausted",
+                minimum_execution_window_ms > 0
+                    && minimum_execution_window_ms <= timeout_ms
+                    && created_at_ms < attempt.request.deadline_at_ms
+                    && attempt
+                        .request
+                        .deadline_at_ms
+                        .checked_sub(created_at_ms)
+                        .is_some_and(|remaining| remaining < minimum_execution_window_ms)
+                    && decision
+                        == &json!({
+                            "reason": "provider_dispatch_window_exhausted",
+                            "deadlineAtMs": attempt.request.deadline_at_ms,
+                            "minimumExecutionWindowMs": minimum_execution_window_ms,
+                        }),
+            )
+        }
+        _ => ("", false),
+    };
     Ok(action == AgentNextAction::CompileContext
         && attempt.state == "interrupted"
         && attempt.dispatched_at_ms.is_none()
-        && attempt.error_class.as_deref() == Some("provider_dispatch_deadline_elapsed")
+        && attempt.error_class.as_deref() == Some(expected_error_class)
         && attempt.retryable == Some(true)
         && attempt.reservation_state == ReplayReservationState::Released
         && attempt.completed_at_ms == created_at_ms
-        && attempt.request.deadline_at_ms <= created_at_ms
-        && decision
-            == &json!({
-                "reason": "provider_dispatch_deadline_elapsed",
-                "deadlineAtMs": attempt.request.deadline_at_ms,
-            })
+        && decision_valid
         && prepared_cursor.is_some_and(|cursor| cursor < checkpoint_cursor)
         && dispatched_cursor.is_none()
         && recovered_boundaries.insert(format!("model:{attempt_id}")))

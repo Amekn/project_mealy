@@ -318,6 +318,8 @@ pub struct DispatchModelAttemptCommit {
     pub event_id: EventId,
     /// Commit time immediately before invocation.
     pub dispatched_at: SystemTime,
+    /// Minimum useful provider execution window required before crossing the boundary.
+    pub minimum_execution_window: Duration,
 }
 
 /// Durable outcome of crossing the provider dispatch boundary.
@@ -327,6 +329,8 @@ pub enum ModelDispatchReceipt {
     Dispatched,
     /// The undispatched preparation expired and was atomically retired without charging usage.
     DeadlineElapsed,
+    /// Too little of the immutable deadline remained for a useful provider invocation.
+    ExecutionWindowUnavailable,
 }
 
 /// Appends one bounded non-authoritative provider text delta while an attempt is dispatching.
