@@ -29,6 +29,13 @@ repeatable evidence. A green compiler or unrelated test is not treated as requir
 | NFR-PORT-001..002, NFR-OPS-001..002 | covered | The control plane compiles on Linux and macOS without container/cloud/workflow dependencies; native macOS ARM64 and Intel additionally receive client unit tests, locked release builds, binary-identity smoke, and deterministic attested preview packaging. Windows is outside the release-one support and CI contract. Native service installation is Linux/macOS; unsupported worker profiles/platforms deny explicitly. CLI exposes doctor/status/backup/restore verification/safe mode/drain, forced termination evidence, and a temporary least-authority loopback dashboard. The dashboard aggregates canonical projections and exposes only typed session input, bounded timeline, exact approval, exact 30-day/per-task usage, cooperative cancellation, unknown-effect reconciliation, durable keyed schedule creation plus revision-fenced lifecycle, bounded governed-memory administration, and manifest-bounded extension lifecycle. Exact Host/Origin/capability checks, an 8 MiB daemon-response ceiling, and strict DTO limits protect the adapter without exposing the daemon bearer, creating alternate state, or providing an arbitrary proxy. |
 | NFR-QUAL-001..004 | covered | Domain property tests, policy/recovery/effect/migration units, real SQLite integration tests, real process crash scenarios, public API workflows, fallback doctor scenario, extension/channel failures, migration snapshots, and sandbox/authorization/secret security cases run locally and in CI. |
 
+Schema 16 extends the REC/DATA/OBS/NFR-REL evidence above: one canonical writer is separated from
+bounded query-only WAL snapshots; wait metrics make both lanes observable; and new context
+manifests use one bounded, compressed, digest-verified item bundle with sparse foreign-key
+artifact/compaction/memory provenance. Legacy row-per-item manifests remain replayable. Migration,
+governed-memory deletion/restart, crash recovery, replay, soak-attribution, and retained 3.1 GB
+diagnostics cover the compatibility and contention boundaries.
+
 ## Release-one acceptance path
 
 The eleven acceptance steps are crossed by the process suites rather than mocked at the storage

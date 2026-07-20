@@ -3,6 +3,7 @@ use crate::{
     config::SkillConfig,
     effect_runtime::PhaseThreeRuntime,
     responses_provider::{OpenAiResponsesProvider, OpenAiResponsesSettings},
+    store_runtime::{RuntimeStore, TryStoreAccessError},
 };
 use mealy_application::{
     AGENT_DELEGATE_TOOL_ID, AgentArtifactCommit, AgentDelegationRequest, AgentEffectStore,
@@ -36,8 +37,8 @@ use mealy_domain::{
 use mealy_infrastructure::{
     BrowserReadTool, FileArtifactBlobStore, FileProviderSecretStore, FixtureReadTool,
     FixtureResource, MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES, McpReadTool, SkillResourceReadTool,
-    SqliteStore, SubscriptionCliProvider, SubscriptionCliSettings, SystemClock, SystemIdGenerator,
-    WebReadTool, WorkspaceReadTool, inspect_skill_package,
+    SubscriptionCliProvider, SubscriptionCliSettings, SystemClock, SystemIdGenerator, WebReadTool,
+    WorkspaceReadTool, inspect_skill_package,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -45,7 +46,7 @@ use std::{
     fmt::Write as _,
     path::Path,
     sync::{
-        Arc, Mutex, TryLockError,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime},
@@ -1561,7 +1562,7 @@ impl ModelProvider for RuntimeModelProvider {
 }
 
 struct DurableCancellationProbe {
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     run_id: mealy_domain::RunId,
     local_timeout: Arc<AtomicBool>,
 }
@@ -1571,22 +1572,22 @@ impl CancellationProbe for DurableCancellationProbe {
         if self.local_timeout.load(Ordering::Acquire) {
             return true;
         }
-        match self.store.try_lock() {
+        match self.store.try_read() {
             Ok(store) => store
                 .agent_run_cancellation_requested(self.run_id)
                 .unwrap_or(true),
-            Err(TryLockError::Poisoned(_)) => true,
-            // Canonical transitions are serialized through this mutex. Contention is not a
-            // cancellation signal, and blocking here can starve a provider or read tool until its
-            // own deadline. Long-running adapters poll again; every dispatch remains bounded by
-            // its local timeout and checks durable cancellation at the next canonical boundary.
-            Err(TryLockError::WouldBlock) => false,
+            Err(TryStoreAccessError::Poisoned | TryStoreAccessError::Storage(_)) => true,
+            // Snapshot readers are bounded. Pool contention is not a cancellation signal, and
+            // blocking here can starve a provider or read tool until its own deadline. Long-running
+            // adapters poll again; every dispatch remains bounded by its local timeout and checks
+            // durable cancellation at the next canonical boundary.
+            Err(TryStoreAccessError::WouldBlock) => false,
         }
     }
 }
 
 struct DurableProviderProgressSink {
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     fence: LeaseFence,
     attempt_id: mealy_domain::AttemptId,
     cancelled: Arc<AtomicBool>,
@@ -1603,7 +1604,7 @@ struct DurableProviderProgressState {
 
 impl DurableProviderProgressSink {
     fn new(
-        store: Arc<Mutex<SqliteStore>>,
+        store: Arc<RuntimeStore>,
         fence: LeaseFence,
         attempt_id: mealy_domain::AttemptId,
         cancelled: Arc<AtomicBool>,
@@ -1671,7 +1672,7 @@ impl DurableProviderProgressSink {
                 state.disabled = true;
                 return;
             };
-            let result = self.store.lock().map_err(|_| ()).and_then(|mut store| {
+            let result = self.store.write().map_err(|_| ()).and_then(|mut store| {
                 store
                     .record_model_progress(RecordModelProgressCommit {
                         fence: self.fence,
@@ -1732,10 +1733,10 @@ fn utf8_prefix_length(value: &str, maximum: usize) -> usize {
 
 /// Claims and executes at most one runnable agent run.
 ///
-/// The function holds the shared `SQLite` mutex only for a single durable transition at a time.
-/// Provider, tool, and artifact I/O all run outside that mutex.
+/// The function borrows a snapshot reader or the canonical writer for one storage boundary at a
+/// time. Provider, tool, and artifact I/O all run outside both lanes.
 pub fn drive_one_agent_run(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     worker_id: WorkerId,
     provider: &Arc<RuntimeModelProvider>,
     tool: &Arc<RuntimeReadTools>,
@@ -1745,7 +1746,7 @@ pub fn drive_one_agent_run(
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
     resume_ready_effect_runs(store)?;
     let claim = {
-        let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+        let mut guard = store.write().map_err(|_| "agent store lock is poisoned")?;
         claim_next_work_with_concurrency(
             &mut *guard,
             &SystemClock,
@@ -1761,7 +1762,7 @@ pub fn drive_one_agent_run(
     };
     let fence = receipt.lease.fence();
     let trace = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .load_agent_run(fence, SystemClock.now())?;
     let trace_span = tracing::info_span!(
@@ -1788,7 +1789,7 @@ pub fn drive_one_agent_run(
         tracing::warn!(%error, "durable agent run failed");
         let summary = format!("agent loop failed: {error}");
         let bounded = summary.chars().take(4_096).collect::<String>();
-        if let Ok(mut guard) = store.lock() {
+        if let Ok(mut guard) = store.write() {
             let status = if guard
                 .agent_run_cancellation_requested(fence.run_id())
                 .unwrap_or(false)
@@ -1822,7 +1823,7 @@ pub fn drive_one_agent_run(
 }
 
 fn execute_claimed_run(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     provider: &Arc<RuntimeModelProvider>,
     tool: &Arc<RuntimeReadTools>,
@@ -1832,11 +1833,13 @@ fn execute_claimed_run(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     for _ in 0..MAXIMUM_LOOP_STEPS {
         let snapshot = {
-            let guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+            let guard = store
+                .read()
+                .map_err(|_| "agent store reader is unavailable")?;
             guard.load_agent_run(fence, SystemClock.now())?
         };
         if snapshot.cancellation_requested {
-            let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+            let mut guard = store.write().map_err(|_| "agent store lock is poisoned")?;
             complete_run(
                 &mut *guard,
                 &SystemClock,
@@ -1896,7 +1899,7 @@ fn execute_claimed_run(
 
 #[allow(clippy::too_many_lines)]
 fn prepare_next_model(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     provider: &Arc<RuntimeModelProvider>,
     tool: &Arc<RuntimeReadTools>,
@@ -2444,8 +2447,6 @@ fn prepare_next_model(
         now,
     )?;
     let attempt_id = SystemIdGenerator.generate_attempt_id();
-    let deadline = bounded_deadline(now, snapshot.limits.provider_timeout_ms)?;
-    let deadline_at_ms = epoch_milliseconds(deadline)?;
     let remaining_output_tokens = snapshot
         .limits
         .maximum_output_tokens
@@ -2460,19 +2461,7 @@ fn prepare_next_model(
     if requested_output_tokens == 0 {
         return Err("agent output-token budget is exhausted".into());
     }
-    let request = ProviderRequest {
-        run_id: snapshot.run_id,
-        attempt_id,
-        context_manifest_id: compiled.manifest.manifest_id,
-        provider_id: capabilities.provider_id.clone(),
-        model_id: capabilities.model_id.clone(),
-        messages: compiled.messages,
-        tools: provider_tools,
-        maximum_output_tokens: requested_output_tokens,
-        deadline_at_ms,
-    };
     let capability_digest = sha256_digest(serde_json::to_string(&capabilities)?.as_bytes());
-    let request_digest = sha256_digest(serde_json::to_string(&request)?.as_bytes());
     let reserved_input_tokens = compiled
         .manifest
         .total_token_estimate
@@ -2507,6 +2496,21 @@ fn prepare_next_model(
     if reserved_output_bytes == 0 {
         return Err("agent output-byte budget is exhausted".into());
     }
+    let mut guard = store.write().map_err(|_| "agent store lock is poisoned")?;
+    let prepared_at = SystemClock.now();
+    let deadline = bounded_deadline(prepared_at, snapshot.limits.provider_timeout_ms)?;
+    let request = ProviderRequest {
+        run_id: snapshot.run_id,
+        attempt_id,
+        context_manifest_id: compiled.manifest.manifest_id,
+        provider_id: capabilities.provider_id.clone(),
+        model_id: capabilities.model_id.clone(),
+        messages: compiled.messages,
+        tools: provider_tools,
+        maximum_output_tokens: requested_output_tokens,
+        deadline_at_ms: epoch_milliseconds(deadline)?,
+    };
+    let request_digest = sha256_digest(serde_json::to_string(&request)?.as_bytes());
     let commit = mealy_application::PrepareModelAttemptCommit {
         fence,
         context_epoch: new_epoch.then_some(epoch),
@@ -2524,13 +2528,11 @@ fn prepare_next_model(
         manifest_event_id: SystemIdGenerator.generate_event_id(),
         attempt_event_id: SystemIdGenerator.generate_event_id(),
         checkpoint_event_id: SystemIdGenerator.generate_event_id(),
-        prepared_at: now,
+        prepared_at,
+        run_budget_started_at: now,
         deadline_at: deadline,
     };
-    store
-        .lock()
-        .map_err(|_| "agent store lock is poisoned")?
-        .prepare_model_attempt(commit)?;
+    guard.prepare_model_attempt(commit)?;
     Ok(())
 }
 
@@ -2577,7 +2579,7 @@ fn maximum_provider_cost(input: u64, output: u64, pricing: ProviderPricing) -> u
 }
 
 fn hydrate_artifact_sources(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     snapshot: &mealy_application::AgentRunSnapshot,
 ) -> Result<Vec<mealy_application::AgentContextSource>, Box<dyn Error + Send + Sync>> {
@@ -2587,7 +2589,7 @@ fn hydrate_artifact_sources(
             continue;
         };
         let descriptor = store
-            .lock()
+            .read()
             .map_err(|_| "agent store lock is poisoned")?
             .artifact_content_descriptor(
                 OwnershipContext::new(snapshot.principal_id, snapshot.channel_binding_id),
@@ -2604,7 +2606,7 @@ fn hydrate_artifact_sources(
 
 #[allow(clippy::too_many_lines)]
 fn dispatch_model(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     provider: &Arc<RuntimeModelProvider>,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -2629,7 +2631,7 @@ fn dispatch_model(
     let minimum_execution_window =
         Duration::from_millis(provider.estimated_latency_ms_for(&request)?);
     {
-        let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+        let mut guard = store.write().map_err(|_| "agent store lock is poisoned")?;
         let receipt = guard.dispatch_model_attempt(DispatchModelAttemptCommit {
             fence,
             attempt_id,
@@ -2704,7 +2706,7 @@ fn dispatch_model(
     };
     // Record when the provider boundary actually completed, before progress flushing or canonical
     // store contention. A timely result must not become late merely because another transition
-    // held the SQLite mutex while this worker waited to commit it.
+    // occupied the `SQLite` writer lane while this worker waited to commit it.
     let completed_at = SystemClock.now();
     // The provider boundary completed before this potentially contended durable flush. Stamp its
     // remaining progress at that boundary so replay cannot observe progress after the terminal
@@ -2723,7 +2725,7 @@ fn dispatch_model(
                 PROVIDER_RETRY_MAXIMUM,
             )?;
             let receipt = store
-                .lock()
+                .write()
                 .map_err(|_| "agent store lock is poisoned")?
                 .record_model_failure(RecordModelFailureCommit {
                     fence,
@@ -2751,7 +2753,7 @@ fn dispatch_model(
     let response_json = serde_json::to_string(&output.response)?;
     let response_digest = sha256_digest(response_json.as_bytes());
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_model_result(RecordModelResultCommit {
             fence,
@@ -2769,7 +2771,7 @@ fn dispatch_model(
 }
 
 fn prepare_tool_call(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     tool: &Arc<RuntimeReadTools>,
     effect_runtime: Option<&PhaseThreeRuntime>,
@@ -2809,7 +2811,7 @@ fn prepare_tool_call(
     tool.validate_arguments(tool_id, arguments)?;
     let arguments_digest = sha256_digest(serde_json::to_string(arguments)?.as_bytes());
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .prepare_read_tool(mealy_application::PrepareReadToolCommit {
             fence,
@@ -2880,17 +2882,15 @@ fn process_action_requested(snapshot: &mealy_application::AgentRunSnapshot) -> b
     })
 }
 
-fn resume_ready_effect_runs(
-    store: &Arc<Mutex<SqliteStore>>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+fn resume_ready_effect_runs(store: &Arc<RuntimeStore>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let now = SystemClock.now();
     let expired = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .expired_agent_effect_approvals(now, 64)?;
     for approval_id in expired {
         let result = store
-            .lock()
+            .write()
             .map_err(|_| "agent store lock is poisoned")?
             .expire_approval(ExpireApprovalCommit {
                 approval_id,
@@ -2905,12 +2905,12 @@ fn resume_ready_effect_runs(
         }
     }
     let candidates = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .ready_agent_effects(now, 64)?;
     for effect_id in candidates {
         store
-            .lock()
+            .write()
             .map_err(|_| "agent store lock is poisoned")?
             .resume_agent_effect_run(ResumeAgentEffectRunCommit {
                 effect_id,
@@ -2924,7 +2924,7 @@ fn resume_ready_effect_runs(
 }
 
 fn handle_fixture_write(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     runtime: &PhaseThreeRuntime,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -2933,7 +2933,7 @@ fn handle_fixture_write(
     arguments: &serde_json::Value,
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let invocation = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .agent_effect_invocation(fence, model_attempt_id, SystemClock.now())?;
     if let Some(invocation) = invocation {
@@ -2953,7 +2953,7 @@ fn handle_fixture_write(
 
 #[allow(clippy::too_many_lines)]
 fn propose_fixture_write(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     runtime: &PhaseThreeRuntime,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3011,7 +3011,7 @@ fn propose_fixture_write(
     let subject = runtime.approval_subject(effect_id, &request, expires_at_ms)?;
     let correlation_id = snapshot.correlation_id;
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_agent_effect_proposal(RecordAgentEffectProposalCommit {
             fence,
@@ -3045,7 +3045,7 @@ fn propose_fixture_write(
 }
 
 fn continue_fixture_write(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     runtime: &PhaseThreeRuntime,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3053,7 +3053,7 @@ fn continue_fixture_write(
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let ownership = OwnershipContext::new(snapshot.principal_id, snapshot.channel_binding_id);
     let view = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .effect_ledger_view(ownership, invocation.effect_id)?;
     match view.status {
@@ -3084,7 +3084,7 @@ fn continue_fixture_write(
 
 #[allow(clippy::too_many_lines)]
 fn dispatch_fixture_write(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     runtime: &PhaseThreeRuntime,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3095,7 +3095,7 @@ fn dispatch_fixture_write(
     let attempt_id = SystemIdGenerator.generate_attempt_id();
     let prepared_at = SystemClock.now();
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .prepare_effect_attempt(PrepareEffectAttemptCommit {
             effect_id: invocation.effect_id,
@@ -3108,7 +3108,7 @@ fn dispatch_fixture_write(
         })?;
     let ownership = OwnershipContext::new(snapshot.principal_id, snapshot.channel_binding_id);
     let prepared_view = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .effect_ledger_view(ownership, invocation.effect_id)?;
     let approval = prepared_view
@@ -3149,7 +3149,7 @@ fn dispatch_fixture_write(
         std::thread::sleep(runtime.dispatch_commit_delay());
     }
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .mark_effect_attempt_running(MarkEffectAttemptRunningCommit {
             effect_id: invocation.effect_id,
@@ -3161,7 +3161,7 @@ fn dispatch_fixture_write(
             dispatched_at,
         })?;
     let running_revision = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .effect_ledger_view(ownership, invocation.effect_id)?
         .revision;
@@ -3179,7 +3179,7 @@ fn dispatch_fixture_write(
     let (outcome, evidence_details, error_class) =
         executor_outcome_evidence(result, &request_evidence_digest);
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_effect_attempt_outcome(RecordEffectAttemptOutcomeCommit {
             effect_id: invocation.effect_id,
@@ -3239,12 +3239,12 @@ fn executor_outcome_evidence(
 }
 
 fn record_fixture_write_observation(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     invocation: mealy_application::AgentEffectInvocation,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_agent_effect_observation(RecordAgentEffectObservationCommit {
             fence,
@@ -3260,13 +3260,13 @@ fn record_fixture_write_observation(
 }
 
 fn park_unknown_fixture_write(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     effect_id: mealy_domain::EffectId,
     correlation_id: mealy_domain::CorrelationId,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .park_agent_effect_run(ParkAgentEffectRunCommit {
             fence,
@@ -3369,7 +3369,7 @@ fn delegated_child_limits(
 }
 
 fn launch_agent_delegation(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     parent_tool_call_id: mealy_domain::ToolCallId,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3401,7 +3401,7 @@ fn launch_agent_delegation(
     let delegation_id = SystemIdGenerator.generate_delegation_id();
     let now = SystemClock.now();
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .launch_agent_delegation(LaunchAgentDelegationCommit {
             delegation: PrepareDelegationCommit {
@@ -3442,7 +3442,7 @@ fn launch_agent_delegation(
 }
 
 fn dispatch_tool(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     tool: &Arc<RuntimeReadTools>,
     artifacts: &FileArtifactBlobStore,
@@ -3475,7 +3475,7 @@ fn dispatch_tool(
         return Ok(true);
     }
     {
-        let mut guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+        let mut guard = store.write().map_err(|_| "agent store lock is poisoned")?;
         guard.dispatch_read_tool(DispatchReadToolCommit {
             fence,
             tool_call_id,
@@ -3528,7 +3528,7 @@ fn dispatch_tool(
 }
 
 fn record_tool_output(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
     tool_call_id: mealy_domain::ToolCallId,
     artifacts: &FileArtifactBlobStore,
@@ -3567,7 +3567,7 @@ fn record_tool_output(
         .as_ref()
         .map(|_| SystemIdGenerator.generate_event_id());
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_read_tool_result(RecordReadToolResultCommit {
             fence,
@@ -3587,7 +3587,7 @@ fn record_tool_output(
 }
 
 fn commit_final(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     fence: LeaseFence,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3612,7 +3612,7 @@ fn commit_final(
         byte_length: u64::try_from(text.len())?,
     };
     complete_agent_run(
-        &mut *store.lock().map_err(|_| "agent store lock is poisoned")?,
+        &mut *store.write().map_err(|_| "agent store lock is poisoned")?,
         &SystemClock,
         &SystemIdGenerator,
         fence,
@@ -3629,7 +3629,7 @@ struct FreshValidatorDecision {
 
 #[allow(clippy::too_many_lines)]
 fn ensure_task_validation(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     fence: LeaseFence,
     snapshot: &mealy_application::AgentRunSnapshot,
@@ -3637,11 +3637,11 @@ fn ensure_task_validation(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let ownership = OwnershipContext::new(snapshot.principal_id, snapshot.channel_binding_id);
     let criteria = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .task_success_criteria(ownership, snapshot.task_id)?;
     if let Some(existing) = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .task_validation(ownership, snapshot.task_id)?
     {
@@ -3710,7 +3710,7 @@ fn ensure_task_validation(
     };
     let outcome = decision.outcome;
     store
-        .lock()
+        .write()
         .map_err(|_| "agent store lock is poisoned")?
         .record_validation(RecordValidationCommit {
             producer_fence: fence,
@@ -3742,7 +3742,7 @@ fn ensure_task_validation(
 }
 
 fn build_delegated_validation_context(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     snapshot: &mealy_application::AgentRunSnapshot,
     criteria: &mealy_domain::TaskSuccessCriteria,
@@ -3767,7 +3767,7 @@ fn build_delegated_validation_context(
         return Err("delegated validation received a non-final provider result".into());
     };
     let read_tool_ids = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .successful_read_tool_ids(snapshot.run_id)?;
     if read_tool_ids.iter().any(|tool_id| {
@@ -3912,7 +3912,7 @@ fn run_delegated_validator(
 }
 
 fn build_general_assistant_validation_context(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     snapshot: &mealy_application::AgentRunSnapshot,
     criteria: &mealy_domain::TaskSuccessCriteria,
@@ -3939,7 +3939,7 @@ fn build_general_assistant_validation_context(
     let request_content = request_source.message.content.clone();
     let response_json = serde_json::to_string(&output.response)?;
     let read_tool_ids = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .successful_read_tool_ids(snapshot.run_id)?;
     if read_tool_ids.iter().any(|tool_id| {
@@ -4153,7 +4153,7 @@ fn collect_source_locators(content: &str, output: &mut BTreeSet<String>) {
 }
 
 fn build_deterministic_read_validation_context(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     artifacts: &FileArtifactBlobStore,
     snapshot: &mealy_application::AgentRunSnapshot,
     criteria: &mealy_domain::TaskSuccessCriteria,
@@ -4278,7 +4278,7 @@ fn run_deterministic_read_validator(context: &ValidationContextDraft) -> FreshVa
 
 #[allow(clippy::too_many_lines)]
 fn build_fresh_fixture_validation_context(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     snapshot: &mealy_application::AgentRunSnapshot,
     criteria: &mealy_domain::TaskSuccessCriteria,
     final_text: &str,
@@ -4337,7 +4337,9 @@ fn build_fresh_fixture_validation_context(
         .parse()?;
     let ownership = OwnershipContext::new(snapshot.principal_id, snapshot.channel_binding_id);
     let (effect, attempts) = {
-        let guard = store.lock().map_err(|_| "agent store lock is poisoned")?;
+        let guard = store
+            .read()
+            .map_err(|_| "agent store reader is unavailable")?;
         (
             guard.effect_ledger_view(ownership, effect_id)?,
             guard.effect_attempt_views(ownership, effect_id)?,
@@ -4679,11 +4681,11 @@ fn valid_workspace_manage_validation_arguments(arguments: &serde_json::Value) ->
 }
 
 fn heartbeat(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     fence: LeaseFence,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     heartbeat_lease(
-        &mut *store.lock().map_err(|_| "agent store lock is poisoned")?,
+        &mut *store.write().map_err(|_| "agent store lock is poisoned")?,
         &SystemClock,
         fence,
         LEASE_TTL,
@@ -4693,13 +4695,13 @@ fn heartbeat(
 }
 
 fn load_provider_request(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     attempt_id: mealy_domain::AttemptId,
 ) -> Result<ProviderRequest, Box<dyn Error + Send + Sync>> {
     // The request is already stored before dispatch. Reload through a narrow infrastructure query
     // so the actual provider call cannot drift from recorded evidence.
     let request_json = store
-        .lock()
+        .read()
         .map_err(|_| "agent store lock is poisoned")?
         .prepared_provider_request(attempt_id)?;
     Ok(serde_json::from_str(&request_json)?)
@@ -4723,7 +4725,7 @@ mod tests {
         BuiltinPhaseTwoProvider, DurableCancellationProbe, RuntimeSkillContext,
         remaining_deadline_duration,
     };
-    use crate::config::SkillConfig;
+    use crate::{config::SkillConfig, store_runtime::RuntimeStore};
     use mealy_application::{CancellationProbe, ModelProvider, sha256_digest};
     use mealy_domain::RunId;
     use mealy_infrastructure::{SqliteStore, inspect_skill_package, publish_skill_package};
@@ -4731,7 +4733,7 @@ mod tests {
     use std::{
         fs,
         sync::{
-            Arc, Mutex,
+            Arc,
             atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
@@ -4748,9 +4750,10 @@ mod tests {
     }
 
     #[test]
-    fn busy_canonical_store_is_not_misclassified_as_cancellation() {
-        let store = Arc::new(Mutex::new(
-            SqliteStore::open_in_memory(0).expect("in-memory store"),
+    fn busy_snapshot_pool_is_not_misclassified_as_cancellation() {
+        let store = Arc::new(RuntimeStore::single_for_test(
+            SqliteStore::open_in_memory(0).expect("in-memory writer"),
+            SqliteStore::open_in_memory(0).expect("in-memory reader"),
         ));
         let local_timeout = Arc::new(AtomicBool::new(false));
         let probe = DurableCancellationProbe {
@@ -4758,7 +4761,7 @@ mod tests {
             run_id: RunId::new(),
             local_timeout: Arc::clone(&local_timeout),
         };
-        let guard = store.lock().expect("hold canonical store");
+        let guard = store.read().expect("hold the only snapshot reader");
         let started = Instant::now();
         assert!(!probe.is_cancelled());
         assert!(started.elapsed() < Duration::from_millis(100));

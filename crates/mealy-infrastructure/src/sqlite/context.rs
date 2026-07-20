@@ -1,6 +1,6 @@
-use super::SqliteStore;
+use super::{SqliteStore, agent};
 use mealy_application::{
-    ContextDisposition, ContextManifestEvidence, ContextManifestEvidenceItem,
+    AgentStoreError, ContextDisposition, ContextManifestEvidence, ContextManifestEvidenceItem,
     ContextManifestEvidenceStore, ContextManifestEvidenceStoreError, ContextMemoryEvidence,
     ContextMemorySourceCitation, OwnershipContext, validate_context_manifest_evidence,
 };
@@ -70,6 +70,32 @@ fn load_manifest_items(
     ownership: OwnershipContext,
     manifest_id: ContextManifestId,
 ) -> Result<Vec<ContextManifestEvidenceItem>, ContextManifestEvidenceStoreError> {
+    if let Some(items) =
+        agent::load_context_manifest_item_bundle(connection, &manifest_id.to_string())
+            .map_err(map_bundle_error)?
+    {
+        return Ok(items
+            .into_iter()
+            .map(|item| ContextManifestEvidenceItem {
+                item_id: item.item_id,
+                ordinal: item.ordinal,
+                disposition: item.disposition,
+                source_type: item.source_type,
+                source_locator: item.source_locator,
+                source_content_digest: item.source_content_digest,
+                rendered_content_digest: item.rendered_content_digest,
+                inclusion_reason: item.inclusion_reason,
+                sensitivity: item.sensitivity,
+                token_estimate: item.token_estimate,
+                transformation: item.transformation,
+                policy_decision: item.policy_decision,
+                content: item.content,
+                content_artifact_id: item.content_artifact_id,
+                memory_evidence: item.memory_evidence,
+                compaction_id: item.compaction_id,
+            })
+            .collect());
+    }
     let mut statement = connection
         .prepare(
             "SELECT item.ordinal, item.item_id, item.disposition, item.source_type, \
@@ -336,6 +362,13 @@ fn parse_id<T: FromStr>(value: &str, field: &str) -> Result<T, ContextManifestEv
 
 fn map_sqlite_error(error: &rusqlite::Error) -> ContextManifestEvidenceStoreError {
     ContextManifestEvidenceStoreError::Unavailable(error.to_string())
+}
+
+fn map_bundle_error(error: AgentStoreError) -> ContextManifestEvidenceStoreError {
+    match error {
+        AgentStoreError::InvariantViolation(message) => invariant(message),
+        other => ContextManifestEvidenceStoreError::Unavailable(other.to_string()),
+    }
 }
 
 fn invariant(message: impl Into<String>) -> ContextManifestEvidenceStoreError {

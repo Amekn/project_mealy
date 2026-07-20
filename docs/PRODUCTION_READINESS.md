@@ -1,13 +1,22 @@
 # Production readiness
 
-- Status: release-gated; verify the exact published tag and its linked workflows
-- Reviewed: 2026-07-17
+- Status: current schema-16 source is not release-qualified; verify the exact published tag and its linked workflows
+- Reviewed: 2026-07-20
 - Target: one-owner Linux production release, with an installable conversation-only control-plane preview
   on macOS until that platform has an enforceable tool sandbox; Windows is outside release-one scope
 
 This document separates Mealy's completed runtime proof from a product an owner can install and use
 every day. Passing the release-one architecture scenarios is necessary, but it is not sufficient
 for a production claim.
+
+The checked schema-15 release soak remains valid historical evidence for its exact binary, but it
+does not qualify the current schema-16 runtime. The latest repeated soak was deliberately stopped
+after its retained database exposed process-wide SQLite head-of-line blocking and context-manifest
+write amplification. The current source implements the accepted
+[writer/snapshot-reader and bundled-manifest architecture](decisions/0009-sqlite-writer-and-snapshot-readers.md)
+and passes bounded retained-history diagnostics; it must still receive a fresh exact-package soak,
+green protected CI, reviewed live-provider acceptance, and attested publication before anyone
+calls this revision production ready.
 
 ## Comparison baseline
 
@@ -40,7 +49,7 @@ memory, and fail-closed extension/sandbox boundaries while closing the day-to-da
 
 | Claim | Meaning | Current status |
 |---|---|---|
-| Runtime proof | Core durability and security contracts pass real process scenarios. | Passed |
+| Runtime proof | Core durability and security contracts pass real process scenarios. | Passed for bounded current-runtime regressions; the long-duration release gate must be rerun for schema 16. |
 | Developer preview | An engineer can build it and complete bounded real-model conversation. | Passed |
 | Usable alpha | Guided setup, interactive chat, useful governed tools, and one remote channel work. | Passed |
 | Production ready | Install, upgrade, recovery, secrets, automation, observability, and acceptance gates pass on supported platforms. | Passed only for an exact published tag whose release workflow and dependent public-acceptance jobs are green. |
@@ -87,6 +96,12 @@ can be claimed.
 | Configuration lifecycle | Setup and edits validate before activation, high-risk changes are approved, activation cannot split an in-flight turn, and rollback/backup behavior is tested. | Configuration mutation is deliberately a stopped-daemon transaction: every command holds the real home lock, validates the complete candidate before atomic publication, archives the prior bytes, and cannot coexist with an in-flight turn. The next start records the exact effective digest and rotates affected context epochs before dispatch. Startup validation, digest history, approved rollback, isolated backup verification, exact-digest encrypted backup activation, and exact-transition pre-migration snapshot activation through stopped-home atomic directory exchanges with untouched prior homes retained are implemented and process-tested. Complete archives and migration reconstruction also carry exact configured skill packages, content-addressed MCP executables, and every file/executable-mode bit in the configured browser bundle. Browser inspect/add/enable performs sandboxed product/CDP/render verification; disable/revoke preserves rollback bytes and web authority cannot be removed underneath an enabled browser. | P0 acceptance is complete under the stopped-daemon activation boundary. Hot reload, guided general mutation, and a visual diff remain future convenience rather than weaker alternate mutation paths. |
 | Release quality | Public-API smoke, upgrade/downgrade, clean-install, backup/restore, adversarial tool, load, cancellation, soak, and optional live-provider suites pass with published measurements. | Tag-driven native Linux x86_64 and ARM64 jobs now re-run strict and RustSec gates, audit auditable binaries, publish per-target SBOMs, exercise deterministic package install/upgrade/same-schema and cross-schema rollback/uninstall, generate first-party provenance attestations, retain artifacts, and converge on one release only after both succeed. The x86-64 job cannot retain assets unless `docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report covering at least 86,400 seconds whose daemon SHA-256/version exactly matches the new auditable build and whose revision is either an ancestor of the tag or mapped into that ancestry by the checked exact-report/exact-commit-payload/identical-Git-tree rebase proof. The gate independently requires complete turn/recovery accounting, SQLite integrity, ordered latency evidence, and zero residual work; protected CI proves representative invalid evidence and malformed lineage mappings are rejected. Native macOS ARM64/Intel jobs additionally prove the exact conversation-only binaries, replay, backup/restore, and LaunchAgent drain lifecycle before and after deterministic packaging. The publish job revalidates the remote tag immediately before creating the immutable release, repeats the exact live-provider-run query, and renders deterministic notes that bind both workflow URLs, the commit, daemon digest, and measured soak duration/workload/recovery/latency/resource/integrity evidence; regression fixtures reject stale, malformed, short, dirty, corrupt, incomplete, or residual evidence. Dependent public-delivery jobs then download only that release and verify release/asset integrity, provenance, checksums, exact inventory, tokenless Linux bootstrap, archive/Debian lifecycle, and packaged macOS control-plane behavior on all four native runners. A SHA-pinned `cargo-deny` gate covers advisories, an explicit permissive-license allowlist, exact reviewed duplicate exceptions, crates.io-only sources, no wildcard dependencies, non-publishable proprietary workspace crates, and a ban on native-TLS/OpenSSL regression. Actionlint, ShellCheck, and the `zizmor` auditor reject workflow syntax, shell, unsafe trigger/permission/secret/interpolation, credential-persistence, and concurrency regressions; all external actions are full-commit pinned. A mandatory x86_64 browser job downloads the exact size/SHA-pinned Headless Shell and runs real process, stopped-home lifecycle, model-visible citation/artifact, non-read/WebSocket denial, and runtime-deleted replay proofs before publishing. The all-feature suite covers crash, sandbox, Telegram/Discord/webhook channels, schedules, extensions, native MCP lifecycle/isolation/drift/cancellation/replay, mixed-protocol provider fallback, workspace escape/revocation, and recorded replay. A public-process load/recovery gate admits 24 sessions, kills eight concurrent provider attempts, verifies stopped SQLite integrity, recovers all tasks, and proves zero-live-call replay plus zero residual operational gauges. Parallel-process stress exposed and now regression-covers shared artifact-blob timestamp races: deduplication retains the earliest verified observation instead of imposing invalid cross-transaction wall-clock order. The clean [release soak](benchmarks/release-soak.json) ran 86,425.217 seconds, completed 15,824 turns across eight sessions, survived 39 hard restarts, recovered 62 interrupted-provider turns and 15 read-tool retries, retained complete replay and SQLite integrity `ok`, drained cleanly, and left zero residual work. | The runtime gate is complete. Release quality is complete only when the exact tag also has green protected CI, owner-reviewed free OpenRouter acceptance, native package/public-download verification, and attested publication. |
 | Documentation/support | Install, setup, first task, approvals, backup/restore, upgrades, incident recovery, limits, costs, security boundary, and troubleshooting are verified from a clean machine. | Quickstart, operations, and an attested package install/upgrade/same-schema/cross-schema rollback/uninstall runbook exist; credential-scoped provider discovery, encrypted backup, and migration-snapshot activation have executable offline process proofs. | Complete only for an exact published tag whose dependent x86_64 and ARM64 clean-host acceptance jobs are green. |
+
+The release-quality row's clean soak is historical schema-15 evidence. Its “runtime gate complete”
+statement applies only to that exact recorded binary, not to this schema-16 source tree. For the
+current tree the gap is a fresh clean exact-package 24-hour soak, followed by green protected CI,
+reviewed free OpenRouter and private-local-provider acceptance, native package/public-download
+verification, and attested publication.
 
 The first exact-candidate 24-hour attempt was externally terminated after approximately 9 hours 14
 minutes. Its retained database contains 7,272 succeeded turns, 18 planned hard-restart recoveries,
@@ -237,17 +252,31 @@ ran 86,425.217 seconds against corrected `mealyd` SHA-256
 survived 39 hard restarts, recovered 62 interrupted-provider turns and 15 read-tool retries, passed
 full integrity and recorded-only replay, drained cleanly, and emitted zero-residue release evidence.
 
+A later schema-15 candidate again accumulated enough history to expose the deeper architecture:
+one process-wide store mutex serialized reads with writes, while relational context manifests
+rewrote the complete conversation prefix and two indexes. That soak was stopped rather than
+repeated. The retained 331 MB database was intact, but its 250,202 context-item rows reused only
+3,929 distinct inline source digests. The checked
+[interrupted-soak and schema-16 remediation record](benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md)
+documents the evidence. Schema 16 now uses one canonical writer, bounded query-only WAL snapshot
+readers, and one compressed digest-bound manifest bundle plus sparse provenance rows. On a 3.1 GB
+retained clone, 48 bounded eight-session diagnostic tasks completed with full replay/integrity and
+zero residue; maximum writer wait fell from 14.05 seconds to 0.63 seconds. This is strong focused
+evidence, not a replacement for the new exact-package long soak.
+
 The storage gate now has object-level attribution and bounded compatibility-preserving compression.
 The checked [60-second optimized storage observation](benchmarks/2026-07-13-storage-optimized-soak.json)
 completed 536 turns with six hard restarts, SQLite integrity `ok`, zero residual work, and 150,680
 database bytes per completed turn. That is 29.8 percent below the prior like-shaped 214,609-byte
 development observation. Logical canonical digests and legacy raw rows are unchanged; dispatch and
-replay reject oversized, malformed, length-mismatched, or digest-mismatched envelopes. Immutable
-context-selection row fan-out remains visible rather than being disguised as compressible content.
-Schema 15 adds a partial `(completed_at_ms, id)` index for terminal runs; the bounded usage query
+replay reject oversized, malformed, length-mismatched, or digest-mismatched envelopes. Legacy
+context-selection row fan-out remains visible and replayable. New schema-16 manifests use bounded
+digest-preserving bundle compression and sparse relational provenance rather than repeating the
+complete item prefix and its indexes. Schema 15 added a partial `(completed_at_ms, id)` index for
+terminal runs; the bounded usage query
 is forced through that reviewed index so trailing-day reports do not degrade into full-history run
-scans. The v14-to-v15 migration changes no canonical row shape and has forward/integrity/query-plan
-evidence.
+scans. The v15-to-v16 migration does not rewrite legacy evidence and has forward, integrity,
+governed-memory, replay, and retained-large-database evidence.
 
 ## Competitive capability gate
 

@@ -4,10 +4,10 @@ use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use mealy_application::{
     AgentArtifactCommit, AgentBudgetUsage, AgentContextSource, AgentEvidenceStore,
     AgentExecutionStore, AgentLoopLimits, AgentNextAction, AgentReplayReport, AgentRunSnapshot,
-    AgentStoreError, AgentTaskView, ContextEpoch, ContextMemoryEvidence,
-    ContextMemorySourceCitation, MessageRole, ModelDispatchReceipt, NormalizedMessage,
-    OwnershipContext, PrepareModelAttemptCommit, ProviderCapabilities, ProviderRequest,
-    ProviderResponse, ReadToolDescriptor, estimate_tokens, sha256_digest,
+    AgentStoreError, AgentTaskView, ContextDisposition, ContextEpoch, ContextManifestItem,
+    ContextMemoryEvidence, ContextMemorySourceCitation, MessageRole, ModelDispatchReceipt,
+    NormalizedMessage, OwnershipContext, PrepareModelAttemptCommit, ProviderCapabilities,
+    ProviderRequest, ProviderResponse, ReadToolDescriptor, estimate_tokens, sha256_digest,
     validate_context_manifest, validate_fixture_read_arguments, web_url_authorized_by_capabilities,
 };
 use mealy_domain::{
@@ -15,9 +15,10 @@ use mealy_domain::{
     MemoryId, MemoryRevisionId, PolicyProfile, RunId, TaskId,
 };
 use rusqlite::{ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::{Read as _, Write as _},
     str::FromStr,
     time::{Duration, SystemTime},
@@ -27,8 +28,47 @@ const MAXIMUM_CONVERSATION_HISTORY_TURNS: i64 = 32;
 const MAXIMUM_CONVERSATION_HISTORY_BYTES: i64 = 512 * 1_024;
 const MAXIMUM_RECORDED_READ_TOOL_DESCRIPTOR_BYTES: usize = 512 * 1_024;
 pub(super) const MAXIMUM_MODEL_REQUEST_JSON_BYTES: usize = 256 * 1_024;
+const MAXIMUM_CONTEXT_MANIFEST_BUNDLE_JSON_BYTES: usize = 2 * 1_024 * 1_024;
 const DURABLE_JSON_COMPRESSION_THRESHOLD_BYTES: usize = 4 * 1_024;
 const DURABLE_JSON_ENCODING: &str = "deflate-zlib-base64url-v1";
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContextManifestItemBundle {
+    items: Vec<ContextManifestItem>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ContextManifestBundleSummary {
+    logical_size_bytes: i64,
+    item_count: i64,
+    included_item_count: i64,
+    withheld_item_count: i64,
+    included_token_total: i64,
+    inline_content_count: i64,
+    inline_content_bytes: i64,
+    maximum_inline_content_bytes: i64,
+    source_type_counts_json: String,
+    artifact_count: i64,
+    compaction_count: i64,
+    memory_citation_count: i64,
+}
+
+struct StoredContextManifestBundle {
+    items_json: String,
+    items_digest: String,
+    summary: ContextManifestBundleSummary,
+}
+
+type BundleObjectReference = (i64, String, bool);
+type BundleMemoryCitation = (i64, String, String, i64, String);
+
+#[derive(Debug, PartialEq, Eq)]
+struct ContextManifestBundleReferences {
+    artifacts: Vec<BundleObjectReference>,
+    compactions: Vec<BundleObjectReference>,
+    memory_citations: Vec<BundleMemoryCitation>,
+}
 
 pub(super) fn encode_durable_json(
     canonical_json: &str,
@@ -369,7 +409,13 @@ impl AgentExecutionStore for SqliteStore {
     ) -> Result<(), AgentStoreError> {
         validate_prepare_model(&commit)?;
         let prepared_at_ms = epoch_milliseconds(commit.prepared_at)?;
+        let run_budget_started_at_ms = epoch_milliseconds(commit.run_budget_started_at)?;
         let deadline_at_ms = epoch_milliseconds(commit.deadline_at)?;
+        if run_budget_started_at_ms > prepared_at_ms {
+            return Err(invariant(
+                "run budget cannot start after provider attempt preparation",
+            ));
+        }
         let token = to_i64(commit.fence.fencing_token().get(), "fencing token")?;
         let transaction = self
             .connection
@@ -424,7 +470,7 @@ impl AgentExecutionStore for SqliteStore {
         }
 
         insert_manifest(&transaction, &commit, &owner, prepared_at_ms)?;
-        initialize_budget(&transaction, &commit, prepared_at_ms)?;
+        initialize_budget(&transaction, &commit, run_budget_started_at_ms)?;
         insert_model_attempt(&transaction, &commit, prepared_at_ms, deadline_at_ms, token)?;
         reserve_model_budget(&transaction, &commit, prepared_at_ms)?;
         advance_to_model_dispatch(&transaction, &commit, prepared_at_ms)?;
@@ -438,7 +484,7 @@ impl AgentExecutionStore for SqliteStore {
                 "context_epoch",
                 &epoch.epoch_id.to_string(),
                 "context.epoch.created",
-                prepared_at_ms,
+                epoch.created_at_ms,
                 owner.correlation_id,
                 json!({
                     "session_id": owner.session_id,
@@ -1946,42 +1992,88 @@ fn insert_manifest(
             ],
         )
         .map_err(map_sqlite_error)?;
+    let canonical_json = serde_json::to_string(&ContextManifestItemBundle {
+        items: manifest.items.clone(),
+    })
+    .map_err(|_| invariant("context manifest items cannot be serialized"))?;
+    let summary = summarize_manifest_bundle(&manifest.items, canonical_json.len())?;
+    insert_manifest_bundle(
+        transaction,
+        &manifest.manifest_id.to_string(),
+        &canonical_json,
+        &summary,
+    )?;
+    insert_manifest_bundle_references(transaction, manifest)?;
+    Ok(())
+}
+
+fn insert_manifest_bundle(
+    transaction: &Transaction<'_>,
+    manifest_id: &str,
+    canonical_json: &str,
+    summary: &ContextManifestBundleSummary,
+) -> Result<(), AgentStoreError> {
+    let stored_json =
+        encode_durable_json(canonical_json, MAXIMUM_CONTEXT_MANIFEST_BUNDLE_JSON_BYTES)
+            .map_err(|()| invariant("context manifest item bundle exceeds its durable bound"))?;
+    transaction
+        .execute(
+            "INSERT INTO context_manifest_bundle(\
+                manifest_id, items_json, items_digest, logical_size_bytes, item_count, \
+                included_item_count, withheld_item_count, included_token_total, \
+                inline_content_count, inline_content_bytes, maximum_inline_content_bytes, \
+                source_type_counts_json, artifact_count, compaction_count, memory_citation_count\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                manifest_id,
+                stored_json,
+                sha256_digest(canonical_json.as_bytes()),
+                summary.logical_size_bytes,
+                summary.item_count,
+                summary.included_item_count,
+                summary.withheld_item_count,
+                summary.included_token_total,
+                summary.inline_content_count,
+                summary.inline_content_bytes,
+                summary.maximum_inline_content_bytes,
+                summary.source_type_counts_json,
+                summary.artifact_count,
+                summary.compaction_count,
+                summary.memory_citation_count,
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    Ok(())
+}
+
+fn insert_manifest_bundle_references(
+    transaction: &Transaction<'_>,
+    manifest: &mealy_application::ContextManifest,
+) -> Result<(), AgentStoreError> {
+    let manifest_id = manifest.manifest_id.to_string();
     for item in &manifest.items {
-        transaction
-            .execute(
-                "INSERT INTO context_manifest_item(\
-                    manifest_id, ordinal, item_id, disposition, source_type, source_locator, \
-                    source_content_digest, rendered_content_digest, inclusion_reason, sensitivity, \
-                    token_estimate, transformation, policy_decision, content_text, \
-                    content_artifact_id\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                params![
-                    manifest.manifest_id.to_string(),
-                    to_i64(item.ordinal, "context item ordinal")?,
-                    item.item_id.to_string(),
-                    item.disposition.as_str(),
-                    item.source_type,
-                    item.source_locator,
-                    item.source_content_digest,
-                    item.rendered_content_digest,
-                    item.inclusion_reason,
-                    item.sensitivity,
-                    to_i64(item.token_estimate, "context item token estimate")?,
-                    item.transformation,
-                    item.policy_decision,
-                    item.content,
-                    item.content_artifact_id.map(|id| id.to_string()),
-                ],
-            )
-            .map_err(map_sqlite_error)?;
+        if let Some(artifact_id) = item.content_artifact_id {
+            transaction
+                .execute(
+                    "INSERT INTO context_manifest_bundle_artifact(\
+                        manifest_id, item_ordinal, artifact_id\
+                     ) VALUES (?1, ?2, ?3)",
+                    params![
+                        manifest_id,
+                        to_i64(item.ordinal, "context item ordinal")?,
+                        artifact_id.to_string(),
+                    ],
+                )
+                .map_err(map_sqlite_error)?;
+        }
         if let Some(compaction_id) = item.compaction_id {
             transaction
                 .execute(
-                    "INSERT INTO context_compaction_use(\
+                    "INSERT INTO context_manifest_bundle_compaction(\
                         manifest_id, item_ordinal, compaction_id\
                      ) VALUES (?1, ?2, ?3)",
                     params![
-                        manifest.manifest_id.to_string(),
+                        manifest_id,
                         to_i64(item.ordinal, "context item ordinal")?,
                         compaction_id.to_string(),
                     ],
@@ -1992,12 +2084,12 @@ fn insert_manifest(
             for source in &evidence.sources {
                 transaction
                     .execute(
-                        "INSERT INTO context_memory_citation(\
+                        "INSERT INTO context_manifest_bundle_memory_citation(\
                             manifest_id, item_ordinal, memory_id, revision_id, source_ordinal, \
                             source_digest\
                          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![
-                            manifest.manifest_id.to_string(),
+                            manifest_id,
                             to_i64(item.ordinal, "context item ordinal")?,
                             evidence.memory_id.to_string(),
                             evidence.revision_id.to_string(),
@@ -2012,12 +2104,327 @@ fn insert_manifest(
     Ok(())
 }
 
+fn summarize_manifest_bundle(
+    items: &[ContextManifestItem],
+    logical_size_bytes: usize,
+) -> Result<ContextManifestBundleSummary, AgentStoreError> {
+    let included_items = items
+        .iter()
+        .filter(|item| item.disposition == ContextDisposition::Included)
+        .collect::<Vec<_>>();
+    let inline_items = items
+        .iter()
+        .filter_map(|item| item.content.as_ref())
+        .collect::<Vec<_>>();
+    let included_token_total = included_items
+        .iter()
+        .try_fold(0_u64, |total, item| total.checked_add(item.token_estimate))
+        .ok_or_else(|| invariant("context manifest token total overflowed"))?;
+    let inline_content_bytes = inline_items
+        .iter()
+        .try_fold(0_usize, |total, content| total.checked_add(content.len()))
+        .ok_or_else(|| invariant("context manifest inline byte count overflowed"))?;
+    let memory_citation_count = items.iter().try_fold(0_usize, |total, item| {
+        total.checked_add(
+            item.memory_evidence
+                .as_ref()
+                .map_or(0, |evidence| evidence.sources.len()),
+        )
+    });
+    let mut source_type_counts = BTreeMap::<String, u64>::new();
+    for item in items {
+        let count = source_type_counts
+            .entry(item.source_type.clone())
+            .or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| invariant("context manifest source count overflowed"))?;
+    }
+    let to_sqlite =
+        |value: usize, label: &'static str| i64::try_from(value).map_err(|_| invariant(label));
+    Ok(ContextManifestBundleSummary {
+        logical_size_bytes: to_sqlite(
+            logical_size_bytes,
+            "context manifest bundle byte count exceeds SQLite",
+        )?,
+        item_count: to_sqlite(items.len(), "context manifest item count exceeds SQLite")?,
+        included_item_count: to_sqlite(
+            included_items.len(),
+            "context manifest included count exceeds SQLite",
+        )?,
+        withheld_item_count: to_sqlite(
+            items.len().saturating_sub(included_items.len()),
+            "context manifest withheld count exceeds SQLite",
+        )?,
+        included_token_total: to_i64(included_token_total, "context manifest token total")?,
+        inline_content_count: to_sqlite(
+            inline_items.len(),
+            "context manifest inline count exceeds SQLite",
+        )?,
+        inline_content_bytes: to_sqlite(
+            inline_content_bytes,
+            "context manifest inline bytes exceed SQLite",
+        )?,
+        maximum_inline_content_bytes: to_sqlite(
+            inline_items
+                .iter()
+                .map(|content| content.len())
+                .max()
+                .unwrap_or(0),
+            "context manifest maximum inline bytes exceed SQLite",
+        )?,
+        source_type_counts_json: serde_json::to_string(&source_type_counts)
+            .map_err(|_| invariant("context manifest source counts cannot be serialized"))?,
+        artifact_count: to_sqlite(
+            items
+                .iter()
+                .filter(|item| item.content_artifact_id.is_some())
+                .count(),
+            "context manifest artifact count exceeds SQLite",
+        )?,
+        compaction_count: to_sqlite(
+            items
+                .iter()
+                .filter(|item| item.compaction_id.is_some())
+                .count(),
+            "context manifest compaction count exceeds SQLite",
+        )?,
+        memory_citation_count: to_sqlite(
+            memory_citation_count
+                .ok_or_else(|| invariant("context manifest citation count overflowed"))?,
+            "context manifest citation count exceeds SQLite",
+        )?,
+    })
+}
+
+/// Loads and verifies the schema-16 compact representation of one context manifest.
+///
+/// `None` means the manifest uses the legacy row-per-item representation. A present bundle is
+/// accepted only when its canonical bytes, digest, summary counts, sparse relational references,
+/// and exclusive storage representation all agree.
+pub(super) fn load_context_manifest_item_bundle(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+) -> Result<Option<Vec<ContextManifestItem>>, AgentStoreError> {
+    let Some(stored) = load_stored_manifest_bundle(connection, manifest_id)? else {
+        return Ok(None);
+    };
+    let canonical_json = decode_durable_json(
+        &stored.items_json,
+        MAXIMUM_CONTEXT_MANIFEST_BUNDLE_JSON_BYTES,
+    )
+    .map_err(|()| invariant("stored context manifest bundle is not decodable"))?;
+    let bundle = serde_json::from_str::<ContextManifestItemBundle>(&canonical_json)
+        .map_err(|_| invariant("stored context manifest bundle is malformed"))?;
+    validate_manifest_bundle_summary(connection, manifest_id, &canonical_json, &bundle, &stored)?;
+    let expected = expected_manifest_bundle_references(&bundle.items)?;
+    let actual = ContextManifestBundleReferences {
+        artifacts: load_bundle_artifacts(connection, manifest_id)?,
+        compactions: load_bundle_compactions(connection, manifest_id)?,
+        memory_citations: load_bundle_citations(connection, manifest_id)?,
+    };
+    if actual != expected {
+        return Err(invariant(
+            "stored context manifest bundle references are inconsistent",
+        ));
+    }
+    Ok(Some(bundle.items))
+}
+
+fn load_stored_manifest_bundle(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+) -> Result<Option<StoredContextManifestBundle>, AgentStoreError> {
+    connection
+        .query_row(
+            "SELECT items_json, items_digest, logical_size_bytes, item_count, \
+                    included_item_count, withheld_item_count, included_token_total, \
+                    inline_content_count, inline_content_bytes, maximum_inline_content_bytes, \
+                    source_type_counts_json, artifact_count, compaction_count, \
+                    memory_citation_count \
+             FROM context_manifest_bundle WHERE manifest_id = ?1",
+            [manifest_id],
+            |row| {
+                Ok(StoredContextManifestBundle {
+                    items_json: row.get(0)?,
+                    items_digest: row.get(1)?,
+                    summary: ContextManifestBundleSummary {
+                        logical_size_bytes: row.get(2)?,
+                        item_count: row.get(3)?,
+                        included_item_count: row.get(4)?,
+                        withheld_item_count: row.get(5)?,
+                        included_token_total: row.get(6)?,
+                        inline_content_count: row.get(7)?,
+                        inline_content_bytes: row.get(8)?,
+                        maximum_inline_content_bytes: row.get(9)?,
+                        source_type_counts_json: row.get(10)?,
+                        artifact_count: row.get(11)?,
+                        compaction_count: row.get(12)?,
+                        memory_citation_count: row.get(13)?,
+                    },
+                })
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)
+}
+
+fn validate_manifest_bundle_summary(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+    canonical_json: &str,
+    bundle: &ContextManifestItemBundle,
+    stored: &StoredContextManifestBundle,
+) -> Result<(), AgentStoreError> {
+    let reencoded = serde_json::to_string(&bundle)
+        .map_err(|_| invariant("stored context manifest bundle cannot be re-encoded"))?;
+    let computed_summary = summarize_manifest_bundle(&bundle.items, canonical_json.len())?;
+    let legacy_rows = connection
+        .query_row(
+            "SELECT COUNT(*) FROM context_manifest_item WHERE manifest_id = ?1",
+            [manifest_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_sqlite_error)?;
+    if canonical_json != reencoded
+        || sha256_digest(canonical_json.as_bytes()) != stored.items_digest
+        || computed_summary != stored.summary
+        || legacy_rows != 0
+    {
+        return Err(invariant(
+            "stored context manifest bundle summary is inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn expected_manifest_bundle_references(
+    items: &[ContextManifestItem],
+) -> Result<ContextManifestBundleReferences, AgentStoreError> {
+    let mut references = ContextManifestBundleReferences {
+        artifacts: Vec::new(),
+        compactions: Vec::new(),
+        memory_citations: Vec::new(),
+    };
+    for item in items {
+        let item_ordinal = to_i64(item.ordinal, "stored context item ordinal")?;
+        if let Some(artifact_id) = item.content_artifact_id {
+            references
+                .artifacts
+                .push((item_ordinal, artifact_id.to_string(), true));
+        }
+        if let Some(compaction_id) = item.compaction_id {
+            references
+                .compactions
+                .push((item_ordinal, compaction_id.to_string(), true));
+        }
+        if let Some(evidence) = &item.memory_evidence {
+            for source in &evidence.sources {
+                references.memory_citations.push((
+                    item_ordinal,
+                    evidence.memory_id.to_string(),
+                    evidence.revision_id.to_string(),
+                    to_i64(source.source_ordinal, "stored memory source ordinal")?,
+                    source.source_digest.clone(),
+                ));
+            }
+        }
+    }
+    references.artifacts.sort_unstable();
+    references.compactions.sort_unstable();
+    references.memory_citations.sort_unstable_by(|left, right| {
+        (&left.0, &left.2, &left.3).cmp(&(&right.0, &right.2, &right.3))
+    });
+    Ok(references)
+}
+
+fn load_bundle_artifacts(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+) -> Result<Vec<BundleObjectReference>, AgentStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT link.item_ordinal, link.artifact_id, \
+                    artifact.session_id = manifest.session_id \
+             FROM context_manifest_bundle_artifact link \
+             JOIN context_manifest manifest ON manifest.id = link.manifest_id \
+             LEFT JOIN artifact artifact ON artifact.id = link.artifact_id \
+             WHERE link.manifest_id = ?1 ORDER BY link.item_ordinal",
+        )
+        .map_err(map_sqlite_error)?;
+    statement
+        .query_map([manifest_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, Option<bool>>(2)?.unwrap_or(false),
+            ))
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_sqlite_error)
+}
+
+fn load_bundle_compactions(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+) -> Result<Vec<BundleObjectReference>, AgentStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT link.item_ordinal, link.compaction_id, \
+                    compaction.session_id = manifest.session_id \
+             FROM context_manifest_bundle_compaction link \
+             JOIN context_manifest manifest ON manifest.id = link.manifest_id \
+             LEFT JOIN session_compaction compaction ON compaction.id = link.compaction_id \
+             WHERE link.manifest_id = ?1 ORDER BY link.item_ordinal",
+        )
+        .map_err(map_sqlite_error)?;
+    statement
+        .query_map([manifest_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, Option<bool>>(2)?.unwrap_or(false),
+            ))
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_sqlite_error)
+}
+
+fn load_bundle_citations(
+    connection: &rusqlite::Connection,
+    manifest_id: &str,
+) -> Result<Vec<BundleMemoryCitation>, AgentStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT item_ordinal, memory_id, revision_id, source_ordinal, source_digest \
+             FROM context_manifest_bundle_memory_citation \
+             WHERE manifest_id = ?1 \
+             ORDER BY item_ordinal, revision_id, source_ordinal",
+        )
+        .map_err(map_sqlite_error)?;
+    statement
+        .query_map([manifest_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_sqlite_error)
+}
+
 fn initialize_budget(
     transaction: &Transaction<'_>,
     commit: &PrepareModelAttemptCommit,
-    prepared_at_ms: i64,
+    run_budget_started_at_ms: i64,
 ) -> Result<(), AgentStoreError> {
-    let deadline_at_ms = prepared_at_ms
+    let deadline_at_ms = run_budget_started_at_ms
         .checked_add(to_i64(
             commit.limits.maximum_wall_time_ms,
             "maximum wall time",
@@ -2048,7 +2455,7 @@ fn initialize_budget(
                     commit.limits.maximum_delegated_runs,
                     "maximum delegated runs"
                 )?,
-                prepared_at_ms,
+                run_budget_started_at_ms,
                 deadline_at_ms,
             ],
         )
@@ -4056,26 +4463,35 @@ impl AgentEvidenceStore for SqliteStore {
         task_id: TaskId,
     ) -> Result<AgentReplayReport, AgentStoreError> {
         // Replay is one deterministic read snapshot. It never calls a provider, tool, or artifact
-        // adapter; the application layer separately verifies the bytes of referenced blobs.
-        let transaction = self
-            .connection
-            .unchecked_transaction()
-            .map_err(map_sqlite_error)?;
-        let task = load_agent_task_view(&transaction, ownership, task_id)?;
-        let evidence_complete =
-            task.status == "succeeded" && verify_recorded_replay(&transaction, task_id, &task)?;
-        Ok(AgentReplayReport {
-            task_id,
-            run_id: task.run_id,
-            mode: "recorded_only".to_owned(),
-            evidence_complete,
-            final_response: task.final_response,
-            final_digest: task.final_digest,
-            model_attempts: task.model_attempts,
-            tool_calls: task.tool_calls,
-            live_provider_calls: 0,
-            live_tool_calls: 0,
-        })
+        // adapter; the application layer separately verifies the bytes of referenced blobs. A
+        // daemon snapshot reader already owns the enclosing deferred transaction, while direct
+        // infrastructure callers still receive an internal snapshot here.
+        let replay = |connection: &rusqlite::Connection| {
+            let task = load_agent_task_view(connection, ownership, task_id)?;
+            let evidence_complete =
+                task.status == "succeeded" && verify_recorded_replay(connection, task_id, &task)?;
+            Ok(AgentReplayReport {
+                task_id,
+                run_id: task.run_id,
+                mode: "recorded_only".to_owned(),
+                evidence_complete,
+                final_response: task.final_response,
+                final_digest: task.final_digest,
+                model_attempts: task.model_attempts,
+                tool_calls: task.tool_calls,
+                live_provider_calls: 0,
+                live_tool_calls: 0,
+            })
+        };
+        if self.connection.is_autocommit() {
+            let transaction = self
+                .connection
+                .unchecked_transaction()
+                .map_err(map_sqlite_error)?;
+            replay(&transaction)
+        } else {
+            replay(&self.connection)
+        }
     }
 }
 
@@ -5442,6 +5858,9 @@ struct ReplayPhaseFiveItem {
     disposition: String,
     content_text: Option<String>,
     ordinal: i64,
+    memory_evidence: Option<ContextMemoryEvidence>,
+    compaction_id: Option<CompactionId>,
+    bundled: bool,
 }
 
 // These helpers deliberately return `false` for missing or malformed evidence. Storage
@@ -5497,6 +5916,12 @@ fn verify_context_manifest(
     else {
         return Ok(false);
     };
+    let bundled_items =
+        match load_context_manifest_item_bundle(connection, &attempt.context_manifest_id) {
+            Ok(items) => items,
+            Err(AgentStoreError::InvariantViolation(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
     if !matches!(
         compiler_version.as_str(),
         "mealy.context.v1" | "mealy.context.v2"
@@ -5638,6 +6063,7 @@ fn verify_context_manifest(
             &attempt.context_manifest_id,
             &session_id,
             &principal_id,
+            bundled_items.as_deref(),
         )?
         else {
             return Ok(false);
@@ -5670,6 +6096,7 @@ fn verify_context_manifest(
         &attempt.context_manifest_id,
         &session_id,
         &epoch_id,
+        bundled_items.as_deref(),
     )?
     else {
         return Ok(false);
@@ -5715,37 +6142,65 @@ fn verify_context_manifest(
         });
     }
 
-    let mut statement = connection
-        .prepare(
-            "SELECT ordinal, item_id, disposition, source_type, source_locator, \
-                    source_content_digest, rendered_content_digest, inclusion_reason, \
-                    sensitivity, token_estimate, transformation, policy_decision, content_text, \
-                    content_artifact_id \
-             FROM context_manifest_item WHERE manifest_id = ?1 ORDER BY ordinal",
-        )
-        .map_err(map_sqlite_error)?;
-    let items = statement
-        .query_map([attempt.context_manifest_id.as_str()], |row| {
-            Ok(ReplayManifestItem {
-                ordinal: row.get(0)?,
-                item_id: row.get(1)?,
-                disposition: row.get(2)?,
-                source_type: row.get(3)?,
-                source_locator: row.get(4)?,
-                source_content_digest: row.get(5)?,
-                rendered_content_digest: row.get(6)?,
-                inclusion_reason: row.get(7)?,
-                sensitivity: row.get(8)?,
-                token_estimate: row.get(9)?,
-                transformation: row.get(10)?,
-                policy_decision: row.get(11)?,
-                content_text: row.get(12)?,
-                content_artifact_id: row.get(13)?,
+    let items = if let Some(bundled_items) = bundled_items {
+        let Some(items) = bundled_items
+            .into_iter()
+            .map(|item| {
+                Some(ReplayManifestItem {
+                    ordinal: i64::try_from(item.ordinal).ok()?,
+                    item_id: item.item_id.to_string(),
+                    disposition: item.disposition.as_str().to_owned(),
+                    source_type: item.source_type,
+                    source_locator: item.source_locator,
+                    source_content_digest: item.source_content_digest,
+                    rendered_content_digest: item.rendered_content_digest,
+                    inclusion_reason: item.inclusion_reason,
+                    sensitivity: item.sensitivity,
+                    token_estimate: i64::try_from(item.token_estimate).ok()?,
+                    transformation: item.transformation,
+                    policy_decision: item.policy_decision,
+                    content_text: item.content,
+                    content_artifact_id: item.content_artifact_id.map(|id| id.to_string()),
+                })
             })
-        })
-        .map_err(map_sqlite_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(map_sqlite_error)?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(false);
+        };
+        items
+    } else {
+        let mut statement = connection
+            .prepare(
+                "SELECT ordinal, item_id, disposition, source_type, source_locator, \
+                        source_content_digest, rendered_content_digest, inclusion_reason, \
+                        sensitivity, token_estimate, transformation, policy_decision, content_text, \
+                        content_artifact_id \
+                 FROM context_manifest_item WHERE manifest_id = ?1 ORDER BY ordinal",
+            )
+            .map_err(map_sqlite_error)?;
+        statement
+            .query_map([attempt.context_manifest_id.as_str()], |row| {
+                Ok(ReplayManifestItem {
+                    ordinal: row.get(0)?,
+                    item_id: row.get(1)?,
+                    disposition: row.get(2)?,
+                    source_type: row.get(3)?,
+                    source_locator: row.get(4)?,
+                    source_content_digest: row.get(5)?,
+                    rendered_content_digest: row.get(6)?,
+                    inclusion_reason: row.get(7)?,
+                    sensitivity: row.get(8)?,
+                    token_estimate: row.get(9)?,
+                    transformation: row.get(10)?,
+                    policy_decision: row.get(11)?,
+                    content_text: row.get(12)?,
+                    content_artifact_id: row.get(13)?,
+                })
+            })
+            .map_err(map_sqlite_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_sqlite_error)?
+    };
     if items.len() != expected.len() {
         return Ok(false);
     }
@@ -6052,18 +6507,27 @@ fn replay_compaction_cutoff(
     manifest_id: &str,
     session_id: &str,
     principal_id: &str,
+    bundled_items: Option<&[ContextManifestItem]>,
 ) -> Result<Option<i64>, AgentStoreError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT source_locator FROM context_manifest_item \
-             WHERE manifest_id = ?1 AND source_type = 'compaction' ORDER BY ordinal",
-        )
-        .map_err(map_sqlite_error)?;
-    let locators = statement
-        .query_map([manifest_id], |row| row.get::<_, String>(0))
-        .map_err(map_sqlite_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(map_sqlite_error)?;
+    let locators = if let Some(items) = bundled_items {
+        items
+            .iter()
+            .filter(|item| item.source_type == "compaction")
+            .map(|item| item.source_locator.clone())
+            .collect::<Vec<_>>()
+    } else {
+        let mut statement = connection
+            .prepare(
+                "SELECT source_locator FROM context_manifest_item \
+                 WHERE manifest_id = ?1 AND source_type = 'compaction' ORDER BY ordinal",
+            )
+            .map_err(map_sqlite_error)?;
+        statement
+            .query_map([manifest_id], |row| row.get::<_, String>(0))
+            .map_err(map_sqlite_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_sqlite_error)?
+    };
     let ([] | [_]) = locators.as_slice() else {
         return Ok(None);
     };
@@ -6094,31 +6558,60 @@ fn load_replay_phase_five_sources(
     manifest_id: &str,
     session_id: &str,
     epoch_id: &str,
+    bundled_items: Option<&[ContextManifestItem]>,
 ) -> Result<Option<Vec<ExpectedContextSource>>, AgentStoreError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT ordinal, source_type, source_locator, source_content_digest, sensitivity, \
-                    disposition, content_text \
-             FROM context_manifest_item \
-             WHERE manifest_id = ?1 AND source_type IN ('compaction', 'memory') \
-             ORDER BY ordinal",
-        )
-        .map_err(map_sqlite_error)?;
-    let items = statement
-        .query_map([manifest_id], |row| {
-            Ok(ReplayPhaseFiveItem {
-                ordinal: row.get(0)?,
-                source_type: row.get(1)?,
-                source_locator: row.get(2)?,
-                source_content_digest: row.get(3)?,
-                sensitivity: row.get(4)?,
-                disposition: row.get(5)?,
-                content_text: row.get(6)?,
+    let items = if let Some(items) = bundled_items {
+        let Some(items) = items
+            .iter()
+            .filter(|item| matches!(item.source_type.as_str(), "compaction" | "memory"))
+            .map(|item| {
+                Some(ReplayPhaseFiveItem {
+                    ordinal: i64::try_from(item.ordinal).ok()?,
+                    source_type: item.source_type.clone(),
+                    source_locator: item.source_locator.clone(),
+                    source_content_digest: item.source_content_digest.clone(),
+                    sensitivity: item.sensitivity.clone(),
+                    disposition: item.disposition.as_str().to_owned(),
+                    content_text: item.content.clone(),
+                    memory_evidence: item.memory_evidence.clone(),
+                    compaction_id: item.compaction_id,
+                    bundled: true,
+                })
             })
-        })
-        .map_err(map_sqlite_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(map_sqlite_error)?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        items
+    } else {
+        let mut statement = connection
+            .prepare(
+                "SELECT ordinal, source_type, source_locator, source_content_digest, sensitivity, \
+                        disposition, content_text \
+                 FROM context_manifest_item \
+                 WHERE manifest_id = ?1 AND source_type IN ('compaction', 'memory') \
+                 ORDER BY ordinal",
+            )
+            .map_err(map_sqlite_error)?;
+        statement
+            .query_map([manifest_id], |row| {
+                Ok(ReplayPhaseFiveItem {
+                    ordinal: row.get(0)?,
+                    source_type: row.get(1)?,
+                    source_locator: row.get(2)?,
+                    source_content_digest: row.get(3)?,
+                    sensitivity: row.get(4)?,
+                    disposition: row.get(5)?,
+                    content_text: row.get(6)?,
+                    memory_evidence: None,
+                    compaction_id: None,
+                    bundled: false,
+                })
+            })
+            .map_err(map_sqlite_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_sqlite_error)?
+    };
     let mut expected = Vec::with_capacity(items.len());
     for item in items {
         let included = item.disposition == "included";
@@ -6154,16 +6647,20 @@ fn load_replay_phase_five_sources(
                 let Some((summary, artifact_digest, carry_json, carry_digest)) = row else {
                     return Ok(None);
                 };
-                let link_matches = connection
-                    .query_row(
-                        "SELECT EXISTS(\
-                            SELECT 1 FROM context_compaction_use \
-                            WHERE manifest_id = ?1 AND item_ordinal = ?2 AND compaction_id = ?3\
-                         )",
-                        params![manifest_id, item.ordinal, compaction_id.to_string()],
-                        |row| row.get::<_, bool>(0),
-                    )
-                    .map_err(map_sqlite_error)?;
+                let link_matches = if item.bundled {
+                    item.compaction_id == Some(compaction_id)
+                } else {
+                    connection
+                        .query_row(
+                            "SELECT EXISTS(\
+                                SELECT 1 FROM context_compaction_use \
+                                WHERE manifest_id = ?1 AND item_ordinal = ?2 AND compaction_id = ?3\
+                             )",
+                            params![manifest_id, item.ordinal, compaction_id.to_string()],
+                            |row| row.get::<_, bool>(0),
+                        )
+                        .map_err(map_sqlite_error)?
+                };
                 let rendered = render_compaction_context(compaction_id, &summary, &carry_json);
                 if item.source_content_digest != artifact_digest
                     || sha256_digest(summary.as_bytes()) != artifact_digest
@@ -6225,14 +6722,22 @@ fn load_replay_phase_five_sources(
                 if citations.is_empty() {
                     return Ok(None);
                 }
-                let auxiliary_matches = replay_memory_citations_match(
-                    connection,
-                    manifest_id,
-                    item.ordinal,
-                    memory_id,
-                    revision_id,
-                    &citations,
-                )?;
+                let auxiliary_matches = if item.bundled {
+                    item.memory_evidence.as_ref().is_some_and(|evidence| {
+                        evidence.memory_id == memory_id
+                            && evidence.revision_id == revision_id
+                            && evidence.sources == citations
+                    })
+                } else {
+                    replay_memory_citations_match(
+                        connection,
+                        manifest_id,
+                        item.ordinal,
+                        memory_id,
+                        revision_id,
+                        &citations,
+                    )?
+                };
                 let cited_digests = citations
                     .iter()
                     .map(|citation| citation.source_digest.as_str())

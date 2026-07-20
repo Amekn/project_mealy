@@ -148,7 +148,7 @@ jobs:
           cargo build --locked --release -p mealyd -p mealyctl --all-features
           test "$(target/release/mealyd --version)" = "mealyd 0.1.0"
           test "$(target/release/mealyctl --version)" = "mealyctl 0.1.0"
-          test "$(target/release/mealyd --print-supported-schema-version)" = "15"
+          test "$(target/release/mealyd --print-supported-schema-version)" = "16"
       - name: Verify macOS conversation, replay, backup, and LaunchAgent drain
         if: ${{ runner.os == 'macOS' }}
         env:

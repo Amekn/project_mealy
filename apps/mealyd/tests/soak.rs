@@ -861,6 +861,24 @@ fn sqlite_storage_profile(home: &Path) -> Value {
     let page_size_bytes = pragma_i64(&connection, "PRAGMA page_size");
     let page_count = pragma_i64(&connection, "PRAGMA page_count");
     let free_pages = pragma_i64(&connection, "PRAGMA freelist_count");
+    let objects = sqlite_object_storage_profile(&connection);
+    let context_items = context_manifest_storage_profile(&connection);
+    let source_type_counts = context_manifest_source_counts(&connection);
+    json!({
+        "databaseFileBytes": file_bytes(&database),
+        "walFileBytes": file_bytes(&database.with_extension("sqlite3-wal")),
+        "sharedMemoryFileBytes": file_bytes(&database.with_extension("sqlite3-shm")),
+        "pageSizeBytes": page_size_bytes,
+        "pageCount": page_count,
+        "freePages": free_pages,
+        "freeBytes": free_pages.saturating_mul(page_size_bytes),
+        "contextManifestItems": context_items,
+        "contextManifestSourceRows": source_type_counts,
+        "largestObjects": objects,
+    })
+}
+
+fn sqlite_object_storage_profile(connection: &rusqlite::Connection) -> Vec<Value> {
     let mut statement = connection
         .prepare(
             "SELECT stat.name, COALESCE(schema.type, 'internal'), \
@@ -872,7 +890,7 @@ fn sqlite_storage_profile(home: &Path) -> Value {
              LIMIT 64",
         )
         .expect("prepare SQLite object storage profile");
-    let objects = statement
+    statement
         .query_map([], |row| {
             Ok(json!({
                 "name": row.get::<_, String>(0)?,
@@ -885,17 +903,41 @@ fn sqlite_storage_profile(home: &Path) -> Value {
         })
         .expect("query SQLite object storage profile")
         .collect::<Result<Vec<_>, _>>()
-        .expect("collect SQLite object storage profile");
-    let context_items = connection
+        .expect("collect SQLite object storage profile")
+}
+
+fn context_manifest_storage_profile(connection: &rusqlite::Connection) -> Value {
+    connection
         .query_row(
-            "SELECT COUNT(*), \
-                    COALESCE(SUM(disposition = 'included'), 0), \
-                    COALESCE(SUM(disposition <> 'included'), 0), \
-                    COALESCE(SUM(content_text IS NOT NULL), 0), \
-                    COALESCE(SUM(length(CAST(content_text AS BLOB))), 0), \
-                    COALESCE(MAX(length(CAST(content_text AS BLOB))), 0), \
-                    COALESCE(SUM(content_artifact_id IS NOT NULL), 0) \
-             FROM context_manifest_item",
+            "SELECT \
+                (SELECT COUNT(*) FROM context_manifest_item) \
+                  + COALESCE((SELECT SUM(item_count) FROM context_manifest_bundle), 0), \
+                COALESCE((SELECT SUM(disposition = 'included') \
+                          FROM context_manifest_item), 0) \
+                  + COALESCE((SELECT SUM(included_item_count) \
+                              FROM context_manifest_bundle), 0), \
+                COALESCE((SELECT SUM(disposition <> 'included') \
+                          FROM context_manifest_item), 0) \
+                  + COALESCE((SELECT SUM(withheld_item_count) \
+                              FROM context_manifest_bundle), 0), \
+                COALESCE((SELECT SUM(content_text IS NOT NULL) \
+                          FROM context_manifest_item), 0) \
+                  + COALESCE((SELECT SUM(inline_content_count) \
+                              FROM context_manifest_bundle), 0), \
+                COALESCE((SELECT SUM(length(CAST(content_text AS BLOB))) \
+                          FROM context_manifest_item), 0) \
+                  + COALESCE((SELECT SUM(inline_content_bytes) \
+                              FROM context_manifest_bundle), 0), \
+                MAX(\
+                    COALESCE((SELECT MAX(length(CAST(content_text AS BLOB))) \
+                              FROM context_manifest_item), 0), \
+                    COALESCE((SELECT MAX(maximum_inline_content_bytes) \
+                              FROM context_manifest_bundle), 0)\
+                ), \
+                COALESCE((SELECT SUM(content_artifact_id IS NOT NULL) \
+                          FROM context_manifest_item), 0) \
+                  + COALESCE((SELECT SUM(artifact_count) \
+                              FROM context_manifest_bundle), 0)",
             [],
             |row| {
                 Ok(json!({
@@ -909,11 +951,24 @@ fn sqlite_storage_profile(home: &Path) -> Value {
                 }))
             },
         )
-        .expect("query context manifest item storage profile");
+        .expect("query context manifest item storage profile")
+}
+
+fn context_manifest_source_counts(
+    connection: &rusqlite::Connection,
+) -> serde_json::Map<String, Value> {
     let mut source_type_counts = serde_json::Map::new();
     let mut source_statement = connection
         .prepare(
-            "SELECT source_type, COUNT(*) FROM context_manifest_item \
+            "WITH source_counts(source_type, item_count) AS (\
+                SELECT source_type, COUNT(*) FROM context_manifest_item GROUP BY source_type \
+                UNION ALL \
+                SELECT source.key, SUM(CAST(source.value AS INTEGER)) \
+                FROM context_manifest_bundle bundle, \
+                     json_each(bundle.source_type_counts_json) source \
+                GROUP BY source.key\
+             ) \
+             SELECT source_type, SUM(item_count) FROM source_counts \
              GROUP BY source_type ORDER BY source_type",
         )
         .expect("prepare context source type profile");
@@ -926,18 +981,7 @@ fn sqlite_storage_profile(home: &Path) -> Value {
         let (source_type, count) = row.expect("read context source type profile");
         source_type_counts.insert(source_type, json!(count));
     }
-    json!({
-        "databaseFileBytes": file_bytes(&database),
-        "walFileBytes": file_bytes(&database.with_extension("sqlite3-wal")),
-        "sharedMemoryFileBytes": file_bytes(&database.with_extension("sqlite3-shm")),
-        "pageSizeBytes": page_size_bytes,
-        "pageCount": page_count,
-        "freePages": free_pages,
-        "freeBytes": free_pages.saturating_mul(page_size_bytes),
-        "contextManifestItems": context_items,
-        "contextManifestSourceRows": source_type_counts,
-        "largestObjects": objects,
-    })
+    source_type_counts
 }
 
 fn pragma_i64(connection: &rusqlite::Connection, statement: &str) -> i64 {

@@ -1,4 +1,7 @@
-use crate::agent::RuntimeModelProvider;
+use crate::{
+    agent::RuntimeModelProvider,
+    store_runtime::{RuntimeStore, RuntimeStoreReadGuard},
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use mealy_api::{
     ApiBackend, ArtifactContent, AuthenticatedIdentity, BackendError, SignedWebhookEnvelope,
@@ -119,7 +122,7 @@ use zeroize::Zeroizing;
 
 /// Thread-safe synchronous backend invoked on the API's bounded blocking pool.
 pub struct RuntimeBackend {
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     artifacts: Arc<FileArtifactBlobStore>,
     channel_secrets: Arc<FileChannelSecretStore>,
     telegram: RuntimeTelegramConfig,
@@ -214,10 +217,10 @@ impl DrainController {
 }
 
 impl RuntimeBackend {
-    /// Creates a backend over the daemon's single transactional store.
+    /// Creates a backend over the daemon's writer and snapshot-reader runtime.
     #[must_use]
     pub fn new(
-        store: Arc<Mutex<SqliteStore>>,
+        store: Arc<RuntimeStore>,
         artifacts: Arc<FileArtifactBlobStore>,
         channel_secrets: Arc<FileChannelSecretStore>,
         channels: RuntimeChannelConfig,
@@ -249,7 +252,11 @@ impl RuntimeBackend {
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, SqliteStore>, BackendError> {
-        self.store.lock().map_err(|_| BackendError::Internal)
+        self.store.write().map_err(|_| BackendError::Internal)
+    }
+
+    fn read(&self) -> Result<RuntimeStoreReadGuard<'_>, BackendError> {
+        self.store.read().map_err(|_| BackendError::Internal)
     }
 
     fn control_task(
@@ -377,7 +384,7 @@ impl Drop for KeyedConcurrencyGuard<'_> {
 
 impl ApiBackend for RuntimeBackend {
     fn readiness(&self) -> Result<(), BackendError> {
-        self.lock()?
+        self.read()?
             .readiness_check()
             .map_err(|_| BackendError::Unavailable)
     }
@@ -402,7 +409,7 @@ impl ApiBackend for RuntimeBackend {
             .map(|endpoint| (endpoint.provider_id.clone(), endpoint.model_id.clone()))
             .collect::<Vec<_>>();
         let (snapshot, database_bytes, endpoint_history) = {
-            let store = self.lock()?;
+            let store = self.read()?;
             (
                 store
                     .operational_snapshot(ownership)
@@ -525,7 +532,7 @@ impl ApiBackend for RuntimeBackend {
         identity: AuthenticatedIdentity,
     ) -> Result<AdminMetricsResponse, BackendError> {
         let status = self.admin_status(identity)?;
-        let gauges = BTreeMap::from([
+        let mut gauges = BTreeMap::from([
             ("active_channels".to_owned(), status.active_channels),
             ("degraded_channels".to_owned(), status.degraded_channels),
             ("active_schedules".to_owned(), status.active_schedules),
@@ -572,6 +579,19 @@ impl ApiBackend for RuntimeBackend {
                 status.skipped_schedule_runs,
             ),
         ]);
+        let store_metrics = self.store.metrics();
+        gauges.extend([
+            ("sqlite_writer_waits".to_owned(), store_metrics.writer_waits),
+            (
+                "sqlite_writer_maximum_wait_us".to_owned(),
+                store_metrics.writer_maximum_wait_us,
+            ),
+            ("sqlite_reader_waits".to_owned(), store_metrics.reader_waits),
+            (
+                "sqlite_reader_maximum_wait_us".to_owned(),
+                store_metrics.reader_maximum_wait_us,
+            ),
+        ]);
         Ok(AdminMetricsResponse {
             api_version: API_VERSION.to_owned(),
             gauges,
@@ -586,7 +606,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<AdminUsageReportResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let report = self
-            .lock()?
+            .read()?
             .completed_usage_report(ownership, from_ms, to_ms)
             .map_err(map_operational_store_error)?;
         Ok(AdminUsageReportResponse {
@@ -622,7 +642,7 @@ impl ApiBackend for RuntimeBackend {
         _request: DrainDaemonRequest,
     ) -> Result<DrainDaemonResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
-        self.lock()?
+        self.read()?
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
         Ok(DrainDaemonResponse {
@@ -636,7 +656,7 @@ impl ApiBackend for RuntimeBackend {
     #[allow(clippy::too_many_lines)]
     fn doctor(&self, identity: AuthenticatedIdentity) -> Result<DoctorResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
-        let store = self.lock()?;
+        let store = self.read()?;
         let snapshot = store
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
@@ -781,7 +801,7 @@ impl ApiBackend for RuntimeBackend {
         request: VerifyBackupRequest,
     ) -> Result<BackupVerificationResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
-        self.lock()?
+        self.read()?
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
         let report = verify_complete_backup(
@@ -815,7 +835,7 @@ impl ApiBackend for RuntimeBackend {
             return Err(BackendError::Unavailable);
         }
         let ownership = parse_ownership(&identity)?;
-        let store = self.lock()?;
+        let store = self.read()?;
         store
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
@@ -944,7 +964,7 @@ impl ApiBackend for RuntimeBackend {
         limit: usize,
     ) -> Result<SessionsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
-        let sessions = query_sessions(&*self.lock()?, ownership, limit)
+        let sessions = query_sessions(&*self.read()?, ownership, limit)
             .map_err(|error| map_timeline_error(&error))?
             .into_iter()
             .map(|session| {
@@ -973,7 +993,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<SessionSearchResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let hits = search_sessions(
-            &*self.lock()?,
+            &*self.read()?,
             &SessionSearchQuery {
                 ownership,
                 query: query.clone(),
@@ -1047,7 +1067,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<SessionStatusResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let session_id = parse_session(&session_id)?;
-        let status = query_session_status(&*self.lock()?, session_id, ownership)
+        let status = query_session_status(&*self.read()?, session_id, ownership)
             .map_err(|error| map_timeline_error(&error))?;
         Ok(SessionStatusResponse {
             api_version: API_VERSION.to_owned(),
@@ -1118,7 +1138,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<SchedulesResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let schedules = self
-            .lock()?
+            .read()?
             .schedules(ownership)
             .map_err(map_schedule_store_error)?
             .into_iter()
@@ -1136,7 +1156,7 @@ impl ApiBackend for RuntimeBackend {
         schedule_id: String,
     ) -> Result<ScheduleResponse, BackendError> {
         let schedule = self
-            .lock()?
+            .read()?
             .schedule(parse_ownership(&identity)?, parse_schedule(&schedule_id)?)
             .map_err(map_schedule_store_error)?;
         Ok(schedule_response(schedule))
@@ -1193,7 +1213,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let schedule_id = parse_schedule(&schedule_id)?;
         let runs = self
-            .lock()?
+            .read()?
             .schedule_runs(ownership, schedule_id, limit)
             .map_err(map_schedule_store_error)?
             .into_iter()
@@ -1216,7 +1236,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let session_id = parse_session(&session_id)?;
         let page = query_timeline(
-            &*self.lock()?,
+            &*self.read()?,
             TimelineQuery {
                 session_id,
                 ownership,
@@ -1264,7 +1284,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let artifact_id = parse_artifact(&artifact_id)?;
         let metadata = self
-            .lock()?
+            .read()?
             .artifact_metadata(ownership, artifact_id)
             .map_err(|error| map_artifact_evidence_error(&error))?;
         artifact_metadata_response(metadata)
@@ -1278,7 +1298,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let artifact_id = parse_artifact(&artifact_id)?;
         let descriptor = {
-            self.lock()?
+            self.read()?
                 .artifact_content_descriptor(ownership, artifact_id)
                 .map_err(|error| map_artifact_evidence_error(&error))?
         };
@@ -1301,7 +1321,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let manifest_id = parse_context_manifest(&manifest_id)?;
         let evidence = self
-            .lock()?
+            .read()?
             .context_manifest_evidence(ownership, manifest_id)
             .map_err(|error| map_context_evidence_error(&error))?;
         Ok(context_manifest_response(evidence))
@@ -1401,7 +1421,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<MemoryResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let view = self
-            .lock()?
+            .read()?
             .memory(ownership, &workspace_identity, parse_memory(&memory_id)?)
             .map_err(map_memory_error)?;
         Ok(memory_response(view))
@@ -1415,7 +1435,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<MemoriesResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let memories = self
-            .lock()?
+            .read()?
             .memories(ownership, &workspace_identity, include_deleted)
             .map_err(map_memory_error)?
             .into_iter()
@@ -1437,7 +1457,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<MemorySearchResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let hits = self
-            .lock()?
+            .read()?
             .search_memories(MemorySearchQuery {
                 ownership,
                 workspace_identity,
@@ -1651,7 +1671,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<CompactionResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let view = self
-            .lock()?
+            .read()?
             .compaction(ownership, parse_compaction(&compaction_id)?)
             .map_err(map_compaction_error)?;
         compaction_response(view)
@@ -1688,7 +1708,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<ExtensionsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let extensions = self
-            .lock()?
+            .read()?
             .extensions(ownership)
             .map_err(map_extension_store_error)?
             .into_iter()
@@ -1712,7 +1732,7 @@ impl ApiBackend for RuntimeBackend {
             .try_acquire(extension_id.to_string())
             .ok_or(BackendError::Busy)?;
         let view = self
-            .lock()?
+            .read()?
             .extension(ownership, extension_id)
             .map_err(map_extension_store_error)?;
         extension_response(view)
@@ -1761,7 +1781,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let extension_id = parse_extension(&extension_id)?;
         let view = self
-            .lock()?
+            .read()?
             .extension(ownership, extension_id)
             .map_err(map_extension_store_error)?;
         if view.revision != request.expected_revision {
@@ -1884,7 +1904,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let extension_id = parse_extension(&extension_id)?;
         let view = self
-            .lock()?
+            .read()?
             .extension(ownership, extension_id)
             .map_err(map_extension_store_error)?;
         if view.status != ExtensionStatus::Enabled {
@@ -2025,7 +2045,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<WebhookChannelsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let channels = self
-            .lock()?
+            .read()?
             .webhook_channels(ownership)
             .map_err(map_webhook_store_error)?
             .into_iter()
@@ -2044,7 +2064,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<WebhookChannelResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let view = self
-            .lock()?
+            .read()?
             .webhook_channel(ownership, parse_channel_binding(&binding_id)?)
             .map_err(map_webhook_store_error)?;
         Ok(webhook_channel_response(view))
@@ -2059,7 +2079,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let binding_id = parse_channel_binding(&binding_id)?;
         let current = self
-            .lock()?
+            .read()?
             .webhook_channel(ownership, binding_id)
             .map_err(map_webhook_store_error)?;
         if current.status != WebhookChannelStatus::Active
@@ -2161,7 +2181,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<TelegramChannelsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let channels = self
-            .lock()?
+            .read()?
             .telegram_channels(ownership)
             .map_err(map_telegram_store_error)?
             .into_iter()
@@ -2179,7 +2199,7 @@ impl ApiBackend for RuntimeBackend {
         binding_id: String,
     ) -> Result<TelegramChannelResponse, BackendError> {
         let view = self
-            .lock()?
+            .read()?
             .telegram_channel(
                 parse_ownership(&identity)?,
                 parse_channel_binding(&binding_id)?,
@@ -2197,7 +2217,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let binding_id = parse_channel_binding(&binding_id)?;
         let current = self
-            .lock()?
+            .read()?
             .telegram_channel(ownership, binding_id)
             .map_err(map_telegram_store_error)?;
         if current.status != TelegramChannelStatus::Active
@@ -2310,7 +2330,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<DiscordChannelsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let channels = self
-            .lock()?
+            .read()?
             .discord_channels(ownership)
             .map_err(map_discord_store_error)?
             .into_iter()
@@ -2328,7 +2348,7 @@ impl ApiBackend for RuntimeBackend {
         binding_id: String,
     ) -> Result<DiscordChannelResponse, BackendError> {
         let view = self
-            .lock()?
+            .read()?
             .discord_channel(
                 parse_ownership(&identity)?,
                 parse_channel_binding(&binding_id)?,
@@ -2346,7 +2366,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let binding_id = parse_channel_binding(&binding_id)?;
         let current = self
-            .lock()?
+            .read()?
             .discord_channel(ownership, binding_id)
             .map_err(map_discord_store_error)?;
         if current.status != DiscordChannelStatus::Active
@@ -2391,7 +2411,7 @@ impl ApiBackend for RuntimeBackend {
         )
         .map_err(|_| BackendError::Unauthorized)?;
         let binding = self
-            .lock()?
+            .read()?
             .webhook_channel_for_verification(binding_id)
             .map_err(|error| match error {
                 WebhookChannelStoreError::Unavailable(_) => BackendError::Unavailable,
@@ -2482,7 +2502,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let task_id = parse_task(&task_id)?;
         let (task, criteria, validation) = {
-            let store = self.lock()?;
+            let store = self.read()?;
             let task = store
                 .agent_task(ownership, task_id)
                 .map_err(|error| map_agent_error(&error))?;
@@ -2560,7 +2580,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let delegation_id = parse_delegation(&delegation_id)?;
         let view = self
-            .lock()?
+            .read()?
             .delegation(ownership, delegation_id)
             .map_err(|error| map_agent_error(&error))?;
         delegation_response(view)
@@ -2573,7 +2593,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<DelegationsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let views = self
-            .lock()?
+            .read()?
             .delegations(ownership, limit)
             .map_err(|error| map_agent_error(&error))?;
         Ok(DelegationsResponse {
@@ -2644,7 +2664,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let task_id = parse_task(&task_id)?;
         let (mut replay, artifact_descriptors) = {
-            let store = self.lock()?;
+            let store = self.read()?;
             let replay = store
                 .replay_agent_task(ownership, task_id)
                 .map_err(|error| map_agent_error(&error))?;
@@ -2680,7 +2700,7 @@ impl ApiBackend for RuntimeBackend {
     ) -> Result<PendingApprovalsResponse, BackendError> {
         let ownership = parse_ownership(&identity)?;
         let approvals = self
-            .lock()?
+            .read()?
             .pending_approval_requests(ownership)
             .map_err(map_effect_ledger_error)?
             .into_iter()
@@ -2746,7 +2766,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let effect_id = parse_effect(&effect_id)?;
         let view = self
-            .lock()?
+            .read()?
             .effect_ledger_view(ownership, effect_id)
             .map_err(map_effect_ledger_error)?;
         effect_response(view)
@@ -2760,7 +2780,7 @@ impl ApiBackend for RuntimeBackend {
         let ownership = parse_ownership(&identity)?;
         let attempt_id = parse_attempt(&attempt_id)?;
         let view = self
-            .lock()?
+            .read()?
             .effect_attempt_view(ownership, attempt_id)
             .map_err(map_effect_ledger_error)?;
         effect_attempt_response(view)
@@ -4333,7 +4353,7 @@ fn audit_export_payload(
     const MAXIMUM_AUDIT_EVENTS: usize = 100_000;
     let ownership = parse_ownership(&identity)?;
     let session_ids = backend
-        .lock()?
+        .read()?
         .operational_session_ids(ownership)
         .map_err(map_operational_store_error)?;
     let mut events = BTreeMap::<u64, TimelineEvent>::new();
@@ -4564,7 +4584,7 @@ mod tests {
         RuntimeBackend, RuntimeChannelConfig, RuntimeDiscordConfig, RuntimeOperationalConfig,
         RuntimeTelegramConfig, map_artifact_blob_error, validate_extension_mount_roots,
     };
-    use crate::agent::RuntimeModelProvider;
+    use crate::{agent::RuntimeModelProvider, store_runtime::RuntimeStore};
     use mealy_application::{
         ArtifactBlobStore, ArtifactBlobStoreError, ProviderConfig, estimate_tokens, sha256_digest,
     };
@@ -4584,12 +4604,7 @@ mod tests {
     };
     use rusqlite::params;
     use serde_json::json;
-    use std::{
-        fs, io,
-        path::PathBuf,
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::{fs, io, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
 
     const CONTENT: &[u8] = b"verified durable artifact";
@@ -5051,7 +5066,9 @@ mod tests {
             Self {
                 _home: home,
                 backend: RuntimeBackend::new(
-                    Arc::new(Mutex::new(store)),
+                    Arc::new(
+                        RuntimeStore::open(store, &database_path, 2).expect("open runtime store"),
+                    ),
                     artifacts,
                     channel_secrets,
                     RuntimeChannelConfig {

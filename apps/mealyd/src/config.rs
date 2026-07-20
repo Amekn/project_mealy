@@ -28,7 +28,7 @@ pub struct LocalIdentity {
     pub channel_binding_id: ChannelBindingId,
 }
 
-/// Durable pre-exit evidence used when the `SQLite` mutex cannot be acquired at forced shutdown.
+/// Durable pre-exit evidence used when the `SQLite` writer lane cannot be acquired at shutdown.
 pub struct ForcedShutdownMarker {
     /// Exact daemon lifetime being terminated.
     pub start_id: CorrelationId,

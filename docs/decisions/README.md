@@ -12,5 +12,6 @@ ADRs record decisions that shape multiple modules or are expensive to reverse. T
 | [0006](0006-context-and-memory.md) | Context manifests, epochs, and governed memory | Accepted |
 | [0007](0007-local-api.md) | Versioned loopback HTTP/JSON and SSE first | Accepted |
 | [0008](0008-risk-based-validation.md) | Risk-based independent validation | Accepted |
+| [0009](0009-sqlite-writer-and-snapshot-readers.md) | One SQLite writer, bounded snapshot readers, and bundled context evidence | Accepted |
 
 New ADRs use the next four-digit number and begin as `Proposed`. Superseding an ADR keeps the old file and links both directions.

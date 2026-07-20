@@ -130,7 +130,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
         authorized_get(&client, &connection, "/v1/admin/status").await;
     assert!(status.safe_mode);
     assert!(status.admission_open);
-    assert_eq!(status.schema_version, 15);
+    assert_eq!(status.schema_version, 16);
     assert_eq!(status.provider_health, "healthy");
     let doctor: DoctorResponse = authorized_get(&client, &connection, "/v1/admin/doctor").await;
     assert!(doctor.control_plane_ready);
@@ -160,7 +160,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
         },
     )
     .await;
-    assert_eq!(backup.schema_version, 15);
+    assert_eq!(backup.schema_version, 16);
     assert!(backup.secrets_included);
     assert!(Path::new(&backup.path).join("manifest.json").is_file());
 
@@ -176,7 +176,7 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
     )
     .await;
     assert_eq!(verification.manifest_digest, backup.manifest_digest);
-    assert_eq!(verification.schema_version, 15);
+    assert_eq!(verification.schema_version, 16);
     assert!(verification.identity_verified);
 
     let export: ExportResponse = authorized_post(

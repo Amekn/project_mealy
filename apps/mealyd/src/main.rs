@@ -8,6 +8,7 @@ mod effect_runtime;
 #[path = "../../../crates/mealy-infrastructure/src/bin/mealy-fixture-worker.rs"]
 mod fixture_worker_process;
 mod responses_provider;
+mod store_runtime;
 
 use agent::{
     AgentDriverPolicy, RuntimeModelProvider, RuntimeReadTools, RuntimeSkillContext,
@@ -64,9 +65,10 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::ExitCode,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
+use store_runtime::RuntimeStore;
 use thiserror::Error as ThisError;
 use tokio::sync::watch;
 use zeroize::Zeroizing;
@@ -618,7 +620,15 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     };
-    let store = Arc::new(Mutex::new(store));
+    let reader_capacity = usize::try_from(daemon_config.maximum_daemon_agent_runs())
+        .unwrap_or(64)
+        .saturating_add(4);
+    let store = Arc::new(RuntimeStore::open(store, &database_path, reader_capacity)?);
+    tracing::info!(
+        reader_connections = store.reader_capacity(),
+        database_path = %store.database_path().display(),
+        "canonical SQLite runtime opened with one writer and bounded WAL snapshot readers"
+    );
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let drain_controller = Arc::new(DrainController::new(
         shutdown_sender.clone(),
@@ -941,7 +951,7 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         tokio::task::spawn_blocking(move || {
             let mut guard = drain_store
-                .lock()
+                .write()
                 .map_err(|_| "store lock poisoned during graceful drain")?;
             recover_startup(&mut *guard, &SystemClock, &SystemIdGenerator, 256)
                 .map_err(|_| "final recovery classification failed")?;
@@ -998,7 +1008,7 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 fn record_forced_shutdown(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     home: &std::path::Path,
     start_id: CorrelationId,
     reason: &str,
@@ -1007,7 +1017,7 @@ fn record_forced_shutdown(
     if let Err(error) = write_forced_shutdown_marker(home, start_id, reason, completed_at) {
         tracing::error!(%error, "could not persist forced-shutdown marker");
     }
-    if let Ok(mut guard) = store.try_lock() {
+    if let Ok(mut guard) = store.try_write() {
         let completed = guard.complete_daemon_run(CompleteDaemonRunCommit {
             start_id,
             status: DaemonRunStatus::Forced,
@@ -1023,7 +1033,7 @@ fn record_forced_shutdown(
 
 #[allow(clippy::too_many_arguments)]
 async fn agent_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     worker_id: WorkerId,
     provider: Arc<RuntimeModelProvider>,
     tool: Arc<RuntimeReadTools>,
@@ -1080,7 +1090,7 @@ async fn agent_driver(
 }
 
 async fn promotion_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     defaults: PromotionDefaults,
     initial_delay: Duration,
     interval: Duration,
@@ -1108,17 +1118,17 @@ async fn promotion_driver(
 }
 
 fn drive_promotions(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     defaults: &PromotionDefaults,
 ) -> Result<(), mealy_application::PromotionUseCaseError> {
     let candidates = {
-        let guard = store.lock().map_err(|_| {
+        let guard = store.read().map_err(|_| {
             mealy_application::PromotionStoreError::Unavailable("store lock poisoned".to_owned())
         })?;
         pending_promotion_sessions(&*guard, 64)?
     };
     for candidate in candidates {
-        let mut guard = store.lock().map_err(|_| {
+        let mut guard = store.write().map_err(|_| {
             mealy_application::PromotionStoreError::Unavailable("store lock poisoned".to_owned())
         })?;
         let outcome = promote_next_input(
@@ -1140,7 +1150,7 @@ fn drive_promotions(
 }
 
 async fn schedule_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     worker_id: WorkerId,
     maximum_pending_inputs_per_session: u64,
     clock_offset_ms: i64,
@@ -1178,14 +1188,14 @@ async fn schedule_driver(
 
 #[allow(clippy::too_many_lines)]
 fn drive_schedule_batch(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     worker_id: WorkerId,
     maximum_pending_inputs_per_session: u64,
     clock_offset_ms: i64,
 ) -> Result<usize, ScheduleDriverError> {
     let now_ms = schedule_now_ms(clock_offset_ms)?;
     let due = store
-        .lock()
+        .read()
         .map_err(|_| ScheduleDriverError::Lock)?
         .due_schedules(now_ms, 32)?;
     let mut completed = 0;
@@ -1214,7 +1224,7 @@ fn drive_schedule_batch(
                 ScheduleRunIntent::SkipMisfire,
             ),
         };
-        let mut guard = store.lock().map_err(|_| ScheduleDriverError::Lock)?;
+        let mut guard = store.write().map_err(|_| ScheduleDriverError::Lock)?;
         if intent == ScheduleRunIntent::Fire
             && schedule.overlap_policy == ScheduleOverlapPolicy::SkipIfRunning
             && guard.schedule_has_active_run(schedule.schedule_id)?
@@ -1368,7 +1378,7 @@ enum ScheduleDriverError {
 }
 
 async fn telegram_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     credentials: Arc<FileProviderSecretStore>,
     client: reqwest::Client,
     api_base_url: String,
@@ -1400,7 +1410,7 @@ async fn telegram_driver(
 }
 
 async fn drive_telegram_batch(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     credentials: &Arc<FileProviderSecretStore>,
     client: &reqwest::Client,
     api_base_url: &str,
@@ -1409,7 +1419,7 @@ async fn drive_telegram_batch(
     let target_store = Arc::clone(store);
     let targets = tokio::task::spawn_blocking(move || {
         target_store
-            .lock()
+            .read()
             .map_err(|_| TelegramDriverError::Lock)?
             .active_telegram_poll_targets(16)
             .map_err(TelegramDriverError::Store)
@@ -1434,7 +1444,9 @@ async fn drive_telegram_batch(
         match fetched {
             Ok(updates) => {
                 processed += tokio::task::spawn_blocking(move || {
-                    let mut guard = worker_store.lock().map_err(|_| TelegramDriverError::Lock)?;
+                    let mut guard = worker_store
+                        .write()
+                        .map_err(|_| TelegramDriverError::Lock)?;
                     guard.record_telegram_poll(RecordTelegramPollCommit {
                         binding_id: target.binding_id,
                         succeeded: true,
@@ -1460,7 +1472,7 @@ async fn drive_telegram_batch(
                 );
                 tokio::task::spawn_blocking(move || {
                     worker_store
-                        .lock()
+                        .write()
                         .map_err(|_| TelegramDriverError::Lock)?
                         .record_telegram_poll(RecordTelegramPollCommit {
                             binding_id: target.binding_id,
@@ -2141,7 +2153,7 @@ struct DiscordDriverRuntime {
 }
 
 async fn discord_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     runtime: DiscordDriverRuntime,
     interval: Duration,
     mut shutdown: watch::Receiver<bool>,
@@ -2174,7 +2186,7 @@ async fn discord_driver(
 
 #[allow(clippy::too_many_arguments)]
 async fn drive_discord_batch(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     credentials: &Arc<FileProviderSecretStore>,
     client: &reqwest::Client,
     rate_limits: &Arc<DiscordRateLimitGate>,
@@ -2185,7 +2197,7 @@ async fn drive_discord_batch(
     let target_store = Arc::clone(store);
     let targets = tokio::task::spawn_blocking(move || {
         target_store
-            .lock()
+            .read()
             .map_err(|_| DiscordDriverError::Lock)?
             .active_discord_poll_targets(16)
             .map_err(DiscordDriverError::Store)
@@ -2228,7 +2240,7 @@ async fn drive_discord_batch(
                     tokio::time::Instant::now() + batch.next_poll_after,
                 );
                 processed += tokio::task::spawn_blocking(move || {
-                    let mut guard = worker_store.lock().map_err(|_| DiscordDriverError::Lock)?;
+                    let mut guard = worker_store.write().map_err(|_| DiscordDriverError::Lock)?;
                     guard.record_discord_poll(RecordDiscordPollCommit {
                         binding_id: target.binding_id,
                         succeeded: true,
@@ -2257,7 +2269,7 @@ async fn drive_discord_batch(
                 );
                 tokio::task::spawn_blocking(move || {
                     worker_store
-                        .lock()
+                        .write()
                         .map_err(|_| DiscordDriverError::Lock)?
                         .record_discord_poll(RecordDiscordPollCommit {
                             binding_id: target.binding_id,
@@ -2840,7 +2852,7 @@ struct OutboxChannelRuntime {
 }
 
 async fn outbox_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     channels: OutboxChannelRuntime,
     owner_id: WorkerId,
     initial_delay: Duration,
@@ -2899,7 +2911,7 @@ enum OutboxDriverError {
 }
 
 async fn drive_outbox_batch(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     channels: &OutboxChannelRuntime,
     owner_id: WorkerId,
 ) -> Result<(), OutboxDriverError> {
@@ -2976,11 +2988,11 @@ async fn drive_outbox_batch(
 }
 
 fn claim_routed_outbox(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     owner_id: WorkerId,
     maximum_attempts: u32,
 ) -> Result<Option<RoutedOutboxDelivery>, OutboxDriverError> {
-    let mut guard = store.lock().map_err(|_| OutboxDriverError::Lock)?;
+    let mut guard = store.write().map_err(|_| OutboxDriverError::Lock)?;
     let claim = claim_next_outbox(
         &mut *guard,
         &SystemClock,
@@ -3464,13 +3476,13 @@ fn truncate_telegram_message(text: &str) -> String {
 }
 
 fn finish_outbox_delivery(
-    store: &Arc<Mutex<SqliteStore>>,
+    store: &Arc<RuntimeStore>,
     owner_id: WorkerId,
     delivery: &OutboxDelivery,
     result: OutboxDeliveryResult,
     maximum_attempts: u32,
 ) -> Result<(), OutboxDriverError> {
-    let mut guard = store.lock().map_err(|_| OutboxDriverError::Lock)?;
+    let mut guard = store.write().map_err(|_| OutboxDriverError::Lock)?;
     match result {
         OutboxDeliveryResult::Delivered => {
             complete_outbox(&mut *guard, &SystemClock, owner_id, delivery.outbox_id)?;
@@ -3518,14 +3530,14 @@ fn finish_outbox_delivery(
 }
 
 async fn lease_reaper_driver(
-    store: Arc<Mutex<SqliteStore>>,
+    store: Arc<RuntimeStore>,
     interval: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
         let recovery_store = Arc::clone(&store);
         match tokio::task::spawn_blocking(move || {
-            let mut guard = recovery_store.lock().map_err(|_| {
+            let mut guard = recovery_store.write().map_err(|_| {
                 mealy_application::StartupRecoveryStoreError::Unavailable(
                     "store lock poisoned".to_owned(),
                 )
@@ -3559,7 +3571,7 @@ fn epoch_milliseconds(time: SystemTime) -> Result<i64, Box<dyn Error + Send + Sy
 #[cfg(test)]
 mod schedule_driver_tests {
     use super::{
-        DiscordInboundAction, TelegramInboundAction, TelegramSendAcknowledgement,
+        DiscordInboundAction, RuntimeStore, TelegramInboundAction, TelegramSendAcknowledgement,
         classify_telegram_send_acknowledgement, discord_approval_action, discord_message_action,
         discord_success_delay, drive_schedule_batch, render_discord_outbox, render_telegram_outbox,
         schedule_now_ms, telegram_approval_action,
@@ -3574,11 +3586,14 @@ mod schedule_driver_tests {
         PrincipalId, ScheduleId, WorkerId,
     };
     use mealy_infrastructure::{SqliteStore, SystemClock, SystemIdGenerator};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[test]
     fn due_schedule_is_admitted_once_and_advances_with_history() {
-        let mut store = SqliteStore::open_in_memory(0).expect("schedule store");
+        let home = TempDir::new().expect("temporary schedule home");
+        let database = home.path().join("mealy.sqlite3");
+        let mut store = SqliteStore::open(&database, 0).expect("schedule store");
         let ownership = OwnershipContext::new(PrincipalId::new(), ChannelBindingId::new());
         let session_id = create_session(&mut store, &SystemClock, &SystemIdGenerator, ownership)
             .expect("destination session");
@@ -3607,7 +3622,7 @@ mod schedule_driver_tests {
                 created_at_ms,
             })
             .expect("create due schedule");
-        let store = Arc::new(Mutex::new(store));
+        let store = Arc::new(RuntimeStore::open(store, &database, 1).expect("runtime store"));
         assert_eq!(
             drive_schedule_batch(&store, WorkerId::new(), 1_024, 0).expect("drive schedule"),
             1
@@ -3616,7 +3631,7 @@ mod schedule_driver_tests {
             drive_schedule_batch(&store, WorkerId::new(), 1_024, 0).expect("idempotent scan"),
             0
         );
-        let guard = store.lock().expect("schedule store lock");
+        let guard = store.read().expect("schedule store reader");
         let history = guard
             .schedule_runs(ownership, schedule.schedule_id, 10)
             .expect("schedule history");

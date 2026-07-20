@@ -132,3 +132,12 @@ clone. No duration or turn count from either failed run was carried forward. The
 `d346803` subject subsequently produced the independent-validator-accepted
 [release soak](release-soak.json) above, closing the long-duration runtime gate without relabeling
 either failed attempt.
+
+That clean report remains evidence for its exact schema-15 binary, but later source changes and a
+new retained-history finding reset the current release gate. The
+[`2026-07-20 interrupted-soak and storage-architecture record`](2026-07-20-interrupted-soak-and-storage-architecture.md)
+documents the stopped `02d292c` attempt, the process-wide store mutex and context-row fan-out, and
+the schema-16 remediation. On a 3.1 GB retained clone, one-writer/bounded-snapshot access plus
+bundled context evidence reduced observed maximum writer wait from 14.05 seconds to 0.63 seconds
+while 48 bounded tasks retained complete replay, integrity, and zero residue. It is focused dirty-
+worktree evidence and cannot replace the fresh clean exact-package 24-hour report now required.
