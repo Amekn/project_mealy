@@ -235,12 +235,16 @@ active config recursively and refuses any current model, fallback, or web-search
 removes only the broker file, reports absence idempotently, and does not edit archived config or
 encrypted backups. Revoke or rotate the upstream key independently.
 
-`doctor` runs full SQLite and foreign-key checks, inspects artifact storage and private
-permissions, and reports each sandbox profile as `enforceable` or `denied` with a reason. Release
-one currently enforces `observe` and `workspace_write` through Bubblewrap on a conforming Linux
-host. `networked`, `service_operator`, and `full_trust` are denied. The macOS control plane receives
-a real locked build in CI, but worker profiles remain explicitly denied until a native adapter
-exists. Windows is outside the release-one support and CI contract.
+Before the runtime opens its reader pool or starts background workers, startup runs full SQLite,
+FTS5, and foreign-key integrity checks on the quiescent canonical writer. Live `health` and
+`doctor` calls then check online schema/connection invariants without rerunning SQLite deep
+diagnostics against concurrent FTS writes; `doctor` also inspects artifact storage and private
+permissions and reports each sandbox profile as `enforceable` or `denied` with a reason. Backup,
+restore, stopped-soak, and release validation repeat the deep checks on consistent copies or a
+stopped database. Release one currently enforces `observe` and `workspace_write` through
+Bubblewrap on a conforming Linux host. `networked`, `service_operator`, and `full_trust` are denied.
+The macOS control plane receives a real locked build in CI, but worker profiles remain explicitly
+denied until a native adapter exists. Windows is outside the release-one support and CI contract.
 On Ubuntu 24.04, a denied profile paired with `RTM_NEWADDR` or user-namespace audit messages should
 be repaired through the reviewed distro `bwrap-userns-restrict` activation and probe in
 [`QUICKSTART.md`](QUICKSTART.md), not by making Bubblewrap setuid or disabling the host-wide

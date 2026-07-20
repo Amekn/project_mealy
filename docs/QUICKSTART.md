@@ -338,6 +338,9 @@ In another terminal, verify the installation:
 `doctor` is the authoritative check. On a full Linux installation it should report the control
 plane ready and the `observe`/`workspace_write` Bubblewrap profiles enforceable. Profiles that the
 host cannot enforce are reported as denied rather than silently downgraded.
+The daemon completes full SQLite, FTS5, and foreign-key integrity diagnostics before it starts
+worker concurrency. Runtime `health`/`doctor` responses use bounded online schema checks; backup,
+restore, stopped-soak, and release gates repeat deep integrity checks on a consistent boundary.
 
 The remaining examples use `$HOME/.mealy`; substitute `$HOME/.mealy-offline` consistently if you
 chose the offline alternative.

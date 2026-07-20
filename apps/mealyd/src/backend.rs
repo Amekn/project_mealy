@@ -385,7 +385,7 @@ impl Drop for KeyedConcurrencyGuard<'_> {
 impl ApiBackend for RuntimeBackend {
     fn readiness(&self) -> Result<(), BackendError> {
         self.read()?
-            .readiness_check()
+            .online_readiness_check()
             .map_err(|_| BackendError::Unavailable)
     }
 
@@ -660,13 +660,14 @@ impl ApiBackend for RuntimeBackend {
         let snapshot = store
             .operational_snapshot(ownership)
             .map_err(map_operational_store_error)?;
-        store
-            .verify_storage_integrity()
-            .map_err(|_| BackendError::Unavailable)?;
-        let usage = self
-            .artifacts
-            .storage_usage()
-            .map_err(|error| map_artifact_blob_error(&error))?;
+        store.online_readiness_check().map_err(|error| {
+            tracing::error!(%error, "doctor online SQLite readiness verification failed");
+            BackendError::Unavailable
+        })?;
+        let usage = self.artifacts.storage_usage().map_err(|error| {
+            tracing::error!(%error, "doctor artifact storage inspection failed");
+            map_artifact_blob_error(&error)
+        })?;
         let config_ready = self.home.join("config.json").is_file();
         let home_private = private_home_permissions(&self.home);
         let mut checks = BTreeMap::from([
@@ -698,10 +699,11 @@ impl ApiBackend for RuntimeBackend {
             (
                 "sqlite".to_owned(),
                 format!(
-                    "ok: schema {} passed full integrity and foreign-key checks",
-                    store
-                        .schema_version()
-                        .map_err(|_| BackendError::Unavailable)?
+                    "ok: schema {} is online-ready; quiescent startup integrity and foreign-key checks passed",
+                    store.schema_version().map_err(|error| {
+                        tracing::error!(%error, "doctor schema inspection failed");
+                        BackendError::Unavailable
+                    })?
                 ),
             ),
         ]);

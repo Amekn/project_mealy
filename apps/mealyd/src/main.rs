@@ -237,7 +237,9 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
                 && database_path.exists()
                 && matches!(
                     &error,
-                    StoreError::Sqlite(_) | StoreError::InvalidSchemaVersion(_)
+                    StoreError::Sqlite(_)
+                        | StoreError::InvalidSchemaVersion(_)
+                        | StoreError::NotReady(_)
                 )
             {
                 tracing::error!(%error, "canonical database open failed; preserving forensic evidence");
@@ -623,7 +625,36 @@ async fn run_daemon() -> Result<(), Box<dyn Error + Send + Sync>> {
     let reader_capacity = usize::try_from(daemon_config.maximum_daemon_agent_runs())
         .unwrap_or(64)
         .saturating_add(4);
-    let store = Arc::new(RuntimeStore::open(store, &database_path, reader_capacity)?);
+    let store = match RuntimeStore::open(store, &database_path, reader_capacity) {
+        Ok(store) => Arc::new(store),
+        Err(error) => {
+            if daemon_config.forensic_backup_on_open_failure()
+                && database_path.exists()
+                && matches!(
+                    &error,
+                    StoreError::Sqlite(_)
+                        | StoreError::InvalidSchemaVersion(_)
+                        | StoreError::NotReady(_)
+                )
+            {
+                tracing::error!(%error, "quiescent startup integrity gate failed; preserving forensic evidence");
+                let report = preserve_forensic_database(
+                    &arguments.home,
+                    &database_path,
+                    &error.to_string(),
+                    SystemTime::now(),
+                )?;
+                tracing::error!(
+                    forensic_path = %report.path.display(),
+                    forensic_files = report.file_count,
+                    forensic_bytes = report.total_bytes,
+                    manifest_digest = %report.manifest_digest,
+                    "corrupt database and sidecars preserved without replacement"
+                );
+            }
+            return Err(error.into());
+        }
+    };
     tracing::info!(
         reader_connections = store.reader_capacity(),
         database_path = %store.database_path().display(),

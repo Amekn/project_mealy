@@ -463,12 +463,17 @@ impl SqliteStore {
         count(&self.connection, "outbox")
     }
 
-    /// Verifies the active schema, foreign-key enforcement, and a bounded `SQLite` quick check.
+    /// Verifies the active schema and connection invariants safe to inspect during live writes.
+    ///
+    /// This check deliberately excludes `SQLite` quick/integrity diagnostics. FTS5 integrity
+    /// callbacks can observe their shadow tables while another connection is committing and
+    /// transiently report a checksum mismatch even though the committed database is sound.
+    /// Deep diagnostics belong at a quiescent startup, backup, restore, or release boundary.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] if canonical storage is not ready for commands.
-    pub fn readiness_check(&self) -> Result<(), StoreError> {
+    /// Returns [`StoreError`] if canonical storage is not online-ready for commands.
+    pub fn online_readiness_check(&self) -> Result<(), StoreError> {
         let version = self.connection.query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_version",
             [],
@@ -505,6 +510,19 @@ impl SqliteStore {
                 "terminal usage-report index is missing or malformed".to_owned(),
             ));
         }
+        Ok(())
+    }
+
+    /// Verifies online invariants plus a bounded `SQLite` quick check.
+    ///
+    /// Callers must use a quiescent connection. Runtime request paths use
+    /// [`Self::online_readiness_check`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if canonical storage is not ready for commands.
+    pub fn readiness_check(&self) -> Result<(), StoreError> {
+        self.online_readiness_check()?;
         let quick_check = self
             .connection
             .query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0))?;
@@ -2225,6 +2243,29 @@ mod tests {
             upgraded.readiness_check(),
             Err(StoreError::NotReady(message))
                 if message == "terminal usage-report index is missing or malformed"
+        ));
+    }
+
+    #[test]
+    fn online_readiness_excludes_quiescent_deep_integrity_work() {
+        let store = SqliteStore::open_in_memory(NOW).expect("current in-memory store");
+        store
+            .connection
+            .execute_batch(
+                "CREATE TABLE deep_integrity_probe(value INTEGER CHECK (value > 0));
+                 PRAGMA ignore_check_constraints = ON;
+                 INSERT INTO deep_integrity_probe(value) VALUES (0);
+                 PRAGMA ignore_check_constraints = OFF;",
+            )
+            .expect("construct a deep-check-only violation");
+
+        store
+            .online_readiness_check()
+            .expect("live schema and connection invariants remain ready");
+        assert!(matches!(
+            store.readiness_check(),
+            Err(StoreError::NotReady(message))
+                if message.starts_with("SQLite quick check failed:")
         ));
     }
 

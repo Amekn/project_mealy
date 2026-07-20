@@ -33,7 +33,17 @@ dashboard_curl() {
   if [[ -n $dashboard_curl_config ]]; then
     options+=(--config "$dashboard_curl_config")
   fi
-  command curl "${options[@]}" "$@"
+  if command curl "${options[@]}" "$@"; then
+    return 0
+  else
+    local status=$?
+    local request_url=${*: -1}
+    echo "dashboard smoke request failed (curl status $status): $request_url" >&2
+    if [[ -n ${home-} ]]; then
+      tail -n 80 "$home/daemon.stderr" "$home/dashboard.stderr" 2>/dev/null >&2 || true
+    fi
+    return "$status"
+  fi
 }
 
 cd "$repository_root"
@@ -56,6 +66,7 @@ daemon_pid=
 dashboard_pid=
 
 cleanup() {
+  local status=$?
   if [[ -n $dashboard_pid ]]; then
     kill "$dashboard_pid" 2>/dev/null || true
     wait "$dashboard_pid" 2>/dev/null || true
@@ -64,7 +75,13 @@ cleanup() {
     kill "$daemon_pid" 2>/dev/null || true
     wait "$daemon_pid" 2>/dev/null || true
   fi
-  rm -rf -- "$home" "$attachment_root"
+  if [[ $status -ne 0 && ${MEALY_DASHBOARD_SMOKE_RETAIN_FAILURE:-0} == 1 ]]; then
+    echo "dashboard smoke retained failed home: $home" >&2
+    echo "dashboard smoke retained attachment root: $attachment_root" >&2
+  else
+    rm -rf -- "$home" "$attachment_root"
+  fi
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -132,13 +149,27 @@ daemon_token=$(jq -er '.bearerToken' "$home/connection.json")
 contains_daemon_token() {
   grep -Fq -f <(printf '%s\n' "$daemon_token") -- "$@"
 }
+dashboard_snapshot() {
+  local label=$1
+  local response_file="$home/dashboard-$label-snapshot.json"
+  local status
+  status=$(dashboard_curl --silent --show-error --output "$response_file" \
+    --write-out '%{http_code}' "$origin/api/snapshot")
+  if [[ $status != 200 ]]; then
+    echo "dashboard $label snapshot returned HTTP $status" >&2
+    jq . "$response_file" >&2 || command cat "$response_file" >&2
+    sleep 0.1
+    tail -n 80 "$home/daemon.stderr" "$home/dashboard.stderr" 2>/dev/null >&2 || true
+    return 70
+  fi
+  command cat "$response_file"
+}
 if contains_daemon_token "$home/index.html"; then
   echo "dashboard HTML exposed the daemon bearer" >&2
   exit 70
 fi
 
-snapshot=$(dashboard_curl --fail --silent --show-error \
-  "$origin/api/snapshot")
+snapshot=$(dashboard_snapshot initial)
 jq -e '.apiVersion == "v1" and .status.runStatus == "running" and .status.schemaVersion == 16' \
   >/dev/null <<<"$snapshot"
 if contains_daemon_token <<<"$snapshot"; then
@@ -474,8 +505,7 @@ if contains_daemon_token <<<"$task_usage"; then
   echo "dashboard task usage exposed the daemon bearer" >&2
   exit 70
 fi
-terminal_snapshot=$(dashboard_curl --fail --silent --show-error \
-  "$origin/api/snapshot")
+terminal_snapshot=$(dashboard_snapshot terminal)
 task_cost=$(jq -er '.usage.usedCostMicrounits' <<<"$task_usage")
 jq -e --argjson task_cost "$task_cost" \
   '.usage.apiVersion == "v1" and .usage.toMs > .usage.fromMs and (.usage.toMs - .usage.fromMs) == 2592000000 and ([.usage.buckets[].completedRuns] | add // 0) >= 1 and ([.usage.buckets[].cancelledRuns] | add // 0) >= 1 and ([.usage.buckets[].usedCostMicrounits] | add // 0) >= $task_cost' \
