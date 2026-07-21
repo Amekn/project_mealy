@@ -169,7 +169,6 @@ jobs:
           scripts/validate-release-soak.sh
           docs/benchmarks/release-soak.json
           target/release/mealyd "$GITHUB_SHA"
-          docs/benchmarks/release-soak-lineage.json
       - name: Prepare isolated systemd user manager
         shell: bash
         run: |

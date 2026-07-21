@@ -36,23 +36,25 @@ scripts/run-soak.sh --release \
 ```
 
 The checked [release soak](release-soak.json) is the clean packaged-binary durability observation.
-It ran for 86,425.217 seconds, completed 15,824 turns across eight sessions, survived 39 hard
-restarts, retained 929 exact duplicate admissions, recovered 62 interrupted-provider turns and 15
-read-tool retries, and finished with SQLite integrity `ok`, complete recorded-only replay, clean
-drain, and zero residual work. It binds clean revision `d346803`, exact external `mealyd` SHA-256
-`4db797fd085ab845b7b30752a822168c670e6420df1edb22726c3e18eba64c97`, and a retained disk-backed
-Btrfs home. Peak RSS was 160,256 KiB; p95/p99 latency was 20.691/23.846 seconds while the database
-grew to 2,718,826,496 bytes. These are observed durability measurements, not portable resource or
-latency guarantees.
+It ran for 86,407.054 seconds, completed 19,248 turns across eight sessions, survived 48 hard
+restarts, retained 1,129 exact duplicate admissions, recovered 53 interrupted-provider turns and
+one retried read-tool turn, and resumed one undispatched model turn plus two undispatched read-tool
+turns. It finished with SQLite integrity `ok`, complete recorded-only replay, clean drain, and zero
+residual work. It binds clean schema-16 revision `ee1377d`, exact external `mealyd` SHA-256
+`7a3ac557354533a086e0078407e97ce6a82aeb91a51fb228dcb2a930de589635`, and a retained disk-backed
+Btrfs home. Peak RSS was 299,772 KiB; p95/p99 latency was 8.395/10.292 seconds while the database
+grew to 1,693,822,976 bytes, or 87,999 bytes per completed turn. These are observed durability
+measurements, not portable resource or latency guarantees.
 
-The report remains byte-for-byte identical to the harness output and therefore names its original
-pre-merge commit. GitHub's required linear-history rebase rewrote that commit identity while
-retaining the exact Git tree. The checked
-[`release-soak-lineage.json`](release-soak-lineage.json) preserves the original commit payload,
-recomputes its report-named object ID, and binds its tree to the identical-tree rebased commit that
-is an ancestor of the release. The release validator independently verifies the report SHA-256,
-both tree identities, reconstructed observed commit, and release ancestry; it rejects a relabeled
-report or merely similar source tree.
+The report remains byte-for-byte identical to the harness output and names a clean commit that is
+an ancestor of the report-bearing and release commits, so the current release gate needs no
+lineage transformation. The superseded schema-15
+[`release report`](2026-07-16-schema15-release-soak.json) and its exact
+[`rebase proof`](2026-07-16-schema15-release-soak-lineage.json) remain preserved as historical
+evidence. Compared with that schema-15 observation, the schema-16 run completed 21.6 percent more
+turns while using 37.7 percent fewer database bytes and 48.8 percent fewer bytes per completed
+turn. The release validator independently verifies report identity, commit ancestry, daemon
+digest/version, duration, recovery accounting, retained storage, integrity, and zero residue.
 
 The checked
 [`2026-07-13-storage-optimized-soak.json`](2026-07-13-storage-optimized-soak.json) is the newest
@@ -130,8 +132,10 @@ records their 15-hour-51-minute and 12-hour-9-minute failure timelines, intact S
 root cause, correction, and a successful 176-turn dense diagnostic against a 1.5 GB retained-home
 clone. No duration or turn count from either failed run was carried forward. The corrected
 `d346803` subject subsequently produced the independent-validator-accepted
-[release soak](release-soak.json) above, closing the long-duration runtime gate without relabeling
-either failed attempt.
+[schema-15 release soak](2026-07-16-schema15-release-soak.json), closing that runtime's
+long-duration gate without relabeling either failed attempt. Its
+[lineage proof](2026-07-16-schema15-release-soak-lineage.json) preserves the exact report across
+the required rebase merge.
 
 That clean report remains evidence for its exact schema-15 binary, but later source changes and a
 new retained-history finding reset the current release gate. The
@@ -140,4 +144,6 @@ documents the stopped `02d292c` attempt, the process-wide store mutex and contex
 the schema-16 remediation. On a 3.1 GB retained clone, one-writer/bounded-snapshot access plus
 bundled context evidence reduced observed maximum writer wait from 14.05 seconds to 0.63 seconds
 while 48 bounded tasks retained complete replay, integrity, and zero residue. It is focused dirty-
-worktree evidence and cannot replace the fresh clean exact-package 24-hour report now required.
+worktree evidence and did not replace the fresh clean exact-package 24-hour report. The current
+[schema-16 release soak](release-soak.json) above subsequently completed that gate and provides the
+retained storage comparison.

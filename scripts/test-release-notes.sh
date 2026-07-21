@@ -86,7 +86,10 @@ grep -Fq "86401 observed seconds (86401234 ms)" "$temporary/first.md"
 grep -Fq "80 completed turns across 8 sessions and 10 rounds" "$temporary/first.md"
 grep -Fq "live-provider run](https://github.com/Amekn/project_mealy/actions/runs/123)" \
   "$temporary/first.md"
-grep -Fq "docs/benchmarks/release-soak-lineage.json" "$temporary/first.md"
+if grep -Fq "docs/benchmarks/release-soak-lineage.json" "$temporary/first.md"; then
+  echo "release notes linked an absent optional lineage proof" >&2
+  exit 1
+fi
 
 expect_rejection() {
   local name=$1
