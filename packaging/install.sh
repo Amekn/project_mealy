@@ -42,6 +42,8 @@ approve=false
 # Keep this path inventory synchronized with build-release.sh and build-deb.sh. The packaging
 # fixtures deliberately fail closed when any standalone boundary omits or adds a document.
 release_documents=(
+  API.md
+  CI_CD.md
   DOMAIN_MODEL.md
   IMPLEMENTATION_PLAN.md
   OPERATIONS.md
