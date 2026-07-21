@@ -142,8 +142,11 @@ The environment must require an owner review, admit protected branches only, and
 `OPENROUTER_API_KEY` only as an environment secret. The workflow discovers the account-visible
 catalog, selects an exact `:free` tool-capable model, requires complete zero input/output pricing
 and usable token limits, and then proves setup, credential containment, a real governed read,
-durable usage settlement, recorded-only replay, and clean drain. It never sends the key to a
-pull-request job or stores it in Mealy configuration.
+durable usage settlement, recorded-only replay, and clean drain. Activation keeps its no-tools
+connectivity probe bounded to 256 output tokens, while live agent turns receive a 1,024-token
+runtime allowance so a tool call and its post-tool final response can both become terminal. The
+catalog-selected model must advertise at least that runtime output capacity. The workflow never
+sends the key to a pull-request job or stores it in Mealy configuration.
 
 After approval and completion, verify that the successful run's `headSha` is exactly the candidate
 commit. A success on an earlier commit does not qualify a later tag. `LOCAL_API_KEY`, direct paid

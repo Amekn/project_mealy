@@ -44,6 +44,8 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: '0'
+  # Mealy caps activation probes at 256; live turns also need room for a post-tool response.
+  MEALY_LIVE_RUNTIME_OUTPUT_TOKENS: '1024'
 
 jobs:
   live-provider:
@@ -131,7 +133,8 @@ jobs:
               echo "provider credential appeared in the OpenRouter catalog" >&2
               exit 70
             fi
-            if ! selected=$(jq -cer --arg requested "$LIVE_MODEL" '
+            if ! selected=$(jq -cer --arg requested "$LIVE_MODEL" \
+              --argjson required_output_tokens "$MEALY_LIVE_RUNTIME_OUTPUT_TOKENS" '
               [.models[] | select(
                 (.id | endswith(":free"))
                 and .toolCapable == true
@@ -141,7 +144,8 @@ jobs:
                 and .outputMicrounitsPerMillionTokens == 0
                 and (.unsupportedPricingAxes | type == "array" and length == 0)
                 and (.contextTokens | type == "number" and . > 2048)
-                and (.maximumOutputTokens | type == "number" and . >= 256)
+                and (.maximumOutputTokens | type == "number"
+                  and . >= $required_output_tokens)
               )] as $eligible
               | if $requested == "" then
                   $eligible | sort_by(.id) | first
@@ -180,7 +184,7 @@ jobs:
             "${base_url_args[@]}" \
             --model "$LIVE_MODEL" \
             --context-tokens "$LIVE_CONTEXT_TOKENS" \
-            --maximum-output-tokens 256 \
+            --maximum-output-tokens "$MEALY_LIVE_RUNTIME_OUTPUT_TOKENS" \
             --credential-env MEALY_LIVE_API_KEY \
             --input-microunits-per-million-tokens "$LIVE_INPUT_PRICE" \
             --output-microunits-per-million-tokens "$LIVE_OUTPUT_PRICE" \
