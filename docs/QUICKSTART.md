@@ -630,8 +630,12 @@ This is Mealy's preferred frequent/long-running provider for this installation. 
 probe is still mandatory: a server that exposes only Chat Completions, returns a different model
 identity, or lacks the required Responses tool contract is rejected atomically. Add
 `--disable-streaming` only when the endpoint supports terminal Responses JSON but not Responses
-SSE. Mealy classifies the HTTPS endpoint as remote for routing and secret handling even though it
-is privately hosted.
+SSE. The probe may use up to 256 output tokens so that reasoning-capable compatible servers can
+finish the bounded request; the configured output limit remains authoritative if it is lower.
+Mealy classifies the HTTPS endpoint as remote for routing and secret handling even though it is
+privately hosted. A provider's latency value is a routing estimate rather than a minimum call
+duration. Provider activation raises a smaller per-call timeout to the estimate plus a bounded
+dispatch safety margin when possible and rejects a result beyond the configured wall-time ceiling.
 
 ### OpenRouter Responses beta
 

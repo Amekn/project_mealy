@@ -414,7 +414,7 @@ fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
         );
         assert_eq!(config["provider"]["executableSha256"], executable_digest);
         assert_eq!(config["provider"]["model"], "fixture-model");
-        assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 60_000);
+        assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
         assert!(!home.path().join("provider-secrets").exists());
     }
 }
@@ -487,6 +487,7 @@ fn guided_setup_initializes_a_clean_home_probes_brokers_and_prints_exact_handoff
     )
     .expect("configured JSON");
     assert_eq!(configured["provider"]["kind"], "open_ai_responses");
+    assert_eq!(configured["agentLoopLimits"]["providerTimeoutMs"], 35_000);
     assert_eq!(
         configured["provider"]["credential"]["secretId"],
         "openai-primary"
@@ -510,7 +511,7 @@ fn guided_setup_initializes_a_clean_home_probes_brokers_and_prints_exact_handoff
     }));
     assert_eq!(body["model"], "guided-model");
     assert_eq!(body["store"], false);
-    assert_eq!(body["max_output_tokens"], 64);
+    assert_eq!(body["max_output_tokens"], 256);
     server.join().expect("guided setup probe server");
 }
 
@@ -631,7 +632,7 @@ fn provider_activation_runs_bounded_streaming_probe_and_fails_atomically() {
     assert_eq!(body["model"], "test-model");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
-    assert_eq!(body["max_output_tokens"], 64);
+    assert_eq!(body["max_output_tokens"], 256);
     server.join().expect("probe server");
 
     let failed_home = tempfile::tempdir().expect("failed probe home");
@@ -759,7 +760,7 @@ fn openrouter_preset_brokers_key_and_proves_stateless_responses_beta_shape() {
     assert_eq!(body["model"], "anthropic/claude-test");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
-    assert_eq!(body["max_output_tokens"], 64);
+    assert_eq!(body["max_output_tokens"], 256);
     assert!(body["previous_response_id"].is_null());
     server.join().expect("OpenRouter probe server");
 
@@ -841,6 +842,7 @@ fn credentialless_local_provider_is_probed_without_auth_and_rejects_remote_endpo
         configured["provider"]["outputMicrounitsPerMillionTokens"],
         0
     );
+    assert_eq!(configured["agentLoopLimits"]["providerTimeoutMs"], 65_000);
     assert!(!home.path().join("provider-secrets").exists());
 
     let fallback = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
@@ -969,7 +971,7 @@ fn anthropic_activation_runs_its_distinct_bounded_streaming_probe() {
     }));
     assert_eq!(body["model"], "test-claude-model");
     assert_eq!(body["stream"], true);
-    assert_eq!(body["max_tokens"], 64);
+    assert_eq!(body["max_tokens"], 256);
     assert!(body.get("input").is_none());
     assert!(body.get("store").is_none());
     let configured: Value = serde_json::from_slice(
@@ -2070,8 +2072,6 @@ fn configure_local(home: &Path, base_url: &str, skip_probe: bool) -> std::proces
         "32768",
         "--maximum-output-tokens",
         "4096",
-        "--estimated-latency-ms",
-        "1000",
         "--approve",
     ]);
     if skip_probe {

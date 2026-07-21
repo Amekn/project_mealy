@@ -111,9 +111,13 @@ const MAXIMUM_SERVER_ERROR_CODE_BYTES: usize = 64;
 const MAXIMUM_SERVER_ERROR_MESSAGE_BYTES: usize = 4 * 1024;
 const PROVIDER_PROBE_MAXIMUM_BYTES: u64 = 1024 * 1024;
 const PROVIDER_PROBE_MAXIMUM_TEXT_BYTES: usize = 64 * 1024;
-const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 64;
+// Leave enough room for Responses-compatible reasoning models to complete a trivial probe while
+// keeping activation checks cheap and bounded. Some servers account hidden reasoning tokens
+// against `max_output_tokens` before emitting the requested visible text.
+const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
 const SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
 const SETUP_PROVIDER_ESTIMATED_LATENCY_MS: u64 = 30_000;
+const PROVIDER_DISPATCH_SAFETY_MARGIN_MS: u64 = 5_000;
 const PROVIDER_DISCOVERY_MAXIMUM_MODELS: usize = 500;
 const PROVIDER_DISCOVERY_MAXIMUM_WIRE_MODELS: usize = 2_000;
 const TELEGRAM_PAIR_GET_ME_MAXIMUM_BYTES: usize = 64 * 1024;
@@ -8787,7 +8791,7 @@ fn configure_provider(
     {
         return Err(CliError::InvalidProviderConfiguration);
     }
-    ensure_subscription_provider_timeout(object, &provider)?;
+    ensure_provider_timeout(object, &provider)?;
     let fallbacks = object
         .get("providerFallbacks")
         .cloned()
@@ -8925,7 +8929,7 @@ fn configure_provider_fallback(
     {
         return Err(CliError::InvalidProviderConfiguration);
     }
-    ensure_subscription_provider_timeout(object, &provider)?;
+    ensure_provider_timeout(object, &provider)?;
     let primary = serde_json::from_value::<ProviderConfig>(
         object
             .get("provider")
@@ -8994,17 +8998,28 @@ fn configure_provider_fallback(
     })
 }
 
-fn ensure_subscription_provider_timeout(
+fn ensure_provider_timeout(
     config: &mut serde_json::Map<String, Value>,
     provider: &ProviderConfig,
 ) -> Result<(), CliError> {
-    let ProviderConfig::SubscriptionCli {
-        estimated_latency_ms,
-        ..
-    } = provider
-    else {
-        return Ok(());
+    let estimated_latency_ms = match provider {
+        ProviderConfig::BuiltinFixture => return Ok(()),
+        ProviderConfig::OpenAiResponses {
+            estimated_latency_ms,
+            ..
+        }
+        | ProviderConfig::AnthropicMessages {
+            estimated_latency_ms,
+            ..
+        }
+        | ProviderConfig::SubscriptionCli {
+            estimated_latency_ms,
+            ..
+        } => *estimated_latency_ms,
     };
+    let required_timeout_ms = estimated_latency_ms
+        .checked_add(PROVIDER_DISPATCH_SAFETY_MARGIN_MS)
+        .ok_or(CliError::InvalidProviderConfiguration)?;
     let limits = config
         .get_mut("agentLoopLimits")
         .and_then(Value::as_object_mut)
@@ -9017,13 +9032,13 @@ fn ensure_subscription_provider_timeout(
         .get("providerTimeoutMs")
         .and_then(Value::as_u64)
         .ok_or(CliError::InvalidProviderConfiguration)?;
-    if *estimated_latency_ms > maximum_wall_time_ms {
+    if required_timeout_ms > maximum_wall_time_ms {
         return Err(CliError::InvalidProviderConfiguration);
     }
-    if provider_timeout_ms < *estimated_latency_ms {
+    if provider_timeout_ms < required_timeout_ms {
         limits.insert(
             "providerTimeoutMs".to_owned(),
-            Value::from(*estimated_latency_ms),
+            Value::from(required_timeout_ms),
         );
     }
     Ok(())
