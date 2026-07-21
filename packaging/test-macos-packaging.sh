@@ -74,6 +74,8 @@ expected=$(printf '%s\n' \
   mealy-v0.1.0-macos-arm64-preview/bin/mealyctl \
   mealy-v0.1.0-macos-arm64-preview/bin/mealyd \
   mealy-v0.1.0-macos-arm64-preview/docs \
+  mealy-v0.1.0-macos-arm64-preview/docs/API.md \
+  mealy-v0.1.0-macos-arm64-preview/docs/CI_CD.md \
   mealy-v0.1.0-macos-arm64-preview/docs/OPERATIONS.md \
   mealy-v0.1.0-macos-arm64-preview/docs/PRODUCTION_READINESS.md \
   mealy-v0.1.0-macos-arm64-preview/docs/QUICKSTART.md \

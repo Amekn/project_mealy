@@ -30,6 +30,8 @@ PACKAGE_FILES = (
     "README.md",
     "REQUIREMENTS.md",
     "SECURITY.md",
+    "docs/API.md",
+    "docs/CI_CD.md",
     "docs/OPERATIONS.md",
     "docs/PRODUCTION_READINESS.md",
     "docs/QUICKSTART.md",

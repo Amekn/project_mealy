@@ -22,6 +22,8 @@ state_schema_version=$9
 # Keep this path inventory synchronized with build-deb.sh and install.sh. The packaging fixtures
 # deliberately fail closed when any standalone boundary omits or adds a release document.
 release_documents=(
+  API.md
+  CI_CD.md
   DOMAIN_MODEL.md
   IMPLEMENTATION_PLAN.md
   OPERATIONS.md

@@ -69,6 +69,11 @@ install/upgrade/rollback behavior. Treat a build as published only when its exac
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.
 
+Local integrations can use the authenticated versioned HTTP/JSON and SSE surface documented in
+the [API reference](docs/API.md). Contributors and release operators should follow the
+[development-to-production runbook](docs/CI_CD.md), which defines the required protected checks,
+reviewed free-provider acceptance, tag promotion, attestation, and public clean-host gates.
+
 > **Implementation status (verify the exact installed tag):** the durable release-one runtime
 > proof is complete, and Mealy now supports
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
