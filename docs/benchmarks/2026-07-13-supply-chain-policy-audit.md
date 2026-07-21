@@ -499,7 +499,7 @@ passed the strict workspace, Linux sandbox, rendered-browser, Ubuntu x86_64/ARM6
 macOS ARM/Intel contexts on the exact candidate head.
 
 The checksum-verified extracted package daemon then produced the unedited
-[release soak](release-soak.json), SHA-256
+[schema-15 release soak](2026-07-16-schema15-release-soak.json), SHA-256
 `52387407d59cfe11bf22e92de389e4bd554bb9566a8cbee54c7c9a25700645d5`. It ran 86,425.217
 seconds, completed 15,824 turns across eight sessions, survived 39 hard restarts, recovered 62
 interrupted-provider turns and 15 read-tool retries, retained SQLite integrity `ok` and complete
@@ -511,7 +511,7 @@ publication; no pre-report package hash is presented as a final release asset.
 
 GitHub's later required rebase merge retained the observed commit's exact Git tree
 `057fd9ce226af587da3cef41b60d3d6f8678b8d7` while changing its commit identity. The checked
-[lineage proof](release-soak-lineage.json) embeds and rehashes the original commit payload to the
+[lineage proof](2026-07-16-schema15-release-soak-lineage.json) embeds and rehashes the original commit payload to the
 report-named `d346803`, binds the unedited report SHA-256 above, and maps only that identical tree
 to rebased main-line commit `1523eef`. The release validator requires the mapped commit to be an
 ancestor of the candidate tag and rejects any altered payload, report, tree, transformation, or

@@ -5,7 +5,7 @@ export LC_ALL=C
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 validator=$repository_root/scripts/validate-release-soak.sh
 source_report=$repository_root/docs/benchmarks/2026-07-13-storage-optimized-soak.json
-lineage_template=$repository_root/docs/benchmarks/release-soak-lineage.json
+lineage_template=$repository_root/docs/benchmarks/2026-07-16-schema15-release-soak-lineage.json
 
 for command in git jq mktemp sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {

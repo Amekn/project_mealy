@@ -142,4 +142,5 @@ commit reproduced both hashes above exactly, and all seven protected CI contexts
 
 This was pre-report, unpublished x86_64 evidence. That exact candidate was later superseded; the
 corrected external package daemon and complete result are bound by the checked
-[release soak](release-soak.json). This historical package is not relabeled as the final asset.
+[schema-15 release soak](2026-07-16-schema15-release-soak.json). This historical package is not
+relabeled as the final asset.

@@ -48,4 +48,5 @@ two read-tool retry recoveries; its maximum task latency was 4.002 seconds while
 archive/Debian, Lintian, clean-container install, and real-browser gates overlapped on the same host.
 These probes cross the old failure's approximate per-session history depth or aggregate turn count,
 but not its wall-clock duration. They regression-cover the reproduced timeout defect; they do not
-erase the negative observation or replace the later clean [release soak](release-soak.json).
+erase the negative observation or replace the later clean
+[schema-15 release soak](2026-07-16-schema15-release-soak.json).

@@ -18,6 +18,8 @@ commit=$4
 live_run_url=$5
 release_run_url=$6
 output=$7
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+lineage_proof=$repository_root/docs/benchmarks/release-soak-lineage.json
 
 for command in install jq mktemp stat; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -200,8 +202,10 @@ trap cleanup EXIT
     "$peak_rss" "$database_bytes"
   printf -- "- Unedited soak report: [\`docs/benchmarks/release-soak.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak.json)\n\n" \
     "$repository" "$tag"
-  printf -- "- Rebase-safe identical-tree lineage proof: [\`docs/benchmarks/release-soak-lineage.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak-lineage.json)\n\n" \
-    "$repository" "$tag"
+  if [[ -f $lineage_proof && ! -L $lineage_proof ]]; then
+    printf -- "- Rebase-safe identical-tree lineage proof: [\`docs/benchmarks/release-soak-lineage.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak-lineage.json)\n\n" \
+      "$repository" "$tag"
+  fi
   printf '%s\n\n' 'The linked release workflow is the final authority: the release is complete only when its native Linux/macOS package jobs and all dependent public-download acceptance jobs are green.'
   printf '%s\n' '## Security and licensing'
   printf 'Review the tag-pinned [security policy](https://github.com/%s/blob/%s/SECURITY.md), [threat model](https://github.com/%s/blob/%s/docs/THREAT_MODEL.md), project [license](https://github.com/%s/blob/%s/LICENSE), per-asset CycloneDX SBOMs, third-party license notices, checksums, and offline Sigstore bundles before deployment.\n' \

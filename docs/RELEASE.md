@@ -65,17 +65,24 @@ is superseded by the corrected candidate described in the
 Two clean builds then reproduced the corrected `mealyd` SHA-256
 `4db797fd085ab845b7b30752a822168c670e6420df1edb22726c3e18eba64c97` and `mealyctl` SHA-256
 `9f7f53894352536040594777289d86842ab25723f121332ab94e2617879b9c63`. The exact daemon completed
-the clean [release soak](benchmarks/release-soak.json); the report-bearing tree still receives the
-same fresh comparison in the tag workflow. The checked
-[lineage proof](benchmarks/release-soak-lineage.json) preserves the unedited report across the
-required linear-history rebase without relabeling its observed revision.
+the historical schema-15
+[release soak](benchmarks/2026-07-16-schema15-release-soak.json). Its checked
+[lineage proof](benchmarks/2026-07-16-schema15-release-soak-lineage.json) preserves the unedited
+report across the required linear-history rebase without relabeling its observed revision.
 
-That clean soak qualifies only its exact schema-15 daemon. The current schema-16 source follows a
-later stopped soak and the accepted SQLite runtime/storage redesign documented in the
+That historical soak qualifies only its exact schema-15 daemon. Schema 16 follows a later stopped
+soak and the accepted SQLite runtime/storage redesign documented in the
 [interrupted-soak remediation record](benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md).
-Do not reuse the schema-15 report to publish schema 16: rebuild final packages, complete a fresh
-exact-package 24-hour soak, run the protected and reviewed live-provider gates, then publish and
-verify new attestations.
+Two clean auditable builds of protected schema-16 revision `ee1377d` reproduced `mealyd` SHA-256
+`7a3ac557354533a086e0078407e97ce6a82aeb91a51fb228dcb2a930de589635` and `mealyctl` SHA-256
+`f343b4e419c7b34bf37376d6d1289d926494b755e07223db9f214191951fc6cc`; the checksum-verified
+archive's extracted binaries were byte-identical and completed the installed-package lifecycle.
+That exact daemon completed the clean schema-16
+[release soak](benchmarks/release-soak.json) for 86,407.054 seconds, 19,248 turns, and 48 hard
+restarts with complete replay, SQLite integrity `ok`, clean drain, and zero residue. The report
+names an ancestor of this report-bearing tree directly, so no current lineage proof is required.
+The remaining release gates are protected report CI, reviewed free-model OpenRouter acceptance,
+native package/public-download verification, and attested publication.
 
 The 2026-07-21 schema-16 freeze review advanced the exact Chrome for Testing Headless Shell pin to
 stable `151.0.7922.34` (120,231,126 bytes, SHA-256
