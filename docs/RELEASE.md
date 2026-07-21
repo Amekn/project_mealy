@@ -118,8 +118,11 @@ The `live-provider-smoke` Environment requires an explicit repository-owner revi
 owner-supplied `OPENROUTER_API_KEY` and `LOCAL_API_KEY` secrets. The checked workflow consumes only
 the selected provider secret. Its default OpenRouter gate dynamically requires an exact
 tool-capable `:free` model, complete zero pricing, complete token limits, and no unsupported billing
-axes; it cannot silently select a paid model. The local credential is reserved for a separately reachable local
-endpoint and is not exposed to public or untrusted runners. Its optional workflow path hardcodes
+axes; it cannot silently select a paid model. The bounded activation probe uses at most 256 output
+tokens, while the governed runtime proof requires and configures a 1,024-token output allowance so
+the tool proposal and post-tool terminal response are both covered. The local credential is
+reserved for a separately reachable local endpoint and is not exposed to public or untrusted
+runners. Its optional workflow path hardcodes
 the reviewed Tailnet HTTPS origin, requires explicit model/context inputs, and fixes both prices to
 zero so a dispatch input cannot redirect that credential. Create the tag only after required CI,
 the current durability report, and one reviewed real-account smoke are all complete.
