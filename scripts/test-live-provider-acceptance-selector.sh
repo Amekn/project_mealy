@@ -37,7 +37,7 @@ jq -n \
         status: "completed",
         conclusion: "success",
         path: ".github/workflows/live-smoke.yml",
-        name: "mealy-live-provider-smoke",
+        name: ("Mealy live acceptance: private-responses @ " + $sha),
         display_title: ("Mealy live acceptance: private-responses @ " + $sha),
         html_url: ($server_url + "/" + $repository + "/actions/runs/100")
       },
@@ -48,7 +48,7 @@ jq -n \
         status: "completed",
         conclusion: "success",
         path: ".github/workflows/live-smoke.yml",
-        name: "mealy-live-provider-smoke",
+        name: $required_title,
         display_title: $required_title,
         html_url: ($server_url + "/" + $repository + "/actions/runs/101")
       },
@@ -59,7 +59,7 @@ jq -n \
         status: "completed",
         conclusion: "failure",
         path: ".github/workflows/live-smoke.yml",
-        name: "mealy-live-provider-smoke",
+        name: $required_title,
         display_title: $required_title,
         html_url: ($server_url + "/" + $repository + "/actions/runs/102")
       }

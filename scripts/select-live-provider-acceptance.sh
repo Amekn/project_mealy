@@ -52,7 +52,7 @@ if ! selected_url=$(jq -er \
       and .status == "completed"
       and .conclusion == "success"
       and .path == ".github/workflows/live-smoke.yml"
-      and .name == "mealy-live-provider-smoke"
+      and .name == $required_title
       and .display_title == $required_title
       and .html_url == ($server_url + "/" + $repository
         + "/actions/runs/" + (.id | tostring))

@@ -38,7 +38,7 @@ jq -n \
         status: "completed",
         conclusion: "success",
         path: ".github/workflows/ci.yml",
-        name: "mealy-ci",
+        name: ("Mealy CI: pull_request @ " + $sha),
         display_title: ("Mealy CI: pull_request @ " + $sha),
         html_url: ($server_url + "/" + $repository + "/actions/runs/200")
       },
@@ -50,7 +50,7 @@ jq -n \
         status: "completed",
         conclusion: "success",
         path: ".github/workflows/ci.yml",
-        name: "mealy-ci",
+        name: $required_title,
         display_title: $required_title,
         html_url: ($server_url + "/" + $repository + "/actions/runs/201")
       },
@@ -62,7 +62,7 @@ jq -n \
         status: "completed",
         conclusion: "failure",
         path: ".github/workflows/ci.yml",
-        name: "mealy-ci",
+        name: $required_title,
         display_title: $required_title,
         html_url: ($server_url + "/" + $repository + "/actions/runs/202")
       }
