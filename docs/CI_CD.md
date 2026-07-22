@@ -171,10 +171,13 @@ catalog-selected model must advertise at least that runtime output capacity. The
 sends the key to a pull-request job or stores it in Mealy configuration.
 
 After approval and completion, verify that the successful run's `headSha` is exactly the candidate
-commit. A success on an earlier commit does not qualify a later tag. `LOCAL_API_KEY`, direct paid
-API keys, and owner-local ChatGPT/Claude subscription bridges are useful additional acceptance,
-but they do not replace the required free OpenRouter gate and should not be used for frequent CI
-traffic.
+commit. The workflow-controlled run name binds the selected provider and SHA. Both the x86 package
+gate and final publication gate use the checked selector to require that exact name, canonical
+workflow path, successful `workflow_dispatch` result, repository run URL, and
+`openrouter-free` provider. A success on an earlier commit does not qualify a later tag, and a
+successful private/direct-provider run cannot substitute for the free-model gate.
+`LOCAL_API_KEY`, direct paid API keys, and owner-local ChatGPT/Claude subscription bridges remain
+useful additional acceptance, but should not be used for frequent CI traffic.
 
 ## Tag and publish
 

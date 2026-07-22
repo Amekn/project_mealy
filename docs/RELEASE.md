@@ -143,6 +143,10 @@ runners. Its optional workflow path hardcodes
 the reviewed Tailnet HTTPS origin, requires explicit model/context inputs, and fixes both prices to
 zero so a dispatch input cannot redirect that credential. Create the tag only after required CI,
 the current durability report, and one reviewed real-account smoke are all complete.
+The workflow-controlled run name records the selected provider and exact commit. The packaging and
+publication jobs call the same checked selector, which rejects private/direct-provider successes,
+stale commits, unsuccessful or non-manual runs, foreign workflow paths, and noncanonical run URLs;
+only the reviewed `openrouter-free` run qualifies the public release.
 
 After publication, the same tag workflow downloads the immutable public assets without build-job
 state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on

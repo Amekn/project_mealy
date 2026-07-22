@@ -67,7 +67,10 @@ checks. Immutable releases and private vulnerability reporting are enabled. The
 owner-supplied OpenRouter and local-endpoint credential names. The workflow also rejects a release tag whose commit is not on
 `origin/main`; its x86-64 job additionally queries the exact manual workflow and requires a
 successful owner-reviewed real-account run for the tagged commit. Current protected CI and that
-reviewed smoke must pass before published acceptance can run. The OpenRouter path discovers the
+reviewed smoke must pass before published acceptance can run. The workflow-controlled run identity
+and checked release selector now require the exact successful `openrouter-free` manual run; a
+private endpoint, direct paid provider, stale commit, or foreign workflow/run URL cannot satisfy
+the publication gate. The OpenRouter path discovers the
 account-visible catalog at run time and accepts only tool-capable exact `:free` IDs with complete
 token limits, exact zero input/output prices, and no unsupported pricing axes. The separate private
 Responses choice fixes the `LOCAL_API_KEY` destination to the reviewed Tailnet HTTPS origin and

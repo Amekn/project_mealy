@@ -606,6 +606,11 @@ fails. The default 30-second provider-call budget admits the 30-second routing e
 every guided provider setup.
 The job has a 20-minute hard timeout and a single non-cancelling concurrency group so two reviewed
 manual probes cannot overlap or terminate each other midway through settlement.
+Its workflow-controlled run name contains the selected provider and exact SHA. The release's
+checked selector requires a successful manual `openrouter-free` identity from the canonical
+workflow and repository URL; regression fixtures prove a private provider, stale SHA, failure,
+incomplete run, wrong event/path/name, spoofed title, foreign URL, and malformed API response are
+all rejected.
 
 ## Validation gates
 
