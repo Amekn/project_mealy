@@ -130,11 +130,14 @@ For an external soak, the exact x86-64 `mealyd` subject must also be available t
 `docs/benchmarks/release-soak-subject.json` promotion manifest. The source is a private draft
 release bound by numeric release ID under a dedicated `soak-subject-<revision>` tag, not an
 unpinned URL or a pull-request artifact. Before tagging, run
-`scripts/test-release-soak-subject-fetch.sh`; the real tag workflow
-then authenticates to the repository, selects exactly one owner-uploaded asset, checks GitHub's
+`scripts/test-release-soak-subject-fetch.sh`; the real tag workflow's isolated promotion job is
+the only build-side job granted an ephemeral `contents: write` token, because private drafts
+require push-level visibility. It selects exactly one owner-uploaded asset, checks GitHub's
 asset digest and byte count against the manifest, checks the manifest against the full soak report,
-downloads it, recomputes the SHA-256, and verifies `mealyd --version`. It subsequently audits,
-service-tests, packages, SBOMs, attests, publishes, and clean-host tests that exact daemon. A
+downloads it, recomputes the SHA-256, verifies `mealyd --version`, and transfers it through a
+one-day artifact scoped to the same workflow run. The read-only x86 package job rechecks byte
+count and SHA-256 before installation. It subsequently audits, service-tests, packages, SBOMs,
+attests, publishes, and clean-host tests that exact daemon. A
 hosted-runner rebuild is still required as a source/audit check, but it cannot replace the observed
 binary because native link environments are not assumed byte-reproducible across distributions.
 
@@ -182,6 +185,7 @@ Do not move or reuse a published version tag. A correction uses a new semantic v
 `.github/workflows/release.yml` then performs these production gates:
 
 - revalidates license, tag ancestry/identity, soak evidence, and exact-commit live acceptance;
+- isolates private-draft access in one ephemeral promotion job and rehashes its current-run handoff;
 - repeats strict tests, sandbox/browser/service proofs, RustSec, and auditable binary inspection;
 - builds native Linux x86-64 and ARM64 archives and Debian packages;
 - builds conversation-only macOS ARM64 and Intel preview archives;
