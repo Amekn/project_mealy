@@ -94,7 +94,12 @@ numeric draft-release ID, tag, unique asset name, owner uploader, GitHub-reporte
 Linux x86-64 target, and canonical daemon version before installing it. The normal binary audit,
 24-hour validator, systemd service proof, SBOM, package lifecycle, checksums, provenance
 attestation, immutable publication, and public clean-host acceptance then operate on that promoted
-daemon. The staging asset is not a weaker substitute: any byte change fails before packaging.
+daemon. GitHub restricts a private draft to push-level access, so one short promotion job alone has
+an ephemeral `contents: write` token. It validates the draft asset and publishes it only as a
+one-day artifact scoped to that workflow run. The x86 package job retains `contents: read`,
+downloads that exact artifact, and rechecks its type, byte count, and SHA-256 before atomic
+installation and full report validation. The staging asset and workflow artifact are transport,
+not weaker authority: any byte change fails before packaging.
 
 The 2026-07-21 schema-16 freeze review advanced the exact Chrome for Testing Headless Shell pin to
 stable `151.0.7922.34` (120,231,126 bytes, SHA-256

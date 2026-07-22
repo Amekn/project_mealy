@@ -369,11 +369,15 @@ workflow artifact from an unrelated run. A checked manifest binds the repository
 release ID, dedicated staging tag, exact asset name, observed revision, Linux/x86-64 target, byte count, and SHA-256. The
 authenticated release API must report one uploaded asset with that exact name, owner uploader,
 size, and digest on a non-prerelease private draft; the downloaded bytes are independently sized
-and hashed before atomic executable installation. The full soak validator then binds that same
+and hashed. Because draft visibility requires push-level access, only a short promotion job has
+the ephemeral `contents: write` token. It validates the subject before handing it through a
+one-day artifact that can only be downloaded from the same workflow run; downstream build jobs
+retain `contents: read` and independently recheck file type, size, and digest before atomic
+executable installation. The full soak validator then binds that same
 binary's digest and version to the report. RustSec binary audit, real service execution, SBOM,
 package checksums, GitHub provenance attestations, immutable release creation, and public
-clean-host install tests all occur after promotion. The draft asset is transport, not authority:
-mutating or replacing it cannot satisfy the committed digest.
+clean-host install tests all occur after promotion. The draft asset and current-run artifact are
+transport, not authority: mutating or replacing either cannot satisfy the committed digest.
 
 ## Explicit non-boundaries
 
