@@ -70,7 +70,9 @@ jobs:
       - run: cargo test --locked --workspace --doc --all-features
       - run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
       - name: Validate checked documentation against public surfaces
-        run: scripts/validate-documentation.py --cli target/debug/mealyctl
+        run: |
+          scripts/validate-documentation.py --cli target/debug/mealyctl
+          scripts/test-documentation-validator.sh target/debug/mealyctl
       - name: Audit locked dependencies against RustSec
         run: |
           cargo install --locked cargo-audit --version 0.22.2
@@ -110,6 +112,7 @@ jobs:
             scripts/select-protected-ci-run.sh
             scripts/systemd-service-smoke.sh
             scripts/test-live-provider-acceptance-selector.sh
+            scripts/test-documentation-validator.sh
             scripts/test-protected-ci-run-selector.sh
             scripts/test-public-license-validator.sh
             scripts/test-release-notes.sh
