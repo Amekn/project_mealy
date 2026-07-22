@@ -72,6 +72,7 @@ render() {
   local tag=${3:-v0.1.0}
   local live_url=${4:-https://github.com/Amekn/project_mealy/actions/runs/123}
   "$renderer" "$report" Amekn/project_mealy "$tag" "$commit" \
+    https://github.com/Amekn/project_mealy/actions/runs/321 \
     "$live_url" https://github.com/Amekn/project_mealy/actions/runs/456 "$output"
 }
 
@@ -84,6 +85,8 @@ grep -Fq "$revision" "$temporary/first.md"
 grep -Fq "$daemon_sha256" "$temporary/first.md"
 grep -Fq "86401 observed seconds (86401234 ms)" "$temporary/first.md"
 grep -Fq "80 completed turns across 8 sessions and 10 rounds" "$temporary/first.md"
+grep -Fq "CI run](https://github.com/Amekn/project_mealy/actions/runs/321)" \
+  "$temporary/first.md"
 grep -Fq "live-provider run](https://github.com/Amekn/project_mealy/actions/runs/123)" \
   "$temporary/first.md"
 if grep -Fq "docs/benchmarks/release-soak-lineage.json" "$temporary/first.md"; then
@@ -118,6 +121,15 @@ if render "$valid" "$temporary/wrong-run.md" v0.1.0 \
   https://github.com/another/project/actions/runs/123 \
   >"$temporary/wrong-run.stdout" 2>"$temporary/wrong-run.stderr"; then
   echo "release-note renderer accepted a foreign workflow URL" >&2
+  exit 1
+fi
+if "$renderer" "$valid" Amekn/project_mealy v0.1.0 "$commit" \
+  https://github.com/another/project/actions/runs/321 \
+  https://github.com/Amekn/project_mealy/actions/runs/123 \
+  https://github.com/Amekn/project_mealy/actions/runs/456 \
+  "$temporary/wrong-ci.md" \
+  >"$temporary/wrong-ci.stdout" 2>"$temporary/wrong-ci.stderr"; then
+  echo "release-note renderer accepted a foreign protected-CI URL" >&2
   exit 1
 fi
 

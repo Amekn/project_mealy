@@ -611,6 +611,10 @@ checked selector requires a successful manual `openrouter-free` identity from th
 workflow and repository URL; regression fixtures prove a private provider, stale SHA, failure,
 incomplete run, wrong event/path/name, spoofed title, foreign URL, and malformed API response are
 all rejected.
+The protected CI workflow similarly records its event and SHA in a workflow-controlled run name.
+Its release selector accepts only a successful `push` run for the exact commit on `main` from the
+canonical CI workflow and repository URL; fixtures reject pull-request-only, stale, wrong-branch,
+failed/incomplete, wrong-event/path/name/title, foreign-URL, and malformed responses.
 
 ## Validation gates
 

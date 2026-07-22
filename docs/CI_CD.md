@@ -150,7 +150,8 @@ binary because native link environments are not assumed byte-reproducible across
 
 ## Reviewed live-provider acceptance
 
-The exact final commit needs one successful manual run of `.github/workflows/live-smoke.yml` in the
+The exact final commit needs a successful protected `main` push run of `.github/workflows/ci.yml`
+and one successful manual run of `.github/workflows/live-smoke.yml` in the
 protected `live-provider-smoke` environment. For the public release gate, use `openrouter-free`
 without forcing a model:
 
@@ -194,7 +195,8 @@ Do not move or reuse a published version tag. A correction uses a new semantic v
 
 `.github/workflows/release.yml` then performs these production gates:
 
-- revalidates license, tag ancestry/identity, soak evidence, and exact-commit live acceptance;
+- revalidates license, tag ancestry/identity, soak evidence, exact protected-main CI, and
+  exact-commit free-model live acceptance;
 - isolates private-draft access in one ephemeral promotion job and rehashes its current-run handoff;
 - repeats strict tests, sandbox/browser/service proofs, RustSec, and auditable binary inspection;
 - builds native Linux x86-64 and ARM64 archives and Debian packages;
