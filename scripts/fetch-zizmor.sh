@@ -6,10 +6,10 @@ if [[ $# -ne 1 ]]; then
   exit 64
 fi
 
-readonly version=1.27.0
+readonly version=1.28.0
 readonly target=x86_64-unknown-linux-gnu
-readonly expected_sha256=277f2bd8fd37cf60c42ab7afca6faa884e65440fa31e02b44bdaae60f62a358f
-readonly expected_size=8872925
+readonly expected_sha256=e87b67160194884e375a46a12c57ccc904f762b53845f254fab7f17d98809c09
+readonly expected_size=8883925
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo "zizmor bootstrap supports only Linux x86_64 hosts" >&2

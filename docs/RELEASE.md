@@ -108,6 +108,13 @@ commit `f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6` (`v4.2.0`), and Syft to `v1.48
 formal soak subject was built. Checkout, artifact upload/download, Cargo audit/about/auditable,
 and the remaining reviewed pins were already current at that boundary.
 
+The 2026-07-22 pre-publication refresh retained that exact browser and advanced Checkout to
+commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`), Syft to `v1.49.0`, and the
+size/SHA-pinned offline zizmor bootstrap to `v1.28.0`. Zizmor `v1.28.0` removes the credential
+[debug-logging defect](https://github.com/zizmorcore/zizmor/security/advisories/GHSA-f42p-wjw5-97qh)
+in `v1.27.0`; Mealy's affected runs used explicit offline, non-verbose mode, and a token-shape scan
+of their strict-job logs found no credential-shaped output.
+
 The native tag jobs run
 `scripts/validate-public-license.sh` and refuse publication if restrictive terms,
 redirected/mismatched license metadata, an unsupported/mismatched license text, or a workspace
