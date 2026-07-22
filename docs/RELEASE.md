@@ -147,6 +147,9 @@ The workflow-controlled run name records the selected provider and exact commit.
 publication jobs call the same checked selector, which rejects private/direct-provider successes,
 stale commits, unsuccessful or non-manual runs, foreign workflow paths, and noncanonical run URLs;
 only the reviewed `openrouter-free` run qualifies the public release.
+Protected CI has a separate workflow-controlled event/SHA identity. Both release stages require a
+successful `push` run on `main` from the canonical CI workflow and repository URL, so ancestry or a
+green pull-request check alone cannot qualify a tag.
 
 After publication, the same tag workflow downloads the immutable public assets without build-job
 state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on
