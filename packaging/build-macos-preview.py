@@ -24,19 +24,60 @@ TARGETS = {"macos-arm64-preview", "macos-x86_64-preview"}
 HOST_PATH = re.compile(
     rb"/(?:home|Users)/[^/\x00-\x1f]+/|/root/|[A-Za-z]:[/\\]Users[/\\]"
 )
+RELEASE_DOCUMENTS = (
+    "API.md",
+    "CI_CD.md",
+    "CLI.md",
+    "DOMAIN_MODEL.md",
+    "IMPLEMENTATION_PLAN.md",
+    "OPERATIONS.md",
+    "PRODUCTION_READINESS.md",
+    "QUICKSTART.md",
+    "README.md",
+    "RELEASE.md",
+    "REQUIREMENTS_COVERAGE.md",
+    "TESTING.md",
+    "THREAT_MODEL.md",
+    "benchmarks/2026-07-12-development-soak.json",
+    "benchmarks/2026-07-13-debian-13-installed-package-smoke.md",
+    "benchmarks/2026-07-13-development-soak.json",
+    "benchmarks/2026-07-13-five-minute-paced-soak.json",
+    "benchmarks/2026-07-13-live-public-web-fetch.md",
+    "benchmarks/2026-07-13-schema14-long-soak-failure.md",
+    "benchmarks/2026-07-13-storage-optimized-soak.json",
+    "benchmarks/2026-07-13-supply-chain-policy-audit.md",
+    "benchmarks/2026-07-13-thirty-minute-paced-soak.json",
+    "benchmarks/2026-07-13-ubuntu-24.04-installed-package-smoke.md",
+    "benchmarks/2026-07-14-nine-hour-supervisor-interruption.md",
+    "benchmarks/2026-07-15-fedora-44-installed-package-smoke.md",
+    "benchmarks/2026-07-16-schema15-long-soak-contention-failure.md",
+    "benchmarks/2026-07-16-schema15-release-soak-lineage.json",
+    "benchmarks/2026-07-16-schema15-release-soak.json",
+    "benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md",
+    "benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md",
+    "benchmarks/README.md",
+    "benchmarks/release-soak.json",
+    "benchmarks/release-soak-subject.json",
+    "decisions/0001-modular-monolith-and-workers.md",
+    "decisions/0002-transactional-journal.md",
+    "decisions/0003-effect-recovery.md",
+    "decisions/0004-security-boundaries.md",
+    "decisions/0005-durable-session-inbox.md",
+    "decisions/0006-context-and-memory.md",
+    "decisions/0007-local-api.md",
+    "decisions/0008-risk-based-validation.md",
+    "decisions/0009-sqlite-writer-and-snapshot-readers.md",
+    "decisions/README.md",
+    "research/GAP_MATRIX.md",
+    "research/REFERENCE_SYSTEMS.md",
+)
 PACKAGE_FILES = (
     "LICENSE",
     "ARCHITECTURE.md",
     "README.md",
     "REQUIREMENTS.md",
     "SECURITY.md",
-    "docs/API.md",
-    "docs/CI_CD.md",
-    "docs/CLI.md",
-    "docs/OPERATIONS.md",
-    "docs/PRODUCTION_READINESS.md",
-    "docs/QUICKSTART.md",
-    "docs/RELEASE.md",
+    *(f"docs/{document}" for document in RELEASE_DOCUMENTS),
 )
 
 
@@ -205,6 +246,23 @@ def main(arguments: list[str]) -> int:
         fail("macOS preview numeric identity is outside its bound")
 
     repository = Path(__file__).resolve().parent.parent
+    docs_root = repository / "docs"
+    document_entries = tuple(docs_root.rglob("*"))
+    actual_documents = tuple(
+        sorted(
+            path.relative_to(docs_root).as_posix()
+            for path in document_entries
+            if path.is_file() and not path.is_symlink()
+        )
+    )
+    if (
+        actual_documents != tuple(sorted(RELEASE_DOCUMENTS))
+        or any(
+            path.is_symlink() or (not path.is_file() and not path.is_dir())
+            for path in document_entries
+        )
+    ):
+        fail("macOS release documentation inventory is incomplete or unsupported")
     binary_dir = Path(binary_text).resolve()
     raw_sbom = Path(raw_sbom_text).resolve()
     licenses = Path(licenses_text).resolve()
