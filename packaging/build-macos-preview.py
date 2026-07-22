@@ -32,6 +32,7 @@ PACKAGE_FILES = (
     "SECURITY.md",
     "docs/API.md",
     "docs/CI_CD.md",
+    "docs/CLI.md",
     "docs/OPERATIONS.md",
     "docs/PRODUCTION_READINESS.md",
     "docs/QUICKSTART.md",

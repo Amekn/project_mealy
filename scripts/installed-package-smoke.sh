@@ -73,6 +73,7 @@ schema_version=$(jq -er '.stateSchemaVersion' "$manifest")
 [[ -f $prefix/share/mealy/SECURITY.md ]]
 [[ -f $prefix/share/mealy/THIRD-PARTY-LICENSES.html ]]
 [[ -f $prefix/share/mealy/docs/README.md ]]
+[[ -f $prefix/share/mealy/docs/CLI.md ]]
 [[ -f $prefix/share/mealy/docs/REQUIREMENTS_COVERAGE.md ]]
 [[ -f $prefix/share/mealy/docs/TESTING.md ]]
 [[ -f $prefix/share/mealy/docs/benchmarks/README.md ]]

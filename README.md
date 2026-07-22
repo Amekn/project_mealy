@@ -64,7 +64,8 @@ At the `you>` prompt, plain text queues a turn and `/help` lists steering, appro
 governed tools, and `/attach PATH`. For a persistent user service after installing both binaries
 side by side, run `mealyctl --home "$HOME/.mealy" service install` and execute the printed
 activation command. See the [quickstart](docs/QUICKSTART.md) for provider setup and capabilities,
-or the [release guide](docs/RELEASE.md) for attested archive and Debian-package
+the [CLI reference](docs/CLI.md) for the complete public command map, or the
+[release guide](docs/RELEASE.md) for attested archive and Debian-package
 install/upgrade/rollback behavior. Treat a build as published only when its exact tag workflow has
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.

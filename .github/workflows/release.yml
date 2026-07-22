@@ -190,6 +190,8 @@ jobs:
       - run: cargo test --locked --workspace --all-targets --all-features
       - run: cargo test --locked --workspace --doc --all-features
       - run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+      - name: Validate checked documentation against public surfaces
+        run: scripts/validate-documentation.py --cli target/debug/mealyctl
       - name: Verify interactive dashboard against a real daemon
         run: scripts/dashboard-smoke.sh
       - run: packaging/test-packaging.sh
@@ -403,6 +405,8 @@ jobs:
         run: cargo audit --deny warnings
       - name: Build auditable locked preview binaries
         run: scripts/build-release-binaries.sh --auditable
+      - name: Validate checked documentation against the native public CLI
+        run: scripts/validate-documentation.py --cli target/release/mealyctl
       - name: Audit the exact preview binaries
         run: cargo audit bin target/release/mealyd target/release/mealyctl
       - name: Verify exact macOS conversation, replay, backup, and LaunchAgent drain

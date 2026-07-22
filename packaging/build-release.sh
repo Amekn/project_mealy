@@ -24,6 +24,7 @@ state_schema_version=$9
 release_documents=(
   API.md
   CI_CD.md
+  CLI.md
   DOMAIN_MODEL.md
   IMPLEMENTATION_PLAN.md
   OPERATIONS.md

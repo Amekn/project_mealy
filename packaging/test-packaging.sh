@@ -386,6 +386,7 @@ printf 'preserve durable state\n' >"$temporary/home/state.keep"
 [[ -f $temporary/prefix/share/mealy/SBOM.cdx.json ]]
 [[ -f $temporary/prefix/share/mealy/THIRD-PARTY-LICENSES.html ]]
 [[ -f $temporary/prefix/share/mealy/docs/README.md ]]
+[[ -f $temporary/prefix/share/mealy/docs/CLI.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/REQUIREMENTS_COVERAGE.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/benchmarks/README.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/benchmarks/release-soak-subject.json ]]
