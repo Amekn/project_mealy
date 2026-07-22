@@ -1,5 +1,7 @@
 name: mealy-live-provider-smoke
 
+run-name: 'Mealy live acceptance: ${{ inputs.provider }} @ ${{ github.sha }}'
+
 on:
   workflow_dispatch:
     inputs:
