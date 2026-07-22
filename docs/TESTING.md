@@ -410,7 +410,13 @@ paths. The release packager adds a platform-shaped user-home scan and its fixtur
 injects `/home/release-builder/private/source.rs` to prove rejection. For reproduction review,
 build into two absolute target directories with distinct Cargo homes, compare both executables
 byte-for-byte, scan printable strings for user-home paths, and run `cargo audit bin` on the exact
-promoted binaries. The current auditable pairs are byte-identical across that boundary.
+promoted binaries. The current auditable pairs are byte-identical across that same-host boundary;
+the release process deliberately makes no cross-distribution linker reproducibility claim. The
+x86-64 tag job additionally runs `scripts/fetch-release-soak-subject.sh` to promote the exact
+external-soak daemon through a strict checked manifest, then applies binary audit, soak validation,
+service, SBOM, package, attestation, and public-install tests to the promoted bytes. The fetcher's
+mock-API regression proves success and rejects report-digest drift, a foreign uploader, and remote
+asset-digest drift without network access.
 The daemon unit regression also inspects and executes its dynamic-linker discovery command: the
 program must be exact `/usr/bin/ldd`, arguments must begin with `--`, and the only explicitly
 retained environment entry is deterministic `LC_ALL=C` after an environment clear. A release

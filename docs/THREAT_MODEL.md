@@ -362,6 +362,19 @@ backup/restore verification; bounded at-rest compression whose declared and actu
 sizes, UTF-8/JSON shape, and logical digest are rechecked before dispatch/replay; optional encryption
 and future hash-chain checkpoints.
 
+### A staging asset substitutes a different release daemon
+
+Controls: the x86-64 soak subject is never selected by a mutable URL, display name alone, or a
+workflow artifact from an unrelated run. A checked manifest binds the repository, numeric draft
+release ID, dedicated staging tag, exact asset name, observed revision, Linux/x86-64 target, byte count, and SHA-256. The
+authenticated release API must report one uploaded asset with that exact name, owner uploader,
+size, and digest on a non-prerelease private draft; the downloaded bytes are independently sized
+and hashed before atomic executable installation. The full soak validator then binds that same
+binary's digest and version to the report. RustSec binary audit, real service execution, SBOM,
+package checksums, GitHub provenance attestations, immutable release creation, and public
+clean-host install tests all occur after promotion. The draft asset is transport, not authority:
+mutating or replacing it cannot satisfy the committed digest.
+
 ## Explicit non-boundaries
 
 - prompt instructions;

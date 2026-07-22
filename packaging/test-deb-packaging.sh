@@ -113,6 +113,8 @@ cmp "$release_root/docs/README.md" \
   "$temporary/extracted/usr/share/doc/mealy/docs/README.md"
 cmp "$release_root/docs/benchmarks/README.md" \
   "$temporary/extracted/usr/share/doc/mealy/docs/benchmarks/README.md"
+cmp "$release_root/docs/benchmarks/release-soak-subject.json" \
+  "$temporary/extracted/usr/share/doc/mealy/docs/benchmarks/release-soak-subject.json"
 cmp "$release_root/THIRD-PARTY-LICENSES.html" \
   "$temporary/extracted/usr/share/doc/mealy/third-party-licenses.html"
 [[ $(stat -c '%a' "$temporary/extracted/usr/share/doc/mealy/third-party-licenses.html") == 644 ]]

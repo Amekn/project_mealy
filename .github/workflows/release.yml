@@ -161,6 +161,15 @@ jobs:
         run: cargo audit --deny warnings
       - name: Build auditable locked release binaries
         run: scripts/build-release-binaries.sh --auditable
+      - name: Promote the exact soaked x86_64 daemon
+        if: ${{ matrix.target == 'linux-x86_64-gnu' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          scripts/fetch-release-soak-subject.sh
+          docs/benchmarks/release-soak-subject.json
+          docs/benchmarks/release-soak.json
+          target/release/mealyd "$GITHUB_REPOSITORY"
       - name: Audit the exact release binaries
         run: cargo audit bin target/release/mealyd target/release/mealyctl
       - name: Bind the checked 24-hour soak to the exact release daemon

@@ -115,6 +115,8 @@ jobs:
             python3 -m py_compile packaging/build-macos-preview.py
       - name: Verify release-soak evidence gate
         run: scripts/test-release-soak-validator.sh
+      - name: Verify exact soak-subject promotion gate
+        run: scripts/test-release-soak-subject-fetch.sh
       - name: Verify public-release license gate
         run: scripts/test-public-license-validator.sh
       - name: Verify deterministic release notes

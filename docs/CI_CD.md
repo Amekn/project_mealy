@@ -126,6 +126,18 @@ recovery/replay, SQLite integrity `ok`, clean drain, and zero residual work. If 
 the release binaries or runtime/storage semantics after the soak, treat the report as stale and
 repeat the required candidate validation rather than editing its measurements.
 
+For an external soak, the exact x86-64 `mealyd` subject must also be available through the checked
+`docs/benchmarks/release-soak-subject.json` promotion manifest. The source is a private draft
+release bound by numeric release ID under a dedicated `soak-subject-<revision>` tag, not an
+unpinned URL or a pull-request artifact. Before tagging, run
+`scripts/test-release-soak-subject-fetch.sh`; the real tag workflow
+then authenticates to the repository, selects exactly one owner-uploaded asset, checks GitHub's
+asset digest and byte count against the manifest, checks the manifest against the full soak report,
+downloads it, recomputes the SHA-256, and verifies `mealyd --version`. It subsequently audits,
+service-tests, packages, SBOMs, attests, publishes, and clean-host tests that exact daemon. A
+hosted-runner rebuild is still required as a source/audit check, but it cannot replace the observed
+binary because native link environments are not assumed byte-reproducible across distributions.
+
 ## Reviewed live-provider acceptance
 
 The exact final commit needs one successful manual run of `.github/workflows/live-smoke.yml` in the
