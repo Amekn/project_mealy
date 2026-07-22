@@ -487,7 +487,13 @@ remove it before uninstalling.
    `docs/benchmarks/release-soak-lineage.json` only when a required rebase changed the observed
    commit ID while retaining its exact Git tree. Investigate any identity, integrity, replay, residue, recovery, or
    identity failure before tagging; the tag workflow repeats this gate and cannot publish without
-   it.
+   it. The validator also rejects a tag when Cargo manifests, the lockfile/toolchain configuration,
+   compiled application or library sources/assets/migrations, schemas, or the release-binary build
+   entry point changed after the observed revision. Only evidence, packaging, workflow, and
+   documentation follow-ups may advance without repeating the soak, and all still require protected
+   CI. Follow [Stage the exact soak subject](CI_CD.md#stage-the-exact-soak-subject) to create the
+   unique annotated staging tag, private draft release, owner-uploaded asset, and metadata-derived
+   promotion manifest; validate a fresh download before opening the evidence PR.
 4. Run the manual `mealy-live-provider-smoke` workflow against the exact protected commit, approve
    its `live-provider-smoke` environment deployment, and retain the successful run URL. Then create
    and push the reviewed tag. The release workflow refuses a mismatched version, a tag that does

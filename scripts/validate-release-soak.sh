@@ -136,6 +136,36 @@ elif [[ $direct_ancestor != true ]]; then
   exit 65
 fi
 
+# Evidence, packaging, workflow, and documentation follow-ups may legitimately land after a
+# successful soak. The source inputs that can change either shipped Rust binary may not: otherwise
+# the exact promoted daemon would no longer correspond to the release tag's runtime source and a
+# newly built mealyctl could silently cross an unsoaked compatibility boundary.
+source_baseline_revision=$revision
+if [[ -n $release_lineage_revision ]]; then
+  source_baseline_revision=$release_lineage_revision
+fi
+runtime_source_paths=(
+  Cargo.toml
+  Cargo.lock
+  ':(glob)rust-toolchain*'
+  ':(glob).cargo/**'
+  ':(glob)apps/*/Cargo.toml'
+  ':(glob)apps/*/build.rs'
+  ':(glob)apps/*/src/**'
+  ':(glob)apps/*/assets/**'
+  ':(glob)crates/*/Cargo.toml'
+  ':(glob)crates/*/build.rs'
+  ':(glob)crates/*/src/**'
+  ':(glob)crates/*/migrations/**'
+  ':(glob)schemas/**'
+  scripts/build-release-binaries.sh
+)
+if ! git diff --quiet --exit-code "$source_baseline_revision" "$expected_commit" -- \
+  "${runtime_source_paths[@]}"; then
+  echo "release runtime source inputs changed after the observed soak revision" >&2
+  exit 65
+fi
+
 daemon_sha256=$(sha256sum "$mealyd")
 daemon_sha256=${daemon_sha256%% *}
 daemon_version=$("$mealyd" --version)
