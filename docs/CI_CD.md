@@ -131,7 +131,12 @@ The release report at `docs/benchmarks/release-soak.json` must pass
 external-release-binary run of at least 86,400 seconds with complete accounting, successful
 recovery/replay, SQLite integrity `ok`, clean drain, and zero residual work. If code changes alter
 the release binaries or runtime/storage semantics after the soak, treat the report as stale and
-repeat the required candidate validation rather than editing its measurements.
+repeat the required candidate validation rather than editing its measurements. The validator
+enforces this boundary: Cargo manifests, the lockfile/toolchain configuration, compiled application
+and library sources/assets/migrations, schemas, and the release-binary build entry point must be
+unchanged between the observed revision (or its identical-tree lineage commit) and the proposed
+release commit. Evidence, packaging, workflow, and documentation follow-ups remain eligible but
+still receive protected CI.
 
 For an external soak, the exact x86-64 `mealyd` subject must also be available through the checked
 `docs/benchmarks/release-soak-subject.json` promotion manifest. The source is a private draft
@@ -147,6 +152,68 @@ count and SHA-256 before installation. It subsequently audits, service-tests, pa
 attests, publishes, and clean-host tests that exact daemon. A
 hosted-runner rebuild is still required as a source/audit check, but it cannot replace the observed
 binary because native link environments are not assumed byte-reproducible across distributions.
+
+### Stage the exact soak subject
+
+After the terminal report passes locally, stage the observed daemon as a private draft transport
+asset before opening the evidence PR. This is not the public production release. Run from the
+canonical repository on the Linux soak host, with an authenticated `gh` session that can create a
+draft release:
+
+```sh
+repository=Amekn/project_mealy
+report=/absolute/path/to/release-soak.json
+mealyd=/absolute/path/to/the/exact/soaked/mealyd
+observed=$(jq -er '.revision | select(test("^[0-9a-f]{40}$"))' "$report")
+staging_tag="soak-subject-$observed"
+asset_name="mealy-soak-${observed}-linux-x86_64-gnu-mealyd"
+test "$(git rev-parse --verify "${observed}^{commit}")" = "$observed"
+scripts/validate-release-soak.sh "$report" "$mealyd" "$(git rev-parse origin/main)"
+
+git tag -a "$staging_tag" "$observed" -m "Mealy release soak subject $observed"
+git push origin "refs/tags/$staging_tag"
+staging=$(mktemp -d)
+install -m 0755 "$mealyd" "$staging/$asset_name"
+gh release create "$staging_tag" "$staging/$asset_name" --draft --verify-tag \
+  --title "Mealy release soak subject $observed" \
+  --notes "Private exact-binary transport for the validated release soak."
+rm -rf -- "$staging"
+```
+
+Derive the checked manifest from GitHub's current release and asset metadata; never type its ID,
+size, or digest from memory:
+
+```sh
+release=$(gh api "repos/$repository/releases/tags/$staging_tag")
+release_id=$(jq -er '.id' <<<"$release")
+asset=$(jq -er --arg name "$asset_name" \
+  '[.assets[] | select(.name == $name)] | if length == 1 then .[0] else error("asset identity") end' \
+  <<<"$release")
+asset_bytes=$(jq -er '.size' <<<"$asset")
+asset_digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$asset")
+asset_sha256=${asset_digest#sha256:}
+jq -n --arg repository "$repository" --argjson release_id "$release_id" \
+  --arg release_tag "$staging_tag" --arg asset_name "$asset_name" \
+  --arg asset_sha256 "$asset_sha256" --argjson asset_bytes "$asset_bytes" \
+  --arg revision "$observed" '
+  {
+    schemaVersion: "mealy.soak-subject.v1",
+    repository: $repository,
+    releaseId: $release_id,
+    releaseTag: $release_tag,
+    assetName: $asset_name,
+    assetSha256: $asset_sha256,
+    assetBytes: $asset_bytes,
+    revision: $revision,
+    target: {os: "linux", architecture: "x86_64"}
+  }
+  ' >docs/benchmarks/release-soak-subject.json
+```
+
+Copy the terminal report without editing its measurements, then run
+`scripts/fetch-release-soak-subject.sh` and `scripts/validate-release-soak.sh` against a fresh
+download before committing either JSON file. Keep prior draft subjects for audit; their unique tags,
+release IDs, and asset names prevent them from qualifying a newer manifest.
 
 ## Reviewed live-provider acceptance
 

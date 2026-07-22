@@ -5,7 +5,6 @@ export LC_ALL=C
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 validator=$repository_root/scripts/validate-release-soak.sh
 source_report=$repository_root/docs/benchmarks/2026-07-13-storage-optimized-soak.json
-lineage_template=$repository_root/docs/benchmarks/2026-07-16-schema15-release-soak-lineage.json
 
 for command in git jq mktemp sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -87,21 +86,61 @@ jq \
 
 (cd "$repository_root" && "$validator" "$valid" "$mealyd" "$revision") >/dev/null
 
-lineage_observed_revision=$(jq -er '.observedRevision' "$lineage_template")
+lineage_repository=$temporary/lineage-repository
+mkdir -p "$lineage_repository/apps/mealyd/src" "$lineage_repository/docs"
+git -C "$lineage_repository" init -q
+git -C "$lineage_repository" config user.name Mealy
+git -C "$lineage_repository" config user.email mealy@example.invalid
+printf '[workspace]\nmembers = ["apps/mealyd"]\n' >"$lineage_repository/Cargo.toml"
+printf '# lock fixture\n' >"$lineage_repository/Cargo.lock"
+printf 'fn main() {}\n' >"$lineage_repository/apps/mealyd/src/main.rs"
+git -C "$lineage_repository" add Cargo.toml Cargo.lock apps/mealyd/src/main.rs
+git -C "$lineage_repository" commit -qm 'observed source revision'
+lineage_observed_revision=$(git -C "$lineage_repository" rev-parse HEAD)
+lineage_tree=$(git -C "$lineage_repository" rev-parse "${lineage_observed_revision}^{tree}")
+lineage_release_revision=$(printf 'rebased identical source\n' \
+  | git -C "$lineage_repository" commit-tree "$lineage_tree")
+git -C "$lineage_repository" update-ref refs/heads/release-lineage \
+  "$lineage_release_revision"
+git -C "$lineage_repository" symbolic-ref HEAD refs/heads/release-lineage
+printf 'release evidence only\n' >"$lineage_repository/docs/release.md"
+git -C "$lineage_repository" add docs/release.md
+git -C "$lineage_repository" commit -qm 'record release evidence'
+lineage_expected_revision=$(git -C "$lineage_repository" rev-parse HEAD)
+
 lineage_valid=$temporary/lineage-valid.json
 jq --arg revision "$lineage_observed_revision" '.revision = $revision' \
   "$valid" >"$lineage_valid"
 lineage_valid_sha256=$(sha256sum "$lineage_valid")
 lineage_valid_sha256=${lineage_valid_sha256%% *}
+lineage_observed_payload=$temporary/lineage-observed-commit.txt
+git -C "$lineage_repository" cat-file commit "$lineage_observed_revision" \
+  >"$lineage_observed_payload"
 lineage_proof=$temporary/lineage-valid-proof.json
-jq --arg report_sha256 "$lineage_valid_sha256" \
-  '.reportSha256 = $report_sha256' "$lineage_template" >"$lineage_proof"
+jq -n \
+  --arg report_sha256 "$lineage_valid_sha256" \
+  --arg observed_revision "$lineage_observed_revision" \
+  --arg observed_tree "$lineage_tree" \
+  --rawfile observed_payload "$lineage_observed_payload" \
+  --arg release_revision "$lineage_release_revision" '
+  {
+    schemaVersion: "mealy.soak-lineage.v1",
+    reportSha256: $report_sha256,
+    observedRevision: $observed_revision,
+    observedGitTree: $observed_tree,
+    observedCommitPayload: $observed_payload,
+    releaseLineageRevision: $release_revision,
+    releaseLineageGitTree: $observed_tree,
+    transformation: "github_rebase_merge"
+  }
+  ' >"$lineage_proof"
 
-(cd "$repository_root" \
-  && "$validator" "$lineage_valid" "$mealyd" "$revision" "$lineage_proof") \
+(cd "$lineage_repository" \
+  && "$validator" "$lineage_valid" "$mealyd" "$lineage_expected_revision" \
+    "$lineage_proof") \
   >/dev/null
-if (cd "$repository_root" \
-  && "$validator" "$lineage_valid" "$mealyd" "$revision") \
+if (cd "$lineage_repository" \
+  && "$validator" "$lineage_valid" "$mealyd" "$lineage_expected_revision") \
   >"$temporary/missing-lineage.stdout" 2>"$temporary/missing-lineage.stderr"; then
   echo "release soak validator accepted a non-ancestor report without lineage proof" >&2
   exit 1
@@ -133,8 +172,9 @@ expect_lineage_rejection() {
   local filter=$2
   local candidate=$temporary/$name.json
   jq "$filter" "$lineage_proof" >"$candidate"
-  if (cd "$repository_root" \
-    && "$validator" "$lineage_valid" "$mealyd" "$revision" "$candidate") \
+  if (cd "$lineage_repository" \
+    && "$validator" "$lineage_valid" "$mealyd" "$lineage_expected_revision" \
+      "$candidate") \
     >"$temporary/$name.stdout" 2>"$temporary/$name.stderr"; then
     echo "release soak validator accepted invalid $name lineage evidence" >&2
     exit 1
@@ -149,5 +189,40 @@ expect_lineage_rejection lineage-wrong-release-revision \
 expect_lineage_rejection lineage-wrong-release-tree '.releaseLineageGitTree = ("0" * 40)'
 expect_lineage_rejection lineage-wrong-transformation '.transformation = "manual_relabel"'
 expect_lineage_rejection lineage-extra-field '.unexpected = true'
+
+source_repository=$temporary/source-gate-repository
+mkdir -p "$source_repository/apps/mealyd/src" "$source_repository/docs"
+git -C "$source_repository" init -q
+printf '[workspace]\nmembers = ["apps/mealyd"]\n' >"$source_repository/Cargo.toml"
+printf '# lock fixture\n' >"$source_repository/Cargo.lock"
+printf 'fn main() {}\n' >"$source_repository/apps/mealyd/src/main.rs"
+git -C "$source_repository" add Cargo.toml Cargo.lock apps/mealyd/src/main.rs
+git -C "$source_repository" -c user.name=Mealy -c user.email=mealy@example.invalid \
+  commit -qm 'observed runtime source'
+source_revision=$(git -C "$source_repository" rev-parse HEAD)
+source_gate_report=$temporary/source-gate-report.json
+jq --arg revision "$source_revision" '.revision = $revision' \
+  "$valid" >"$source_gate_report"
+
+printf 'release evidence only\n' >"$source_repository/docs/release.md"
+git -C "$source_repository" add docs/release.md
+git -C "$source_repository" -c user.name=Mealy -c user.email=mealy@example.invalid \
+  commit -qm 'record release evidence'
+documentation_revision=$(git -C "$source_repository" rev-parse HEAD)
+(cd "$source_repository" \
+  && "$validator" "$source_gate_report" "$mealyd" "$documentation_revision") >/dev/null
+
+printf 'fn main() { println!("changed"); }\n' \
+  >"$source_repository/apps/mealyd/src/main.rs"
+git -C "$source_repository" add apps/mealyd/src/main.rs
+git -C "$source_repository" -c user.name=Mealy -c user.email=mealy@example.invalid \
+  commit -qm 'change runtime source'
+changed_runtime_revision=$(git -C "$source_repository" rev-parse HEAD)
+if (cd "$source_repository" \
+  && "$validator" "$source_gate_report" "$mealyd" "$changed_runtime_revision") \
+  >"$temporary/changed-runtime.stdout" 2>"$temporary/changed-runtime.stderr"; then
+  echo "release soak validator accepted changed runtime source inputs" >&2
+  exit 1
+fi
 
 echo "release soak validator: ok"
