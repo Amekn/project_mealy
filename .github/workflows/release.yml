@@ -637,6 +637,7 @@ jobs:
           scripts/prepare-bwrap-boundary.sh
           attestation_help=$(gh attestation verify --help)
           grep -Fq -- '--bundle' <<<"$attestation_help"
+          grep -Fq -- '--source-digest' <<<"$attestation_help"
           gh release verify --help >/dev/null
       - name: Verify immutable public release and exact native assets
         env:
@@ -775,6 +776,7 @@ jobs:
           set -euo pipefail
           attestation_help=$(gh attestation verify --help)
           grep -Fq -- '--bundle' <<<"$attestation_help"
+          grep -Fq -- '--source-digest' <<<"$attestation_help"
           gh release verify --help >/dev/null
           version=${GITHUB_REF_NAME#v}
           archive="mealy-v${version}-${MEALY_TARGET}.tar.gz"
