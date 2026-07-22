@@ -102,6 +102,7 @@ if [[ ! -f $release/PAYLOAD-SHA256SUMS \
   || ! -f $temporary/extracted/usr/share/doc/mealy/QUICKSTART.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/README.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/benchmarks/README.md \
+  || ! -f $temporary/extracted/usr/share/doc/mealy/docs/benchmarks/release-soak-subject.json \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/research/REFERENCE_SYSTEMS.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/third-party-licenses.html \
   || ! -f $temporary/extracted/usr/share/doc/mealy/THREAT_MODEL.md ]]; then

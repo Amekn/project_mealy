@@ -53,6 +53,7 @@ release_documents=(
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
   benchmarks/README.md
   benchmarks/release-soak.json
+  benchmarks/release-soak-subject.json
   decisions/0001-modular-monolith-and-workers.md
   decisions/0002-transactional-journal.md
   decisions/0003-effect-recovery.md

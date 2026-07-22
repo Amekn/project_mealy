@@ -76,6 +76,7 @@ schema_version=$(jq -er '.stateSchemaVersion' "$manifest")
 [[ -f $prefix/share/mealy/docs/REQUIREMENTS_COVERAGE.md ]]
 [[ -f $prefix/share/mealy/docs/TESTING.md ]]
 [[ -f $prefix/share/mealy/docs/benchmarks/README.md ]]
+[[ -f $prefix/share/mealy/docs/benchmarks/release-soak-subject.json ]]
 [[ -f $prefix/share/mealy/docs/decisions/README.md ]]
 [[ -f $prefix/share/mealy/docs/research/REFERENCE_SYSTEMS.md ]]
 [[ -f $prefix/share/mealy/docs/THREAT_MODEL.md ]]

@@ -84,6 +84,18 @@ names an ancestor of this report-bearing tree directly, so no current lineage pr
 The remaining release gates are protected report CI, reviewed free-model OpenRouter acceptance,
 native package/public-download verification, and attested publication.
 
+The soak host and GitHub's Linux runner are different native link environments. A hosted-runner
+rebuild is therefore audited as a source build but is not mislabeled as the byte-identical soak
+subject. The x86-64 release job replaces only `target/release/mealyd` with the exact retained daemon
+described by [the promotion manifest](benchmarks/release-soak-subject.json). That subject is staged
+as one authenticated asset on the private draft release whose `soak-subject-<revision>` tag names
+the observed revision. `scripts/fetch-release-soak-subject.sh` requires the checked repository,
+numeric draft-release ID, tag, unique asset name, owner uploader, GitHub-reported SHA-256, exact size, report revision/digest,
+Linux x86-64 target, and canonical daemon version before installing it. The normal binary audit,
+24-hour validator, systemd service proof, SBOM, package lifecycle, checksums, provenance
+attestation, immutable publication, and public clean-host acceptance then operate on that promoted
+daemon. The staging asset is not a weaker substitute: any byte change fails before packaging.
+
 The 2026-07-21 schema-16 freeze review advanced the exact Chrome for Testing Headless Shell pin to
 stable `151.0.7922.34` (120,231,126 bytes, SHA-256
 `3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14`), `actions/attest` to
