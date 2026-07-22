@@ -325,7 +325,7 @@ impl McpStdioEndpoint {
         self.verify_identity()?;
         let mut session = McpSession::spawn(self, cancellation, timeout)?;
         let discovery = session.initialize_and_discover(cancellation)?;
-        session.shutdown();
+        session.shutdown()?;
         Ok(discovery)
     }
 
@@ -349,7 +349,7 @@ impl McpStdioEndpoint {
             true,
         )?;
         let normalized = normalize_tool_result(&result, server, grant)?;
-        session.shutdown();
+        session.shutdown()?;
         Ok(normalized)
     }
 
@@ -762,28 +762,89 @@ impl McpSession {
         }
     }
 
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<(), McpHostError> {
         self.input.take();
         let started = Instant::now();
-        loop {
+        let clean_exit = loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(status)) => break status.success(),
                 Ok(None) if started.elapsed() < MCP_SHUTDOWN_GRACE => {
                     thread::sleep(MCP_POLL_INTERVAL);
                 }
                 Ok(None) | Err(_) => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
+                    break false;
+                }
+            }
+        };
+        let output_reader_failed = self
+            .output_thread
+            .take()
+            .is_some_and(|handle| handle.join().is_err());
+        let stderr_reader_failed = self
+            .stderr_thread
+            .take()
+            .is_some_and(|handle| handle.join().is_err());
+
+        // A fast server can finish its valid protocol response before either reader thread gets
+        // scheduled. Validate the final reader state only after both pipes have reached EOF so an
+        // over-limit stderr stream or trailing malformed stdout can never win that race.
+        if self.stderr_exceeded.load(Ordering::Acquire) {
+            return Err(McpHostError::OutputLimitExceeded);
+        }
+        if output_reader_failed
+            || stderr_reader_failed
+            || self.stderr_failed.load(Ordering::Acquire)
+        {
+            return Err(McpHostError::ProcessFailed);
+        }
+        self.validate_trailing_output()?;
+        if !clean_exit {
+            return Err(McpHostError::ProcessFailed);
+        }
+        Ok(())
+    }
+
+    fn validate_trailing_output(&mut self) -> Result<(), McpHostError> {
+        let mut reached_eof = false;
+        loop {
+            match self.output.try_recv() {
+                Ok(_) if reached_eof => return Err(McpHostError::InvalidProtocol),
+                Ok(ReaderEvent::Line(bytes)) => {
+                    self.messages = self.messages.saturating_add(1);
+                    if self.messages > MCP_MAXIMUM_MESSAGES {
+                        return Err(McpHostError::OutputLimitExceeded);
+                    }
+                    let message = serde_json::from_slice::<Value>(&bytes)
+                        .map_err(|_| McpHostError::InvalidProtocol)?;
+                    let object = message.as_object().ok_or(McpHostError::InvalidProtocol)?;
+                    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+                        || object.get("id").is_some()
+                        || !matches!(
+                            object.get("method").and_then(Value::as_str),
+                            Some(
+                                "notifications/message"
+                                    | "notifications/progress"
+                                    | "notifications/cancelled"
+                            )
+                        )
+                    {
+                        return Err(McpHostError::InvalidProtocol);
+                    }
+                }
+                Ok(ReaderEvent::Limit) => return Err(McpHostError::OutputLimitExceeded),
+                Ok(ReaderEvent::Malformed) => return Err(McpHostError::InvalidProtocol),
+                Ok(ReaderEvent::Eof) => reached_eof = true,
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
                     break;
                 }
             }
         }
-        if let Some(handle) = self.output_thread.take() {
-            let _ = handle.join();
+        if !reached_eof {
+            return Err(McpHostError::ProcessFailed);
         }
-        if let Some(handle) = self.stderr_thread.take() {
-            let _ = handle.join();
-        }
+        Ok(())
     }
 }
 
@@ -794,7 +855,7 @@ fn terminate_child(child: &mut Child) {
 
 impl Drop for McpSession {
     fn drop(&mut self) {
-        self.shutdown();
+        let _ = self.shutdown();
     }
 }
 

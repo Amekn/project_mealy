@@ -137,25 +137,29 @@ fn stdio_discovery_paginates_and_calls_through_empty_least_authority_boundary() 
 }
 
 #[test]
-fn malformed_extra_stdout_stderr_flood_and_version_mismatch_fail_closed() {
+fn malformed_extra_or_trailing_stdout_stderr_flood_and_version_mismatch_fail_closed() {
     if !sandbox_available() {
         return;
     }
     for (mode, expected) in [
         ("malformed", McpHostError::InvalidProtocol),
         ("extra-stdout", McpHostError::InvalidProtocol),
+        ("trailing-extra-stdout", McpHostError::InvalidProtocol),
         ("stderr-flood", McpHostError::OutputLimitExceeded),
         ("wrong-version", McpHostError::InvalidProtocol),
     ] {
-        let error = discover_mcp_stdio_server(
+        let result = discover_mcp_stdio_server(
             BUBBLEWRAP,
             launcher(),
             "fixture",
             fixture(),
             &fixture_digest(),
             &[mode.to_owned()],
-        )
-        .expect_err("hostile fixture must fail");
+        );
+        let error = match result {
+            Ok(discovery) => panic!("hostile fixture mode {mode} must fail: {discovery:?}"),
+            Err(error) => error,
+        };
         assert_eq!(error, expected, "mode {mode}");
     }
 }
