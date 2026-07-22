@@ -70,6 +70,13 @@ public item must explain its invariant, units, authority, error behavior, and sa
 relevant. Do not use comments to promise behavior that is not enforced by an implementation or
 test.
 
+The validator's bounded `--mode package` does not require Git metadata. Release jobs run it against
+each extracted Linux and macOS archive with the archive's own `mealyctl`, both immediately after
+the native build and again after downloading the immutable public asset. The source-mode router
+comparison remains authoritative for completeness; package mode independently proves the shipped
+core/API/usage documents, local links, endpoint inventory, and CLI command table are usable from
+the distribution itself.
+
 A public transport change must update all of the following in one pull request:
 
 1. framework-neutral DTO rustdoc in `mealy-protocol`;

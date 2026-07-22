@@ -311,6 +311,13 @@ jobs:
             "dist/mealy-v${version}-${MEALY_TARGET}.tar.gz" dist/SHA256SUMS dist \
             "$SOURCE_DATE_EPOCH"
           (cd dist && sha256sum --check --strict SHA256SUMS)
+          package="mealy-v${version}-${MEALY_TARGET}"
+          documentation_root="$RUNNER_TEMP/package-documentation-$MEALY_TARGET"
+          mkdir "$documentation_root"
+          tar -xzf "dist/${package}.tar.gz" -C "$documentation_root"
+          scripts/validate-documentation.py --mode package \
+            --repository "$documentation_root/$package" \
+            --cli "$documentation_root/$package/bin/mealyctl"
           MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true scripts/installed-package-smoke.sh \
             "dist/mealy-v${version}-${MEALY_TARGET}.tar.gz" dist/SHA256SUMS \
             dist/install-mealy.sh
@@ -466,6 +473,9 @@ jobs:
           mkdir extracted
           tar -xzf "dist/${package}.tar.gz" -C extracted
           (cd "extracted/$package" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
+          scripts/validate-documentation.py --mode package \
+            --repository "extracted/$package" \
+            --cli "extracted/$package/bin/mealyctl"
           test "$("extracted/$package/bin/mealyd" --version)" = "mealyd $version"
           test "$("extracted/$package/bin/mealyctl" --version)" = "mealyctl $version"
           scripts/macos-control-plane-smoke.sh \
@@ -737,6 +747,13 @@ jobs:
           set -euo pipefail
           version=${GITHUB_REF_NAME#v}
           chmod 0755 downloaded/install-mealy.sh
+          package="mealy-v${version}-${MEALY_TARGET}"
+          mkdir extracted
+          tar -xzf "downloaded/${package}.tar.gz" -C extracted
+          (cd "extracted/$package" && sha256sum --check --strict PAYLOAD-SHA256SUMS)
+          scripts/validate-documentation.py --mode package \
+            --repository "extracted/$package" \
+            --cli "extracted/$package/bin/mealyctl"
           scripts/installed-package-smoke.sh \
             "downloaded/mealy-v${version}-${MEALY_TARGET}.tar.gz" \
             "downloaded/SHA256SUMS-${MEALY_TARGET}" \
@@ -831,6 +848,9 @@ jobs:
           mkdir extracted
           tar -xzf "downloaded/${package}.tar.gz" -C extracted
           (cd "extracted/$package" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
+          scripts/validate-documentation.py --mode package \
+            --repository "extracted/$package" \
+            --cli "extracted/$package/bin/mealyctl"
           jq -e --arg version "$version" --arg target "$MEALY_TARGET" \
             --arg commit "$GITHUB_SHA" '
             .schemaVersion == "mealy.macos-preview.v1"

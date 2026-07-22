@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
@@ -39,6 +41,11 @@ DOCUMENTED_ENDPOINT = re.compile(
     r"`(?P<method>GET|POST|PUT|PATCH|DELETE)(?:`\s*\|\s*`|\s+)"
     r"(?P<path>/[^`|\s]+)`"
 )
+DOCUMENTED_ENDPOINT_ROW = re.compile(
+    r"^\|\s*`(?P<method>GET|POST|PUT|PATCH|DELETE)`\s*\|\s*"
+    r"`(?P<path>/[^`|\s]+)`\s*\|",
+    re.MULTILINE,
+)
 COMMAND_LINE = re.compile(r"^\s{2}([a-z][a-z0-9-]*)\s{2,}\S")
 DOCUMENTED_COMMAND = re.compile(
     r"^\| `(?P<command>[a-z][a-z0-9-]*)` \| (?P<purpose>[^|]*\S[^|]*) \|$",
@@ -46,6 +53,8 @@ DOCUMENTED_COMMAND = re.compile(
 )
 HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 FENCE = re.compile(r"^\s*(```+|~~~+)")
+MAX_PACKAGED_MARKDOWN_FILES = 256
+MAX_PACKAGED_MARKDOWN_BYTES = 16 * 1024 * 1024
 
 
 class DocumentationError(RuntimeError):
@@ -65,6 +74,15 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         required=True,
         help="built mealyctl executable whose public command surface is authoritative",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("source", "package"),
+        default="source",
+        help=(
+            "validate a Git source checkout exactly, or validate the self-contained "
+            "documentation and CLI in an extracted release package"
+        ),
     )
     return parser.parse_args()
 
@@ -112,6 +130,52 @@ def tracked_markdown(repository: Path) -> list[Path]:
         paths.append(path)
     if not paths:
         raise DocumentationError("repository contains no tracked Markdown")
+    return sorted(paths)
+
+
+def packaged_markdown(repository: Path) -> list[Path]:
+    paths: list[Path] = []
+    total_bytes = 0
+
+    def walk_error(error: OSError) -> None:
+        raise DocumentationError(f"cannot enumerate packaged Markdown: {error}")
+
+    for current, directories, files in os.walk(
+        repository, topdown=True, onerror=walk_error, followlinks=False
+    ):
+        current_path = Path(current)
+        for directory in directories:
+            candidate = current_path / directory
+            if candidate.is_symlink():
+                relative = candidate.relative_to(repository)
+                raise DocumentationError(f"package contains a symlink directory: {relative}")
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            path = current_path / name
+            relative = path.relative_to(repository)
+            try:
+                metadata = path.lstat()
+            except OSError as error:
+                raise DocumentationError(
+                    f"cannot inspect packaged Markdown {relative}: {error}"
+                ) from error
+            if not stat.S_ISREG(metadata.st_mode):
+                raise DocumentationError(
+                    f"packaged Markdown is not a regular file: {relative}"
+                )
+            paths.append(path)
+            total_bytes += metadata.st_size
+            if len(paths) > MAX_PACKAGED_MARKDOWN_FILES:
+                raise DocumentationError(
+                    "package exceeds the 256-file Markdown inventory bound"
+                )
+            if total_bytes > MAX_PACKAGED_MARKDOWN_BYTES:
+                raise DocumentationError(
+                    "package exceeds the 16 MiB Markdown content bound"
+                )
+    if not paths:
+        raise DocumentationError("package contains no Markdown")
     return sorted(paths)
 
 
@@ -220,11 +284,32 @@ def registered_endpoints(api_source: str) -> set[tuple[str, str]]:
     return endpoints
 
 
-def documented_endpoints(api_document: str) -> set[tuple[str, str]]:
-    return {
+def documented_endpoint_rows(api_document: str) -> list[tuple[str, str]]:
+    return [
         (match.group("method"), match.group("path"))
         for match in DOCUMENTED_ENDPOINT.finditer(api_document)
-    }
+    ]
+
+
+def documented_endpoints(api_document: str) -> set[tuple[str, str]]:
+    endpoints = set(documented_endpoint_rows(api_document))
+    table_rows = [
+        (match.group("method"), match.group("path"))
+        for match in DOCUMENTED_ENDPOINT_ROW.finditer(api_document)
+    ]
+    duplicates = sorted(
+        endpoint for endpoint in set(table_rows) if table_rows.count(endpoint) != 1
+    )
+    if duplicates:
+        raise DocumentationError(
+            "API.md duplicates endpoint rows: "
+            + ", ".join(f"{method} {path}" for method, path in duplicates)
+        )
+    if len(endpoints) < 60:
+        raise DocumentationError(
+            f"implausibly small documented API surface: {len(endpoints)} endpoints"
+        )
+    return endpoints
 
 
 def validate_api_contract(repository: Path) -> int:
@@ -238,6 +323,10 @@ def validate_api_contract(repository: Path) -> int:
         details.extend(f"API.md names unregistered endpoint: {method} {path}" for method, path in stale)
         raise DocumentationError("\n".join(details))
     return len(registered)
+
+
+def validate_packaged_api_contract(repository: Path) -> int:
+    return len(documented_endpoints(read_text(repository / "docs/API.md")))
 
 
 def public_commands(cli: Path) -> set[str]:
@@ -289,9 +378,17 @@ def main() -> int:
         if not path.is_file() or path.is_symlink():
             raise DocumentationError(f"required documentation is absent or not a regular file: {relative}")
         read_text(path)
-    markdown = tracked_markdown(repository)
+    markdown = (
+        tracked_markdown(repository)
+        if arguments.mode == "source"
+        else packaged_markdown(repository)
+    )
     link_count = validate_local_links(repository, markdown)
-    endpoint_count = validate_api_contract(repository)
+    endpoint_count = (
+        validate_api_contract(repository)
+        if arguments.mode == "source"
+        else validate_packaged_api_contract(repository)
+    )
     command_count = validate_usage_contract(repository, arguments.cli)
     print(
         "documentation contract: ok "
