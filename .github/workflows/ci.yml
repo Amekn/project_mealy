@@ -67,6 +67,8 @@ jobs:
         run: scripts/dashboard-smoke.sh
       - run: cargo test --locked --workspace --doc --all-features
       - run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+      - name: Validate checked documentation against public surfaces
+        run: scripts/validate-documentation.py --cli target/debug/mealyctl
       - name: Audit locked dependencies against RustSec
         run: |
           cargo install --locked cargo-audit --version 0.22.2
@@ -112,7 +114,8 @@ jobs:
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" \
-            python3 -m py_compile packaging/build-macos-preview.py
+            python3 -m py_compile \
+              packaging/build-macos-preview.py scripts/validate-documentation.py
       - name: Verify release-soak evidence gate
         run: scripts/test-release-soak-validator.sh
       - name: Verify exact soak-subject promotion gate

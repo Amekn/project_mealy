@@ -621,6 +621,7 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 cargo test --locked --workspace --doc --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+scripts/validate-documentation.py --cli target/debug/mealyctl
 real-daemon dashboard smoke, RustSec audit, Bash syntax plus ShellCheck, and packaging lifecycle
 ```
 
@@ -635,6 +636,11 @@ conformance lanes. The service lane checks an actual approved mutation because a
 alone cannot prove that the outer syscall policy permits secure file creation. `doctor` explicitly
 denies every profile whose guarantees the current host cannot supply. Live-provider tests are
 opt-in and cannot be the sole evidence for deterministic behavior.
+The documentation validator uses the built CLI and registered API router as authorities. It rejects
+undocumented or stale HTTP method/path pairs, public top-level commands absent from the usage set,
+missing/empty core documents, broken local Markdown paths or fragments, symlink substitutions, and
+links that escape the repository. Remote links remain an operator-review concern so an unrelated
+network outage cannot make protected CI nondeterministic.
 The strict gate also runs `scripts/test-release-notes.sh`. Its synthetic valid report must render
 byte-identically twice, while tag/version drift, a foreign workflow URL, a short or dirty soak,
 incomplete turns, corrupt SQLite, and residual work must all fail. The tag publisher uses that same

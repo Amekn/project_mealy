@@ -43,6 +43,7 @@ cross-cutting change, reproduce the strict documentation and packaging gates too
 ```sh
 cargo test --locked --workspace --doc --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+scripts/validate-documentation.py --cli target/debug/mealyctl
 bash -n packaging/*.sh scripts/*.sh
 shellcheck packaging/*.sh scripts/*.sh
 scripts/test-public-license-validator.sh
@@ -60,9 +61,14 @@ boundaries to make a workstation pass.
 ## Code and API documentation contract
 
 All workspace crates enable the `missing_docs` lint. Protected CI builds workspace rustdoc with
-warnings denied, and tests documentation examples. Every public item must explain its invariant,
-units, authority, error behavior, and safety boundary where relevant. Do not use comments to
-promise behavior that is not enforced by an implementation or test.
+warnings denied, and tests documentation examples. It also runs the real `mealyctl --help` surface
+through `scripts/validate-documentation.py`, compares every registered Axum method/path pair with
+`API.md`, and resolves every tracked repository-local Markdown target and fragment. Missing or
+stale API routes, undocumented public top-level commands, broken local links, empty required
+documents, symlink substitutions, and repository escapes fail the same protected gate. Every
+public item must explain its invariant, units, authority, error behavior, and safety boundary where
+relevant. Do not use comments to promise behavior that is not enforced by an implementation or
+test.
 
 A public transport change must update all of the following in one pull request:
 
@@ -94,9 +100,10 @@ required release-one set:
 
 `.github/workflows/ci.yml` is the executable definition. The strict lane checks formatting,
 workflow policy, dependency policy, dashboard JavaScript, clippy, all targets/features, doc tests,
-rustdoc, RustSec, generated third-party notices, shell entry points, release evidence, and all
-package formats. Dedicated lanes exercise Linux Bubblewrap/systemd and the content-pinned browser;
-native jobs compile Linux x86-64/ARM64 and macOS ARM64/Intel control planes.
+rustdoc, checked Markdown/API/CLI documentation consistency, RustSec, generated third-party
+notices, shell entry points, release evidence, and all package formats. Dedicated lanes exercise
+Linux Bubblewrap/systemd and the content-pinned browser; native jobs compile Linux x86-64/ARM64 and
+macOS ARM64/Intel control planes.
 
 GitHub vulnerability alerts and Dependabot security updates must remain enabled. The checked
 `.github/dependabot.yml` opens bounded weekly Cargo and GitHub Actions update pull requests; those

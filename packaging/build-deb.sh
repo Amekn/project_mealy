@@ -40,6 +40,7 @@ deb_name="mealy_${debian_version}_${debian_architecture}.deb"
 release_documents=(
   API.md
   CI_CD.md
+  CLI.md
   DOMAIN_MODEL.md
   IMPLEMENTATION_PLAN.md
   OPERATIONS.md

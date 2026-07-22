@@ -17,6 +17,11 @@ Open `target/doc/mealy_protocol/index.html` for request/response fields and
 a documented enum uses `snake_case`. Mutation bodies reject unsupported `apiVersion` values, and
 most command DTOs reject unknown fields.
 
+Before changing a public route, run
+`scripts/validate-documentation.py --cli target/debug/mealyctl`. The protected documentation gate
+compares this reference with every registered Axum method/path pair, so both an undocumented route
+and a stale documented route fail CI.
+
 ## Connection and authentication
 
 `mealyd` binds only to a loopback address. On startup it writes an owner-only connection descriptor
