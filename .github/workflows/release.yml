@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: rustup show
@@ -66,7 +66,7 @@ jobs:
       # authority out of every build, package, attestation, and publication job.
       contents: write # Read the manifest-pinned private draft asset for this run's handoff.
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -117,7 +117,7 @@ jobs:
       MEALY_TARGET: ${{ matrix.target }}
       MEALY_HOST_ARCHITECTURE: ${{ matrix.host_architecture }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -271,7 +271,7 @@ jobs:
           format: cyclonedx-json
           output-file: sbom/mealy.raw.cdx.json
           artifact-name: mealy-${{ github.ref_name }}-${{ matrix.target }}.cdx.json
-          syft-version: v1.48.0
+          syft-version: v1.49.0
           upload-artifact: false
           upload-release-assets: false
       - name: Normalize reproducible release SBOM identity
@@ -389,7 +389,7 @@ jobs:
       MEALY_TARGET: ${{ matrix.target }}
       MEALY_HOST_ARCHITECTURE: ${{ matrix.host_architecture }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -449,7 +449,7 @@ jobs:
           format: cyclonedx-json
           output-file: sbom/mealy.raw.cdx.json
           artifact-name: mealy-${{ github.ref_name }}-${{ matrix.target }}.cdx.json
-          syft-version: v1.48.0
+          syft-version: v1.49.0
           upload-artifact: false
           upload-release-assets: false
       - name: Generate reproducible third-party license notice
@@ -513,7 +513,7 @@ jobs:
       attestations: write  # Publish the common-installer attestations.
       artifact-metadata: write # Record the subjects linked to each attestation.
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -632,7 +632,7 @@ jobs:
       MEALY_TARGET: ${{ matrix.target }}
       MEALY_DEBIAN_ARCHITECTURE: ${{ matrix.debian_architecture }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Prepare clean-host Linux prerequisites
@@ -780,7 +780,7 @@ jobs:
     env:
       MEALY_TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Verify immutable public release and exact native preview assets

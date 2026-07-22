@@ -623,7 +623,7 @@ CI initially runs:
 ```text
 cargo fmt --all -- --check
 actionlint v1.7.12 (release archive SHA-256 pinned in the workflow)
-zizmor v1.27.0 offline auditor profile (release archive size/SHA-256 pinned)
+zizmor v1.28.0 offline auditor profile (release archive size/SHA-256 pinned)
 cargo-deny v0.20.2 advisories/licenses/bans/sources policy (release SHA-256 pinned)
 embedded dashboard JavaScript syntax validation
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
