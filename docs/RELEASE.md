@@ -193,7 +193,8 @@ install to that verified release manager and prints setup/service commands. Pass
 
 The release also contains `macos-arm64-preview` and `macos-x86_64-preview` archives, matching SBOMs,
 and two-entry target checksum manifests. Their payloads include both native executables, an exact
-build/capability manifest, SBOM, dependency license notice, and the bounded operating documents.
+build/capability manifest, SBOM, dependency license notice, and the same complete checked
+documentation tree shipped by the Linux archives, so package-local links remain usable offline.
 Follow the [macOS preview quickstart](QUICKSTART.md#macos-conversation-only-preview); the Linux
 bootstrap and archive manager intentionally reject these preview targets.
 

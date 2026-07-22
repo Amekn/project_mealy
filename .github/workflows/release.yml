@@ -637,6 +637,7 @@ jobs:
           scripts/prepare-bwrap-boundary.sh
           attestation_help=$(gh attestation verify --help)
           grep -Fq -- '--bundle' <<<"$attestation_help"
+          grep -Fq -- '--source-digest' <<<"$attestation_help"
           gh release verify --help >/dev/null
       - name: Verify immutable public release and exact native assets
         env:
@@ -689,6 +690,13 @@ jobs:
           done < <(printf '%s\n' "$archive" "$checksums" "$deb" "$sbom" \
             "$architecture_bundle" install-mealy.sh install-mealy-release.sh \
             "$installer_bundle")
+          gh attestation verify "downloaded/$checksums" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
+            --bundle "downloaded/$architecture_bundle" \
+            --deny-self-hosted-runners >/dev/null
           (cd downloaded && sha256sum --check --strict "$checksums")
       - name: Exercise the public tokenless rootless bootstrap
         shell: bash
@@ -702,6 +710,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
             --bundle downloaded/ATTESTATION-installers.sigstore.json \
             --deny-self-hosted-runners >/dev/null
           chmod 0755 downloaded/install-mealy-release.sh
@@ -767,6 +776,7 @@ jobs:
           set -euo pipefail
           attestation_help=$(gh attestation verify --help)
           grep -Fq -- '--bundle' <<<"$attestation_help"
+          grep -Fq -- '--source-digest' <<<"$attestation_help"
           gh release verify --help >/dev/null
           version=${GITHUB_REF_NAME#v}
           archive="mealy-v${version}-${MEALY_TARGET}.tar.gz"
@@ -808,6 +818,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
             --bundle "downloaded/$architecture_bundle" \
             --deny-self-hosted-runners >/dev/null
           (cd downloaded && shasum -a 256 -c "$checksums")

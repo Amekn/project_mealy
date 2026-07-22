@@ -72,15 +72,16 @@ expected=$(printf '%s\n' \
   mealy-v0.1.0-macos-arm64-preview/THIRD-PARTY-LICENSES.html \
   mealy-v0.1.0-macos-arm64-preview/bin \
   mealy-v0.1.0-macos-arm64-preview/bin/mealyctl \
-  mealy-v0.1.0-macos-arm64-preview/bin/mealyd \
-  mealy-v0.1.0-macos-arm64-preview/docs \
-  mealy-v0.1.0-macos-arm64-preview/docs/API.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/CI_CD.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/CLI.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/OPERATIONS.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/PRODUCTION_READINESS.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/QUICKSTART.md \
-  mealy-v0.1.0-macos-arm64-preview/docs/RELEASE.md | sort)
+  mealy-v0.1.0-macos-arm64-preview/bin/mealyd)
+expected=$(
+  {
+    printf '%s\n' "$expected"
+    (
+      cd "$repository_root"
+      find docs \( -type d -o -type f \) -print
+    ) | sed 's#^#mealy-v0.1.0-macos-arm64-preview/#'
+  } | sort
+)
 actual=$(tar -tzf "$temporary/first/$archive" | sed 's#/$##' | sort)
 if [[ $actual != "$expected" ]]; then
   echo "macOS preview archive inventory is not exact" >&2
