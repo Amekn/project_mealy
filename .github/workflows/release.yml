@@ -693,6 +693,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
             --bundle "downloaded/$architecture_bundle" \
             --deny-self-hosted-runners >/dev/null
           (cd downloaded && sha256sum --check --strict "$checksums")
@@ -708,6 +709,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
             --bundle downloaded/ATTESTATION-installers.sigstore.json \
             --deny-self-hosted-runners >/dev/null
           chmod 0755 downloaded/install-mealy-release.sh
@@ -814,6 +816,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
             --bundle "downloaded/$architecture_bundle" \
             --deny-self-hosted-runners >/dev/null
           (cd downloaded && shasum -a 256 -c "$checksums")
