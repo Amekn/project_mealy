@@ -135,10 +135,9 @@ jobs:
         run: |
           set -euo pipefail
           tag=${GITHUB_REF_NAME}
-          version=${tag#v}
           workspace_version=$(cargo metadata --locked --no-deps --format-version 1 | \
             jq -r '.packages[] | select(.name == "mealyd") | .version')
-          test "$version" = "$workspace_version"
+          scripts/validate-release-tag.sh "$tag" "$workspace_version"
           test "$(git tag --points-at HEAD | grep -Fx "$tag")" = "$tag"
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
@@ -393,10 +392,9 @@ jobs:
         run: |
           set -euo pipefail
           tag=${GITHUB_REF_NAME}
-          version=${tag#v}
           workspace_version=$(cargo metadata --locked --no-deps --format-version 1 | \
             jq -r '.packages[] | select(.name == "mealyd") | .version')
-          test "$version" = "$workspace_version"
+          scripts/validate-release-tag.sh "$tag" "$workspace_version"
           test "$(git tag --points-at HEAD | grep -Fx "$tag")" = "$tag"
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main

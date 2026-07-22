@@ -470,7 +470,8 @@ remove it before uninstalling.
 
 1. Confirm the copyright-holder-selected canonical Apache-2.0 `LICENSE` remains inherited by every
    workspace package and run `scripts/validate-public-license.sh .`. Then make the workspace version
-   and intended `vVERSION` tag identical.
+   and intended stable `vMAJOR.MINOR.PATCH` tag identical. The production workflow deliberately
+   rejects prerelease/build metadata and leading-zero version components.
 2. Compare the pinned Headless Shell version with the official
    [Chrome for Testing stable metadata](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json).
    If the reviewed stable patch changed, update its exact archive byte count/SHA-256 and product

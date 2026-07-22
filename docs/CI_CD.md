@@ -183,7 +183,9 @@ useful additional acceptance, but should not be used for frequent CI traffic.
 ## Tag and publish
 
 The workspace version and proposed tag must match. Confirm protected CI and live acceptance first,
-then create one annotated tag on the exact candidate and push only that tag:
+then create one annotated stable `vMAJOR.MINOR.PATCH` tag on the exact candidate and push only that
+tag. The production workflow rejects prerelease/build metadata, leading-zero components, and any
+workspace-version mismatch rather than publishing them as a normal stable GitHub release:
 
 ```sh
 test "$(git rev-parse origin/main)" = "$candidate"
