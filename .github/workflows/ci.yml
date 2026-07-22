@@ -114,14 +114,18 @@ jobs:
             scripts/test-public-license-validator.sh
             scripts/test-release-notes.sh
             scripts/test-release-soak-validator.sh
+            scripts/test-release-tag-validator.sh
             scripts/validate-public-license.sh
             scripts/validate-release-soak.sh
+            scripts/validate-release-tag.sh
           )
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" \
             python3 -m py_compile \
               packaging/build-macos-preview.py scripts/validate-documentation.py
+      - name: Verify stable production release tag gate
+        run: scripts/test-release-tag-validator.sh
       - name: Verify release-soak evidence gate
         run: scripts/test-release-soak-validator.sh
       - name: Verify exact soak-subject promotion gate
