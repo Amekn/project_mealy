@@ -75,6 +75,10 @@ fn main() {
             return;
         }
     }
+    if mode == "trailing-extra-stdout" {
+        let _ = output.write_all(b"this trailing line is not JSON-RPC\n");
+        let _ = output.flush();
+    }
 }
 
 fn list_tools(message: &Value, id: &Value, mode: &str) -> Value {
