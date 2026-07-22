@@ -689,6 +689,12 @@ jobs:
           done < <(printf '%s\n' "$archive" "$checksums" "$deb" "$sbom" \
             "$architecture_bundle" install-mealy.sh install-mealy-release.sh \
             "$installer_bundle")
+          gh attestation verify "downloaded/$checksums" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --bundle "downloaded/$architecture_bundle" \
+            --deny-self-hosted-runners >/dev/null
           (cd downloaded && sha256sum --check --strict "$checksums")
       - name: Exercise the public tokenless rootless bootstrap
         shell: bash
