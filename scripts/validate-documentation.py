@@ -23,6 +23,7 @@ CORE_DOCUMENTS = (
     "docs/CI_CD.md",
     "docs/CLI.md",
     "docs/GETTING_STARTED.md",
+    "docs/LINUX_REPOSITORIES.md",
     "docs/LINUX_SUPPORT.md",
     "docs/OPERATIONS.md",
     "docs/PRODUCTION_READINESS.md",

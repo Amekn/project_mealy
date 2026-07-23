@@ -81,6 +81,9 @@ All native packages install immutable program material beneath `/usr/lib/mealy/r
 `/usr/bin/mealyd` and `/usr/bin/mealyctl`, and place offline documentation beneath
 `/usr/share/doc/mealy`. They contain no maintainer script, install hook, service activation, user
 creation, or home-directory mutation. Removing a package never deletes `$HOME/.mealy`.
+Stable releases publish those same artifacts through signed APT, DNF, and Pacman repositories;
+the complete setup and first-trust procedure is in
+[LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md).
 
 The owner-local archive installs beneath `$HOME/.local` by default and is the portability and
 rollback fallback across every qualified distribution. The optional browser remains x86-64-only;

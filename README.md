@@ -34,7 +34,9 @@ Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and cu
 They include `.deb`, `.rpm`, and `.pkg.tar.zst` packages in addition to the generic x86-64/ARM64
 archive. Derivatives are expected to work only when they retain glibc 2.39+, the trusted FHS
 helpers, Bubblewrap/user namespaces, persistent SQLite filesystem semantics, and a systemd user
-manager; review the exact [Linux support contract](docs/LINUX_SUPPORT.md).
+manager. Stable releases are also installed and updated through signed APT, DNF, and Pacman
+repositories; see the [package-manager setup](docs/LINUX_REPOSITORIES.md) and exact
+[Linux support contract](docs/LINUX_SUPPORT.md).
 
 To build this checkout instead, run:
 

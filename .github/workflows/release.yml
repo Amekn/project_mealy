@@ -435,9 +435,109 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  signed-linux-repositories:
+    name: Sign Linux package repositories
+    needs: [browser-conformance, linux-packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: linux-repository-signing
+    permissions:
+      contents: read # Read the tagged source and qualified package artifacts.
+      id-token: write # Mint the short-lived identity used by actions/attest.
+      attestations: write # Publish provenance for the signed repository manifest.
+      artifact-metadata: write # Record the manifest subject linked to the attestation.
+      pages: write # Read the configured Pages identity before packaging its artifact.
+    outputs:
+      repository_base_url: ${{ steps.repository-identity.outputs.base_url }}
+      repository_fingerprint: ${{ steps.repository-identity.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require an enabled Pages site
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Validate the public repository identity
+        id: repository-identity
+        env:
+          CONFIGURED_BASE_URL: ${{ vars.MEALY_REPOSITORY_BASE_URL }}
+          CONFIGURED_FINGERPRINT: ${{ vars.MEALY_REPOSITORY_GPG_FINGERPRINT }}
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url=${CONFIGURED_BASE_URL%/}
+          pages_base_url=${PAGES_BASE_URL%/}
+          fingerprint=${CONFIGURED_FINGERPRINT^^}
+          if [[ ! $base_url =~ ^https:// \
+            || $base_url != "$pages_base_url" \
+            || ! $fingerprint =~ ^[0-9A-F]{40}$ ]]; then
+            echo "Pages URL or repository signing fingerprint is not configured exactly" >&2
+            exit 65
+          fi
+          printf 'base_url=%s\n' "$base_url" >>"$GITHUB_OUTPUT"
+          printf 'fingerprint=%s\n' "$fingerprint" >>"$GITHUB_OUTPUT"
+      - name: Download the qualified native packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mealy-${{ github.ref_name }}-linux-*
+          path: gathered
+          merge-multiple: true
+      - name: Build and validate signed package repositories
+        env:
+          BASE_URL: ${{ steps.repository-identity.outputs.base_url }}
+          EXPECTED_FINGERPRINT: ${{ steps.repository-identity.outputs.fingerprint }}
+          PRIVATE_KEY_BASE64: ${{ secrets.MEALY_REPOSITORY_GPG_PRIVATE_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          version=${GITHUB_REF_NAME#v}
+          publication_epoch=$(git show -s --format=%ct HEAD)
+          private_key="$RUNNER_TEMP/mealy-repository-private-key.asc"
+          cleanup_key() {
+            rm -f -- "$private_key"
+          }
+          trap cleanup_key EXIT
+          if [[ -z $PRIVATE_KEY_BASE64 ]]; then
+            echo "repository signing key is not configured" >&2
+            exit 65
+          fi
+          printf '%s' "$PRIVATE_KEY_BASE64" | base64 --decode >"$private_key"
+          packaging/build-signed-linux-repositories.sh \
+            "$version" gathered repository "$BASE_URL" "$publication_epoch" \
+            "$private_key" "$EXPECTED_FINGERPRINT"
+          rm -f -- "$private_key"
+          trap - EXIT
+          packaging/validate-signed-linux-repositories.sh \
+            repository "$BASE_URL" "$EXPECTED_FINGERPRINT"
+      - name: Attest the signed repository manifest
+        id: attest-repository
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: repository/REPOSITORY-MANIFEST.json
+      - name: Retain offline repository provenance bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-repository.outputs.bundle-path }}
+        run: >-
+          install -m 0644 "$ATTESTATION_BUNDLE"
+          "$RUNNER_TEMP/ATTESTATION-linux-repositories.sigstore.json"
+      - name: Retain repository provenance for release publication
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mealy-linux-repository-provenance-${{ github.run_id }}
+          path: ${{ runner.temp }}/ATTESTATION-linux-repositories.sigstore.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload the exact signed Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: repository
+          retention-days: 1
+
   publish:
     name: Validate and publish release
-    needs: [browser-conformance, linux-packages]
+    needs: [browser-conformance, linux-packages, signed-linux-repositories]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -457,6 +557,11 @@ jobs:
           pattern: mealy-${{ github.ref_name }}-*
           path: gathered
           merge-multiple: true
+      - name: Download signed-repository provenance
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mealy-linux-repository-provenance-${{ github.run_id }}
+          path: repository-provenance
       - name: Validate complete release inventory and checksums
         shell: bash
         run: |
@@ -465,6 +570,9 @@ jobs:
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
           packaging/assemble-release.sh "$version" gathered dist
+          install -m 0644 \
+            repository-provenance/ATTESTATION-linux-repositories.sigstore.json \
+            dist/ATTESTATION-linux-repositories.sigstore.json
       - name: Attest common installers
         id: attest-installers
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
@@ -543,6 +651,213 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag --title "Mealy $GITHUB_REF_NAME" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
+
+  deploy-linux-repositories:
+    name: Publish signed Linux repositories
+    needs: [publish, signed-linux-repositories]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write # Publish the already signed repository artifact.
+      id-token: write # Authenticate the Pages deployment without a stored credential.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the signed repository artifact
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+      - name: Require the configured public URL
+        env:
+          ACTUAL_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_URL: ${{ needs.signed-linux-repositories.outputs.repository_base_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${ACTUAL_URL%/}" = "${EXPECTED_URL%/}"
+
+  public-repository-acceptance:
+    name: Verify public ${{ matrix.distribution }} repository
+    needs: [deploy-linux-repositories, signed-linux-repositories]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read # Download the release-retained offline repository bundle.
+      attestations: read # Verify the public manifest against GitHub provenance.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            distribution: Ubuntu 24.04 x86-64
+            family: deb
+            image: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+          - runner: ubuntu-24.04-arm
+            distribution: Debian 13 ARM64
+            family: deb
+            image: debian:13@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
+          - runner: ubuntu-24.04
+            distribution: Fedora 44 x86-64
+            family: rpm
+            image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+          - runner: ubuntu-24.04-arm
+            distribution: Fedora 44 ARM64
+            family: rpm
+            image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+          - runner: ubuntu-24.04
+            distribution: Arch Linux x86-64
+            family: arch
+            image: archlinux:base-devel@sha256:412efebb0eeef0ef322ff24ad73f82b1ba2d3b12377db4c5fbe3074c7e7e8678
+    env:
+      MEALY_REPOSITORY_BASE_URL: ${{ needs.signed-linux-repositories.outputs.repository_base_url }}
+      MEALY_REPOSITORY_FINGERPRINT: ${{ needs.signed-linux-repositories.outputs.repository_fingerprint }}
+      MEALY_REPOSITORY_FAMILY: ${{ matrix.family }}
+      MEALY_REPOSITORY_IMAGE: ${{ matrix.image }}
+    steps:
+      - name: Verify the public signed and attested manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          temporary=$(mktemp -d)
+          cleanup() {
+            rm -rf -- "$temporary"
+          }
+          trap cleanup EXIT
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern ATTESTATION-linux-repositories.sigstore.json \
+            --dir "$temporary"
+          verified=false
+          for _ in {1..60}; do
+            rm -rf "$temporary/gnupg"
+            mkdir -m 0700 "$temporary/gnupg"
+            if curl --fail --location --silent --show-error \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                --connect-timeout 20 --max-time 120 \
+                "$MEALY_REPOSITORY_BASE_URL/repository-signing-key.asc" \
+                --output "$temporary/repository-signing-key.asc" \
+              && curl --fail --location --silent --show-error \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                --connect-timeout 20 --max-time 120 \
+                "$MEALY_REPOSITORY_BASE_URL/REPOSITORY-MANIFEST.json" \
+                --output "$temporary/REPOSITORY-MANIFEST.json" \
+              && curl --fail --location --silent --show-error \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                --connect-timeout 20 --max-time 120 \
+                "$MEALY_REPOSITORY_BASE_URL/REPOSITORY-MANIFEST.json.asc" \
+                --output "$temporary/REPOSITORY-MANIFEST.json.asc" \
+              && gpg --batch --homedir "$temporary/gnupg" \
+                --import "$temporary/repository-signing-key.asc" >/dev/null 2>&1 \
+              && gpg --batch --homedir "$temporary/gnupg" \
+                --verify "$temporary/REPOSITORY-MANIFEST.json.asc" \
+                "$temporary/REPOSITORY-MANIFEST.json" >/dev/null 2>&1 \
+              && jq -e \
+                --arg base_url "$MEALY_REPOSITORY_BASE_URL" \
+                --arg fingerprint "$MEALY_REPOSITORY_FINGERPRINT" \
+                --arg version "${GITHUB_REF_NAME#v}" '
+                  .schemaVersion == "mealy.linux-repositories.v1"
+                  and .baseUrl == $base_url
+                  and .signingFingerprint == $fingerprint
+                  and .version == $version
+                ' "$temporary/REPOSITORY-MANIFEST.json" >/dev/null; then
+              verified=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ $verified != true ]]; then
+            echo "public signed repository did not converge on the tagged release" >&2
+            exit 69
+          fi
+          actual_fingerprint=$(
+            gpg --batch --homedir "$temporary/gnupg" --with-colons --list-keys |
+              awk -F: '
+                $1 == "pub" {want = 1; next}
+                want && $1 == "fpr" {print toupper($10); exit}
+              '
+          )
+          test "$actual_fingerprint" = "$MEALY_REPOSITORY_FINGERPRINT"
+          gh attestation verify "$temporary/REPOSITORY-MANIFEST.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA" \
+            --bundle "$temporary/ATTESTATION-linux-repositories.sigstore.json" \
+            --deny-self-hosted-runners >/dev/null
+      - name: Install from the public package-manager repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          case $MEALY_REPOSITORY_FAMILY in
+            deb)
+              docker run --rm \
+                --env MEALY_REPOSITORY_BASE_URL \
+                "$MEALY_REPOSITORY_IMAGE" bash -s <<'DEBIAN'
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive \
+            apt-get install --yes ca-certificates curl
+          curl --fail --location --silent --show-error \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$MEALY_REPOSITORY_BASE_URL/mealy.sources" \
+            --output /etc/apt/sources.list.d/mealy.sources
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install --yes mealy
+          mealyctl --version
+          DEBIAN
+              ;;
+            rpm)
+              docker run --rm \
+                --env MEALY_REPOSITORY_BASE_URL \
+                "$MEALY_REPOSITORY_IMAGE" bash -s <<'FEDORA'
+          set -euo pipefail
+          dnf install --assumeyes ca-certificates curl
+          curl --fail --location --silent --show-error \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$MEALY_REPOSITORY_BASE_URL/mealy.repo" \
+            --output /etc/yum.repos.d/mealy.repo
+          dnf --assumeyes install mealy
+          mealyctl --version
+          FEDORA
+              ;;
+            arch)
+              docker run --rm \
+                --env MEALY_REPOSITORY_BASE_URL \
+                --env MEALY_REPOSITORY_FINGERPRINT \
+                "$MEALY_REPOSITORY_IMAGE" bash -s <<'ARCH'
+          set -euo pipefail
+          pacman -Syu --noconfirm ca-certificates curl gnupg
+          curl --fail --location --silent --show-error \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$MEALY_REPOSITORY_BASE_URL/repository-signing-key.asc" \
+            --output /tmp/mealy-repository-signing-key.asc
+          curl --fail --location --silent --show-error \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$MEALY_REPOSITORY_BASE_URL/mealy.pacman.conf" \
+            --output /tmp/mealy.pacman.conf
+          actual=$(
+            gpg --batch --show-keys --with-colons \
+              /tmp/mealy-repository-signing-key.asc |
+              awk -F: '
+                $1 == "pub" {want = 1; next}
+                want && $1 == "fpr" {print toupper($10); exit}
+              '
+          )
+          test "$actual" = "$MEALY_REPOSITORY_FINGERPRINT"
+          pacman-key --init
+          pacman-key --add /tmp/mealy-repository-signing-key.asc
+          pacman-key --lsign-key "$MEALY_REPOSITORY_FINGERPRINT"
+          cat /tmp/mealy.pacman.conf >>/etc/pacman.conf
+          pacman --sync --refresh --noconfirm mealy
+          mealyctl --version
+          ARCH
+              ;;
+            *)
+              echo "unsupported repository family: $MEALY_REPOSITORY_FAMILY" >&2
+              exit 64
+              ;;
+          esac
 
   public-linux-acceptance:
     name: Verify public Linux install on ${{ matrix.target }}

@@ -53,6 +53,7 @@ packaging/test-packaging.sh
 packaging/test-deb-packaging.sh
 packaging/test-rpm-packaging.sh
 packaging/test-arch-packaging.sh
+packaging/test-signed-linux-repositories.sh
 ```
 
 Linux sandbox, systemd, and rendered-browser tests need the operating-system prerequisites and
@@ -110,7 +111,9 @@ workflow policy, dependency policy, dashboard JavaScript, clippy, all targets/fe
 rustdoc, checked Markdown/API/CLI documentation consistency, RustSec, generated third-party
 notices, shell entry points, release evidence, and all package formats. Dedicated lanes exercise
 Linux Bubblewrap/systemd and the content-pinned browser; native jobs compile Linux x86-64/ARM64,
-and the distribution aggregate covers clean Ubuntu, Debian, Fedora, and Arch package builds.
+and the distribution aggregate covers clean Ubuntu, Debian, Fedora, and Arch package builds plus
+a disposable-key signed APT/DNF/Pacman repository, clean installs through every manager, and
+tamper rejection.
 
 GitHub vulnerability alerts and Dependabot security updates must remain enabled. The checked
 `.github/dependabot.yml` opens bounded weekly Cargo and GitHub Actions update pull requests; those
@@ -289,9 +292,19 @@ Do not move or reuse a published version tag. A correction uses a new semantic v
 - verifies reproducibility, checksums, installed archive/package behavior, upgrade/rollback, and
   state preservation;
 - creates GitHub artifact attestations plus retained offline Sigstore bundles;
+- creates package-manager-native signed APT, DNF, and Pacman repositories with an owner-reviewed
+  signing key, attests their complete manifest, and stages the exact Pages artifact;
 - assembles one exact release inventory and publishes deterministic evidence-bound notes;
+- deploys the signed repositories only after the immutable GitHub release exists;
 - downloads the public release on native Linux runners, verifies release/asset integrity and
-  provenance, and repeats clean-host installed acceptance on Ubuntu, Debian, Fedora, and Arch.
+  provenance, repeats clean-host installed acceptance on Ubuntu, Debian, Fedora, and Arch, and
+  installs the tagged version through each public HTTPS repository before the workflow can pass.
+
+The one-time Pages, signing Environment, offline-key, and rotation controls are in
+[LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md#maintainer-activation). A missing Pages site,
+unapproved signing Environment, empty key secret, base-URL mismatch, wrong fingerprint, unusable
+signing subkey, invalid package identity, or failed public package-manager install blocks the tag;
+there is no unsigned publication fallback.
 
 Linux x86-64 and ARM64 are the production worker targets. Arch Linux is x86-64-only upstream;
 Arch Linux ARM remains a derivative rather than an official target. macOS and Windows are outside

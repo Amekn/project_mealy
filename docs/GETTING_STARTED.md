@@ -11,9 +11,12 @@ described in the [release guide](RELEASE.md).
 ## 1. Install a verified release
 
 Install Bubblewrap, GitHub CLI, `curl`, `jq`, and the ordinary host packages listed in the
-[quickstart prerequisites](QUICKSTART.md#prerequisites). Then use the attestation-verifying
-rootless release bootstrap from [the fast install instructions](QUICKSTART.md#fast-verified-linux-install).
-It installs `mealyd` and `mealyctl` beneath `$HOME/.local` without a Rust toolchain or root access.
+[quickstart prerequisites](QUICKSTART.md#prerequisites). The shortest distribution-native route is
+the signed APT, DNF, or Pacman setup in [LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). The
+attestation-verifying rootless release bootstrap in the
+[fast install instructions](QUICKSTART.md#fast-verified-linux-install) remains available when the
+repository has not yet been deployed or root access is undesirable. Neither route requires a Rust
+toolchain.
 
 Make sure `$HOME/.local/bin` is on `PATH`, then check the installed client:
 

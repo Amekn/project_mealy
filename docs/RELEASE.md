@@ -12,7 +12,9 @@ source paths to stable virtual identities; the packager independently rejects co
 paths. Each runner scans both `Cargo.lock` and the resulting binaries against RustSec and generates
 a bounded CycloneDX SBOM with pinned Syft. Each architecture creates and attests a reproducible
 archive, root-owned Debian package, RPM, target checksum manifest, and SBOM; x86-64 also creates
-the official Arch package.
+the official Arch package. One separate owner-reviewed job then signs those exact native packages
+and their APT, DNF, and Pacman metadata, validates a complete signed inventory, and creates the
+exact Pages artifact.
 A tag's native x86-64 job also rejects publication unless the checked
 `docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report for
 at least 86,400 seconds, has the exact SHA-256/version of the newly built auditable daemon, and
@@ -34,10 +36,13 @@ isolated restore verification, clean drain, and state-preserving removal. Clean 
 then reproduce package construction on every supported distribution/architecture pair. Only after
 both architecture jobs pass and the separate x86-64 pinned real-browser
 process/CLI/model/replay job passes does one dependent job validate the complete merged inventory,
-add and attest the common installer, retain all assets, and create the GitHub release. Public
-acceptance downloads those immutable packages and repeats lifecycle smokes on clean Ubuntu,
-Debian, Fedora, and Arch environments. Third-party actions are pinned by commit and supply-chain
-tools by version. macOS and Windows are outside the active production and release contract.
+add and attest the common installer, retain all assets, and create the GitHub release. Only after
+that immutable release exists does the workflow deploy the prebuilt signed repository artifact.
+Public acceptance downloads those immutable packages and repeats lifecycle smokes on clean Ubuntu,
+Debian, Fedora, and Arch environments; separate native x86-64/ARM64 lanes verify the signed and
+GitHub-attested public manifest, then install through APT, DNF, and Pacman over HTTPS. Third-party
+actions are pinned by commit and supply-chain tools by version. macOS and Windows are outside the
+active production and release contract.
 
 ## Repository release controls
 
@@ -46,6 +51,15 @@ changes entering it. Configure the `live-provider-smoke` GitHub Environment with
 reviewers, then add only the provider secret needed for the reviewed manual probe (and the Brave
 secret only when that independent option will run). Never place those credentials in repository,
 workflow, or command-line configuration.
+
+Also complete the checked
+[signed-repository activation](LINUX_REPOSITORIES.md#maintainer-activation): enable Pages, protect
+the signing and `github-pages` Environments, set the exact Pages URL and primary fingerprint, and
+store only the base64 secret-subkey export. The repository build accepts no unsigned mode. APT
+receives signed Release metadata and by-hash indexes; Fedora receives signed RPMs and repository
+metadata with both checks enabled; Arch receives signed packages and a signed database. The
+release retains `ATTESTATION-linux-repositories.sigstore.json`, while the public Pages site retains
+the OpenPGP-signed complete manifest and minimal public certificate.
 
 The copyright holder selected Apache-2.0 on 2026-07-15. The repository now carries the canonical
 Apache License 2.0 text through the existing exact `license-file = "LICENSE"` inheritance, so the
@@ -159,9 +173,17 @@ state and verifies release integrity, asset integrity, provenance, checksums, an
 on native Linux x86-64/ARM64 runners. It repeats the tokenless bootstrap plus archive and Debian
 lifecycle smokes on Ubuntu 24.04, then repeats each public native package lifecycle on clean pinned
 Ubuntu 26.04, Debian 13, Fedora 44, and Arch Linux environments. A release workflow is green only
-after every public Linux delivery check passes.
+after every public Linux delivery check passes. It also waits for the Pages deployment, verifies
+the public manifest's OpenPGP signature and exact tagged identity, verifies its retained GitHub
+attestation bundle, and clean-installs the public repository package on Ubuntu, Debian ARM64,
+Fedora x86-64/ARM64, and Arch x86-64.
 
 ## Verify and install a published release
+
+For the shortest native package-manager route, follow
+[LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). That path is supported only when the exact release
+workflow's signed-repository deployment and public repository acceptance jobs are green. The
+rootless attested bootstrap below remains the portability and no-root path.
 
 Install GitHub CLI, Bubblewrap, `jq`, GNU tar/coreutils, `flock` (normally from `util-linux`), glibc
 2.39 or newer, and

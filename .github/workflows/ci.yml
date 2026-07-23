@@ -93,6 +93,7 @@ jobs:
             packaging/build-deb.sh
             packaging/build-rpm.sh
             packaging/build-release.sh
+            packaging/build-signed-linux-repositories.sh
             packaging/install.sh
             packaging/install-release.sh
             packaging/normalize-sbom.sh
@@ -100,6 +101,8 @@ jobs:
             packaging/test-packaging.sh
             packaging/test-deb-packaging.sh
             packaging/test-rpm-packaging.sh
+            packaging/test-signed-linux-repositories.sh
+            packaging/validate-signed-linux-repositories.sh
             packaging/verify-release-payload.sh
             scripts/dashboard-smoke.sh
             scripts/build-release-binaries.sh
@@ -251,17 +254,29 @@ jobs:
             runuser -u builder -- /workspace/packaging/test-arch-packaging.sh
           '
 
+  linux-repository-trust:
+    name: Linux repository trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, verify, and clean-install signed repositories
+        run: packaging/test-signed-linux-repositories.sh
+
   linux-distribution-compatibility:
     name: Linux distribution compatibility
     if: ${{ always() }}
-    needs: linux-distro-packages
+    needs: [linux-distro-packages, linux-repository-trust]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every qualified distribution lane
+      - name: Require every qualified distribution and repository lane
         env:
-          RESULT: ${{ needs.linux-distro-packages.result }}
-        run: test "$RESULT" = success
+          PACKAGE_RESULT: ${{ needs.linux-distro-packages.result }}
+          REPOSITORY_RESULT: ${{ needs.linux-repository-trust.result }}
+        run: test "$PACKAGE_RESULT" = success && test "$REPOSITORY_RESULT" = success
 
   linux-sandbox-conformance:
     name: Linux sandbox conformance
