@@ -454,6 +454,7 @@ fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
         assert_eq!(response["provider"]["secretId"], Value::Null);
         assert_eq!(response["service"], Value::Null);
         assert_eq!(response["serviceStarted"], false);
+        assert_eq!(response["chatStarted"], false);
         let config: Value = serde_json::from_slice(
             &fs::read(onboard_home.path().join("config.json"))
                 .expect("subscription onboarding config"),
@@ -658,6 +659,7 @@ fn onboarding_configures_a_clean_home_and_refuses_silent_replacement() {
     assert_eq!(response["service"], Value::Null);
     assert_eq!(response["serviceStarted"], false);
     assert_eq!(response["healthVerified"], false);
+    assert_eq!(response["chatStarted"], false);
     assert!(
         response["nextCommand"]
             .as_str()

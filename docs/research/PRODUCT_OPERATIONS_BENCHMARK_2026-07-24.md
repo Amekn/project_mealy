@@ -24,7 +24,9 @@ complete manifest, deployed through protected Pages, and subject to clean
 public HTTPS installation on native x86-64 and ARM64 runners. The verified
 release bootstrap now also follows the observed installer pattern: a fresh
 interactive install enters the exact installed onboarding client automatically,
-with explicit force/passive controls and existing-home preservation.
+with explicit force/passive controls and existing-home preservation. After
+service and `doctor` qualification, terminal onboarding opens the first durable
+chat; non-interactive callers retain bounded JSON and one exact next command.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:

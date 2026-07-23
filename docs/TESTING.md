@@ -400,8 +400,9 @@ inhibition, and require a custom unit's activation command to link its exact saf
 `scripts/systemd-service-smoke.sh` then starts the generated unit in the explicitly opted-in
 GitHub-hosted runner or disposable container's user manager,
 first drives full subscription-backed `onboard` through provider probing, default service
-installation/start, authenticated health/doctor, and one searchable successful durable model
-turn. It removes that exact default unit and home before the existing independent service proof.
+installation/start, authenticated health/doctor, the composed chat handoff, and one visible plus
+searchable successful durable model turn before leaving chat cleanly. It removes that exact
+default unit and home before the existing independent service proof.
 That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
 It rejects both an outer Bubblewrap wrapper (which Ubuntu's reviewed profile makes incompatible

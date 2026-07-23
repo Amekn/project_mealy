@@ -65,7 +65,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs::{self, File, OpenOptions},
-    io::{BufRead, Read, Write},
+    io::{BufRead, IsTerminal as _, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, ExitCode, Stdio},
@@ -431,6 +431,12 @@ struct OnboardOptions {
     /// Confirm the reviewed onboarding plan non-interactively.
     #[arg(long)]
     approve: bool,
+    /// Open the first interactive chat after service and doctor verification.
+    #[arg(long, conflicts_with_all = ["no_chat", "configure_only"])]
+    chat: bool,
+    /// Stop after verified onboarding and print the exact chat command.
+    #[arg(long, conflicts_with = "chat")]
+    no_chat: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -2608,7 +2614,7 @@ async fn create_update_backup(
     if connection.api_version != API_VERSION {
         return Err(CliError::UpdateTransactionInconsistent);
     }
-    let client = lifecycle_client()?;
+    let client = control_plane_client()?;
     let name = format!("pre-update-{}", transaction.transaction_id);
     let response = authorized_long(
         client.post(format!("{}/v1/admin/backups", connection.base_url)),
@@ -2679,7 +2685,7 @@ async fn drain_owner_service(transaction: &lifecycle::UpdateTransaction) -> Resu
         return Ok(());
     }
     let connection = load_connection(&transaction.home)?;
-    let client = lifecycle_client()?;
+    let client = control_plane_client()?;
     let response = authorized_long(
         client.post(format!("{}/v1/admin/drain", connection.base_url)),
         &connection,
@@ -2742,7 +2748,7 @@ async fn qualify_update_slot(
         return Err(CliError::UpdateTransactionInconsistent);
     }
     let connection = load_connection(&transaction.home)?;
-    let client = lifecycle_client()?;
+    let client = control_plane_client()?;
     let readiness = authorized(
         client.get(format!("{}/health/ready", connection.base_url)),
         &connection,
@@ -2759,7 +2765,7 @@ async fn qualify_update_slot(
     Ok(())
 }
 
-fn lifecycle_client() -> Result<Client, CliError> {
+fn control_plane_client() -> Result<Client, CliError> {
     Ok(Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -3061,11 +3067,7 @@ async fn run() -> Result<(), CliError> {
             connection.api_version
         )));
     }
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(2))
-        .build()?;
+    let client = control_plane_client()?;
     match arguments.command {
         Command::Onboard(_) => {
             unreachable!("offline onboarding returned before ordinary API initialization")
@@ -7608,6 +7610,13 @@ struct ResolvedOnboard {
     credential_env: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OnboardChatMode {
+    Auto,
+    Force,
+    Suppress,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OnboardResponse {
@@ -7616,6 +7625,7 @@ struct OnboardResponse {
     service_started: bool,
     health_verified: bool,
     doctor: Option<DoctorResponse>,
+    chat_started: bool,
     next_command: String,
 }
 
@@ -7658,13 +7668,22 @@ impl OnboardRouteArgument {
 }
 
 async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliError> {
-    if options.skip_connectivity_test && !options.configure_only {
+    if options.skip_connectivity_test && !options.configure_only
+        || options.chat && options.configure_only
+        || options.chat && options.no_chat
+    {
         return Err(CliError::InvalidSetupInput);
     }
     validate_onboard_home_target(home, options.reconfigure)?;
     let stdin = std::io::stdin();
-    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
     let stderr = std::io::stderr();
+    let open_chat = should_open_onboard_chat(
+        onboard_chat_mode(options),
+        options.configure_only,
+        stdin.is_terminal() && stdout.is_terminal() && stderr.is_terminal(),
+    );
+    let mut input = stdin.lock();
     let mut prompt = stderr.lock();
     let resolved = resolve_onboard(options, &mut input, &mut prompt)?;
     render_onboard_summary(&resolved, options, &mut prompt)?;
@@ -7711,6 +7730,7 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
             service_started: false,
             health_verified: false,
             doctor: None,
+            chat_started: false,
             next_command: format!(
                 "mealyctl --home {} service install",
                 setup_shell_argument(&home.display().to_string())
@@ -7718,29 +7738,85 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
         });
     }
 
-    let service = install_service_definition(&home, None, None).map_err(|error| {
-        CliError::OnboardService(format!("service installation failed: {error}"))
-    })?;
-    activate_owner_service()
-        .map_err(|error| CliError::OnboardService(format!("service activation failed: {error}")))?;
-    let doctor = wait_for_onboard_readiness(&home).await.map_err(|error| {
-        CliError::OnboardService(format!(
-            "service started but did not pass bounded health and doctor verification: {error}"
-        ))
-    })?;
+    let (service, doctor) = provision_onboard_service(&home).await?;
     writeln!(
         prompt,
         "\nOnboarding complete. The verified owner service is running."
     )?;
-    writeln!(prompt, "Start chatting with:\n  {next_command}")?;
-    print_json(OnboardResponse {
+    if open_chat {
+        writeln!(
+            prompt,
+            "Opening the first durable chat. Type /quit to leave."
+        )?;
+    } else {
+        writeln!(prompt, "Start chatting with:\n  {next_command}")?;
+    }
+    let response = OnboardResponse {
         provider,
         service: Some(service),
         service_started: true,
         health_verified: true,
         doctor: Some(doctor),
+        chat_started: open_chat,
         next_command,
-    })
+    };
+    print_json(response)?;
+    if !open_chat {
+        return Ok(());
+    }
+    drop(input);
+    drop(prompt);
+    open_first_onboard_chat(&home).await
+}
+
+async fn provision_onboard_service(
+    home: &Path,
+) -> Result<(ServiceInstallationResponse, DoctorResponse), CliError> {
+    let service = install_service_definition(home, None, None).map_err(|error| {
+        CliError::OnboardService(format!("service installation failed: {error}"))
+    })?;
+    activate_owner_service()
+        .map_err(|error| CliError::OnboardService(format!("service activation failed: {error}")))?;
+    let doctor = wait_for_onboard_readiness(home).await.map_err(|error| {
+        CliError::OnboardService(format!(
+            "service started but did not pass bounded health and doctor verification: {error}"
+        ))
+    })?;
+    Ok((service, doctor))
+}
+
+async fn open_first_onboard_chat(home: &Path) -> Result<(), CliError> {
+    let connection = load_connection(home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::Protocol(format!(
+            "connection descriptor uses unsupported API version {:?}",
+            connection.api_version
+        )));
+    }
+    let client = control_plane_client()?;
+    run_chat(&client, home, &connection, None).await
+}
+
+const fn onboard_chat_mode(options: &OnboardOptions) -> OnboardChatMode {
+    if options.chat {
+        OnboardChatMode::Force
+    } else if options.no_chat {
+        OnboardChatMode::Suppress
+    } else {
+        OnboardChatMode::Auto
+    }
+}
+
+const fn should_open_onboard_chat(
+    mode: OnboardChatMode,
+    configure_only: bool,
+    interactive_terminal: bool,
+) -> bool {
+    match mode {
+        OnboardChatMode::Force => true,
+        OnboardChatMode::Suppress => false,
+        OnboardChatMode::Auto => !configure_only && interactive_terminal,
+    }
 }
 
 fn validate_onboard_home_target(home: &Path, reconfigure: bool) -> Result<(), CliError> {
@@ -14575,15 +14651,16 @@ mod tests {
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
         EffectCommand, ExtensionCommand, LifecycleArguments, LifecycleCommand,
         MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
-        ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, ServiceCommand,
-        SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
-        TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute, configure_workspace_grant,
-        decode, generate_discord_pair_challenge, generate_telegram_pair_challenge,
-        initialize_setup_home, inspect_mcp_executable, lifecycle_invocation, load_connection,
-        normalize_openrouter_display_name, observe_discord_pair_messages,
-        observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
-        openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
-        resolve_setup, setup_provider_config, telegram_pair_api_url, update_recovery_route,
+        OnboardChatMode, OnboardOptions, ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+        ScheduleCommand, ServiceCommand, SetupProviderArgument, SkillCommand, TelegramPairChat,
+        TelegramPairMessage, TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute,
+        configure_workspace_grant, decode, generate_discord_pair_challenge,
+        generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
+        lifecycle_invocation, load_connection, normalize_openrouter_display_name,
+        observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
+        onboard_chat_mode, openrouter_price_is_zero, openrouter_price_microunits_per_million,
+        parse_chat_line, prepare_local_text_attachment, resolve_setup, setup_provider_config,
+        should_open_onboard_chat, telegram_pair_api_url, update_recovery_route,
         validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
         validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
@@ -15577,6 +15654,64 @@ mod tests {
         paid.id = "vendor/tool-model:free".to_owned();
         paid.unsupported_pricing_axes.push("web_search".to_owned());
         assert!(!super::openrouter_model_is_strictly_free(&paid));
+    }
+
+    #[test]
+    fn onboarding_chat_handoff_is_interactive_by_default_and_flag_safe() {
+        assert!(should_open_onboard_chat(OnboardChatMode::Auto, false, true));
+        assert!(!should_open_onboard_chat(
+            OnboardChatMode::Auto,
+            false,
+            false
+        ));
+        assert!(!should_open_onboard_chat(
+            OnboardChatMode::Suppress,
+            false,
+            true
+        ));
+        assert!(!should_open_onboard_chat(OnboardChatMode::Auto, true, true));
+        assert!(should_open_onboard_chat(
+            OnboardChatMode::Force,
+            false,
+            false
+        ));
+
+        let forced =
+            Arguments::try_parse_from(["mealyctl", "onboard", "--route", "local", "--chat"])
+                .expect("forced onboarding chat");
+        assert!(matches!(
+            &forced.command,
+            Command::Onboard(OnboardOptions {
+                chat: true,
+                no_chat: false,
+                ..
+            })
+        ));
+        if let Command::Onboard(options) = &forced.command {
+            assert_eq!(onboard_chat_mode(options), OnboardChatMode::Force);
+        }
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "onboard",
+                "--route",
+                "local",
+                "--chat",
+                "--no-chat",
+            ])
+            .is_err()
+        );
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "onboard",
+                "--route",
+                "local",
+                "--chat",
+                "--configure-only",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -115,6 +115,11 @@ fresh home, with explicit `--onboard` and `--no-onboard` controls. Pseudo-termin
 acceptance proves automatic handoff through the exact installed client path; non-interactive use
 remains passive, and an existing home is retained with `doctor`/`chat` handoffs rather than being
 silently reconfigured.
+Full onboarding now opens the first durable chat automatically only when all three standard
+streams are terminals; `--chat` and `--no-chat` make the boundary explicit for scripted or
+machine-readable use. The real systemd acceptance drives the subscription probe, service
+installation, health, `doctor`, chat creation, first visible model response, durable search, and
+clean chat exit as one installed-binary journey.
 
 The same post-v0.1.1 source now adds an install-provenance layer and plan-first `install-status`,
 `update`, `update-status`, `repair`, `rollback`, `uninstall`, and shell-completion surfaces. The update check uses

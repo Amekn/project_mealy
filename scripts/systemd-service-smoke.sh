@@ -14,7 +14,7 @@ if [[ $(uname -s) != Linux ]]; then
   echo "the systemd service smoke is Linux-only" >&2
   exit 69
 fi
-for command in awk dirname grep jq journalctl mktemp readlink realpath seq sleep systemctl timeout; do
+for command in awk dirname grep jq journalctl mkfifo mktemp readlink realpath seq sleep systemctl timeout; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "required command is unavailable: $command" >&2
     exit 69
@@ -75,6 +75,8 @@ unit_directory=$(mktemp -d "$HOME/.mealy systemd unit.XXXXXX")
 unit="$unit_directory/mealy.service"
 daemon_pid=
 service_pid=
+onboard_pid=
+onboard_input_fd=
 linked=false
 default_unit="$HOME/.config/systemd/user/mealy.service"
 default_unit_created=false
@@ -82,6 +84,13 @@ default_unit_created=false
 cleanup() {
   status=$?
   set +e
+  if [[ -n $onboard_pid ]] && kill -0 "$onboard_pid" 2>/dev/null; then
+    kill "$onboard_pid" 2>/dev/null
+    wait "$onboard_pid" 2>/dev/null
+  fi
+  if [[ -n $onboard_input_fd ]]; then
+    exec {onboard_input_fd}>&-
+  fi
   if [[ $linked == true ]]; then
     link="$HOME/.config/systemd/user/mealy.service"
     if [[ -L $link && $(readlink -- "$link") == "$unit" ]]; then
@@ -150,8 +159,12 @@ printf '%s\n' \
 EOF
 chmod 0700 "$subscription_fixture"
 default_unit_created=true
-onboard=$(
-  OPENAI_API_KEY=must-not-reach-client \
+onboard_output="$unit_directory/onboard.stdout"
+onboard_errors="$unit_directory/onboard.stderr"
+onboard_input="$unit_directory/onboard.input"
+mkfifo -- "$onboard_input"
+exec {onboard_input_fd}<>"$onboard_input"
+OPENAI_API_KEY=must-not-reach-client \
   ANTHROPIC_API_KEY=must-not-reach-client \
   OPENROUTER_API_KEY=must-not-reach-client \
   LOCAL_API_KEY=must-not-reach-client \
@@ -161,8 +174,34 @@ onboard=$(
       --model fixture-model \
       --context-tokens 32768 \
       --maximum-output-tokens 64 \
-      --approve
-)
+      --approve \
+      --chat \
+      <"$onboard_input" >"$onboard_output" 2>"$onboard_errors" &
+onboard_pid=$!
+printf '%s\n' "Complete the onboarding acceptance turn." >&"$onboard_input_fd"
+chat_completed=false
+for _ in $(seq 1 400); do
+  if grep -Fq 'mealy> MEALYONBOARDINGOK' "$onboard_output" 2>/dev/null; then
+    chat_completed=true
+    break
+  fi
+  if ! kill -0 "$onboard_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ $chat_completed != true ]]; then
+  echo "onboarding did not reach a first useful chat response" >&2
+  cat "$onboard_errors" >&2
+  exit 70
+fi
+printf '/quit\n' >&"$onboard_input_fd"
+wait "$onboard_pid"
+onboard_pid=
+exec {onboard_input_fd}>&-
+onboard_input_fd=
+rm -- "$onboard_input"
+onboard=$(awk '{print} $0 == "}" {exit}' "$onboard_output")
 jq -e \
   --arg daemon "$mealyd" \
   --arg home "$home" '
@@ -174,30 +213,20 @@ jq -e \
     and .service.home == $home
     and .serviceStarted == true
     and .healthVerified == true
+    and .chatStarted == true
     and .doctor.controlPlaneReady == true
     and .doctor.sandboxAvailable == true
     and (.nextCommand | contains(" chat"))
   ' <<<"$onboard" >/dev/null
+grep -Fq 'Mealy chat session ' "$onboard_output"
+grep -Fq 'mealy> MEALYONBOARDINGOK' "$onboard_output"
 "$mealyctl" --home "$home" health >/dev/null
-session=$("$mealyctl" --home "$home" session create)
-onboarding_session_id=$(jq -er '.sessionId' <<<"$session")
-"$mealyctl" --home "$home" session send "$onboarding_session_id" \
-  "Complete the onboarding acceptance turn." \
-  --idempotency-key systemd-onboarding-turn-1 >/dev/null
-onboarding_task_id=
-for _ in $(seq 1 400); do
-  search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
-  onboarding_task_id=$(jq -er --arg session "$onboarding_session_id" '
-    [.hits[] | select(
-      .sessionId == $session
-      and (.assistantExcerpt // "" | contains("MEALYONBOARDINGOK"))
-    )] | if length == 1 then .[0].taskId else empty end
-  ' <<<"$search" 2>/dev/null || true)
-  if [[ -n $onboarding_task_id ]]; then
-    break
-  fi
-  sleep 0.05
-done
+search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
+onboarding_task_id=$(jq -er '
+  [.hits[] | select(
+    .assistantExcerpt // "" | contains("MEALYONBOARDINGOK")
+  )] | if length == 1 then .[0].taskId else empty end
+' <<<"$search" 2>/dev/null || true)
 if [[ -z $onboarding_task_id ]]; then
   echo "onboarding service did not complete the first durable model turn" >&2
   exit 70

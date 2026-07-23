@@ -99,13 +99,18 @@ provider cannot be presented as fully onboarded.
 
 ## 4. Chat and verify
 
-On successful full onboarding, start the durable interactive client:
+On a real terminal, successful full onboarding opens the first durable chat automatically after
+service health and `doctor` pass. Type a prompt at `you>`. Use `--no-chat` when you want onboarding
+to stop and print the exact next command, or `--chat` to force the chat handoff for a deliberately
+scripted terminal session.
+
+To return later, start or resume the durable interactive client directly:
 
 ```sh
 mealyctl --home "$HOME/.mealy" chat
 ```
 
-At `you>`, enter a prompt. `/help` lists session controls, approvals, memory, attachments, and
+`/help` lists session controls, approvals, memory, attachments, and
 governed action modes. The owner service survives logout/reboot when the host's systemd user
 manager and lingering policy provide that behavior.
 

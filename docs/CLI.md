@@ -158,8 +158,11 @@ Before mutation, onboarding prints a non-secret provider digest and its service 
 requires the exact word `APPROVE` unless `--approve` was given. A pre-existing configuration is
 rejected unless `--reconfigure` explicitly acknowledges replacement while the daemon is stopped.
 The normal Linux path installs and starts `mealy.service`, waits up to 30 seconds, and requires
-liveness, control-plane readiness, and an available sandbox. `--configure-only` deliberately stops
-after provider activation and reports the exact service-install command as the next step.
+liveness, control-plane readiness, and an available sandbox. On an interactive terminal it then
+opens a new durable chat by default. `--chat` forces that transition, while `--no-chat` retains
+machine-readable onboarding output and prints the exact chat command. `--configure-only`
+deliberately stops after provider activation and reports the exact service-install command as the
+next step; it cannot be combined with `--chat`.
 `--skip-connectivity-test` requires that configure-only mode, preventing a staged provider from
 being reported as a verified running onboarding result.
 

@@ -217,7 +217,10 @@ It offers strictly free OpenRouter, authenticated custom, credentialless loopbac
 subscription, Claude subscription, OpenAI API, and Anthropic API routes. The command discovers
 models where the provider supplies a bounded catalog, derives complete OpenRouter free-model
 limits and exact zero prices, shows one non-secret plan, performs the bounded live probe, installs
-and starts the owner service, waits for health, and requires `doctor` to pass. See
+and starts the owner service, waits for health, requires `doctor` to pass, and opens the first
+durable chat when all standard streams are attached to a terminal. `--no-chat` stops after
+verification and preserves the exact JSON/command handoff; `--chat` forces the transition for a
+deliberately scripted chat session. See
 [getting started](GETTING_STARTED.md) for the short route-specific examples.
 
 An existing configuration is never silently replaced. Diagnose a running home with `doctor`, or

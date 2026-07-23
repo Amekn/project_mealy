@@ -51,7 +51,8 @@ For a real model on a supported Linux host, run
 OpenRouter models, authenticated custom OpenAI-compatible endpoints, credentialless loopback
 models, owner-local ChatGPT/Claude subscriptions through their official clients, and advanced
 OpenAI/Anthropic API routes. It probes the route, starts the owner service, and verifies `doctor`
-before handing off to chat. See [getting started](docs/GETTING_STARTED.md) for the short path.
+before opening the first chat on an interactive terminal. Use `--no-chat` for a passive or
+machine-readable handoff. See [getting started](docs/GETTING_STARTED.md) for the short path.
 
 After successful onboarding:
 
