@@ -13490,20 +13490,21 @@ fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
             "service definition changed after the reviewed removal plan".to_owned(),
         ));
     }
-    if current.loaded_fragment != plan.loaded_fragment {
+    if current
+        .loaded_fragment
+        .as_ref()
+        .is_some_and(|fragment| Some(fragment) != plan.loaded_fragment.as_ref())
+    {
         return Err(CliError::InvalidService(
             "loaded mealy.service fragment changed after the reviewed removal plan".to_owned(),
         ));
     }
-    if let Some(fragment) = current
+    if let Some(fragment) = plan
         .loaded_fragment
         .as_ref()
         .filter(|fragment| *fragment != &plan.service_definition)
     {
-        fs::remove_file(fragment)?;
-        sync_service_directory(fragment.parent().ok_or_else(|| {
-            CliError::InvalidService("loaded service fragment has no parent directory".to_owned())
-        })?)?;
+        remove_reviewed_loader_fragment(fragment, &plan.service_definition)?;
     }
     fs::remove_file(&plan.service_definition)?;
     sync_service_directory(plan.service_definition.parent().ok_or_else(|| {
@@ -13569,6 +13570,28 @@ fn resolve_loaded_owner_service_fragment(path: &Path) -> Result<LoadedOwnerServi
         fragment,
         definition,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn remove_reviewed_loader_fragment(fragment: &Path, definition: &Path) -> Result<(), CliError> {
+    match fs::symlink_metadata(fragment) {
+        Ok(_) => {
+            let resolved = resolve_loaded_owner_service_fragment(fragment)?;
+            if resolved.fragment != fragment || resolved.definition != definition {
+                return Err(CliError::InvalidService(
+                    "loaded service fragment changed after disable".to_owned(),
+                ));
+            }
+            fs::remove_file(fragment)?;
+            sync_service_directory(fragment.parent().ok_or_else(|| {
+                CliError::InvalidService(
+                    "loaded service fragment has no parent directory".to_owned(),
+                )
+            })?)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CliError::Io(error)),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -14568,8 +14591,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::{
         decode_systemd_quoted_argument, generated_linux_service_daemon, linux_activation_command,
-        linux_service_body, resolve_loaded_owner_service_fragment, service_definition,
-        service_read_write_paths, systemd_quote,
+        linux_service_body, remove_reviewed_loader_fragment, resolve_loaded_owner_service_fragment,
+        service_definition, service_read_write_paths, systemd_quote,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
@@ -16409,8 +16432,20 @@ mod tests {
         assert_eq!(resolved.fragment, fragment);
         assert_eq!(resolved.definition, definition);
 
-        std::fs::remove_file(&definition).expect("remove definition");
-        assert!(resolve_loaded_owner_service_fragment(&fragment).is_err());
+        remove_reviewed_loader_fragment(&fragment, &definition).expect("remove exact loader link");
+        assert!(!fragment.exists());
+        assert!(definition.exists());
+        remove_reviewed_loader_fragment(&fragment, &definition)
+            .expect("systemd may already remove the loader link while disabling");
+
+        let changed_directory = root.path().join("changed");
+        std::fs::create_dir(&changed_directory).expect("changed definition directory");
+        let changed = changed_directory.join("mealy.service");
+        std::fs::write(&changed, b"[Service]\nExecStart=/bin/true\n").expect("changed definition");
+        symlink(&changed, &fragment).expect("changed loader link");
+        assert!(remove_reviewed_loader_fragment(&fragment, &definition).is_err());
+        assert!(fragment.is_symlink());
+        assert!(definition.exists());
     }
 
     #[test]
