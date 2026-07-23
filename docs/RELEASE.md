@@ -73,14 +73,15 @@ report across the required linear-history rebase without relabeling its observed
 That historical soak qualifies only its exact schema-15 daemon. Schema 16 follows a later stopped
 soak and the accepted SQLite runtime/storage redesign documented in the
 [interrupted-soak remediation record](benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md).
-Two clean auditable builds of protected schema-16 revision `ee1377d` reproduced `mealyd` SHA-256
-`7a3ac557354533a086e0078407e97ce6a82aeb91a51fb228dcb2a930de589635` and `mealyctl` SHA-256
-`f343b4e419c7b34bf37376d6d1289d926494b755e07223db9f214191951fc6cc`; the checksum-verified
-archive's extracted binaries were byte-identical and completed the installed-package lifecycle.
+The retained clean auditable binaries from protected schema-16 revision `9b3653f` are `mealyd`
+SHA-256 `7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc` and `mealyctl`
+SHA-256 `7e750893756e87d20a6092cbb55092341be41e7046e890b47fe9502ce0c1580d`.
 That exact daemon completed the clean schema-16
-[release soak](benchmarks/release-soak.json) for 86,407.054 seconds, 19,248 turns, and 48 hard
-restarts with complete replay, SQLite integrity `ok`, clean drain, and zero residue. The report
-names an ancestor of this report-bearing tree directly, so no current lineage proof is required.
+[release soak](benchmarks/release-soak.json) for 86,409.247 seconds, 19,248 turns, and 48 hard
+restarts. It recovered 51 interrupted-provider turns, resumed two undispatched model turns and two
+undispatched read-tool turns, retained complete recorded-only replay and SQLite integrity `ok`,
+drained cleanly, and left zero residue. The report names an ancestor of this report-bearing tree
+directly, so no current lineage proof is required.
 The remaining release gates are protected report CI, reviewed free-model OpenRouter acceptance,
 native package/public-download verification, and attested publication.
 
