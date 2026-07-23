@@ -49,9 +49,10 @@ shellcheck packaging/*.sh scripts/*.sh
 scripts/test-public-license-validator.sh
 scripts/test-release-soak-validator.sh
 scripts/test-release-notes.sh
-packaging/test-macos-packaging.sh
 packaging/test-packaging.sh
 packaging/test-deb-packaging.sh
+packaging/test-rpm-packaging.sh
+packaging/test-arch-packaging.sh
 ```
 
 Linux sandbox, systemd, and rendered-browser tests need the operating-system prerequisites and
@@ -71,8 +72,8 @@ relevant. Do not use comments to promise behavior that is not enforced by an imp
 test.
 
 The validator's bounded `--mode package` does not require Git metadata. Release jobs run it against
-each extracted Linux and macOS archive with the archive's own `mealyctl`, both immediately after
-the native build and again after downloading the immutable public asset. The source-mode router
+each extracted Linux archive with the archive's own `mealyctl`, both immediately after the native
+build and again after downloading the immutable public asset. The source-mode router
 comparison remains authoritative for completeness; package mode independently proves the shipped
 core/API/usage documents, local links, endpoint inventory, and CLI command table are usable from
 the distribution itself.
@@ -94,23 +95,22 @@ fail-closed release-document inventories in `packaging/build-release.sh`,
 
 Use a short-lived branch, keep unrelated changes separate, and open a pull request against `main`.
 The repository must enforce strict up-to-date status checks, linear history, resolved review
-conversations, admin enforcement, and disabled force-push/deletion. These seven contexts are the
-required release-one set:
+conversations, admin enforcement, and disabled force-push/deletion. These six contexts are the
+required Linux production set:
 
 - `Strict workspace gate`;
 - `Linux sandbox conformance`;
 - `Linux rendered-browser conformance`;
-- `Control plane (ubuntu-latest)`;
+- `Control plane (ubuntu-24.04)`;
 - `Control plane (ubuntu-24.04-arm)`;
-- `Control plane (macos-15)`;
-- `Control plane (macos-15-intel)`.
+- `Linux distribution compatibility`.
 
 `.github/workflows/ci.yml` is the executable definition. The strict lane checks formatting,
 workflow policy, dependency policy, dashboard JavaScript, clippy, all targets/features, doc tests,
 rustdoc, checked Markdown/API/CLI documentation consistency, RustSec, generated third-party
 notices, shell entry points, release evidence, and all package formats. Dedicated lanes exercise
-Linux Bubblewrap/systemd and the content-pinned browser; native jobs compile Linux x86-64/ARM64 and
-macOS ARM64/Intel control planes.
+Linux Bubblewrap/systemd and the content-pinned browser; native jobs compile Linux x86-64/ARM64,
+and the distribution aggregate covers clean Ubuntu, Debian, Fedora, and Arch package builds.
 
 GitHub vulnerability alerts and Dependabot security updates must remain enabled. The checked
 `.github/dependabot.yml` opens bounded weekly Cargo and GitHub Actions update pull requests; those
@@ -269,8 +269,10 @@ workspace-version mismatch rather than publishing them as a normal stable GitHub
 
 ```sh
 test "$(git rev-parse origin/main)" = "$candidate"
-git tag -a v0.1.0 "$candidate" -m 'Mealy v0.1.0'
-git push origin refs/tags/v0.1.0
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+tag="v$version"
+git tag -a "$tag" "$candidate" -m "Mealy $tag"
+git push origin "refs/tags/$tag"
 ```
 
 Do not move or reuse a published version tag. A correction uses a new semantic version.
@@ -281,20 +283,19 @@ Do not move or reuse a published version tag. A correction uses a new semantic v
   exact-commit free-model live acceptance;
 - isolates private-draft access in one ephemeral promotion job and rehashes its current-run handoff;
 - repeats strict tests, sandbox/browser/service proofs, RustSec, and auditable binary inspection;
-- builds native Linux x86-64 and ARM64 archives and Debian packages;
-- builds conversation-only macOS ARM64 and Intel preview archives;
+- builds native Linux x86-64 and ARM64 archives, Debian packages, and RPMs plus an x86-64 Arch
+  package;
 - generates per-platform CycloneDX SBOMs and third-party license notices;
 - verifies reproducibility, checksums, installed archive/package behavior, upgrade/rollback, and
   state preservation;
 - creates GitHub artifact attestations plus retained offline Sigstore bundles;
 - assembles one exact release inventory and publishes deterministic evidence-bound notes;
-- downloads the public release on all four native runners, verifies release/asset integrity and
-  provenance, and repeats clean-host installed acceptance.
+- downloads the public release on native Linux runners, verifies release/asset integrity and
+  provenance, and repeats clean-host installed acceptance on Ubuntu, Debian, Fedora, and Arch.
 
-Linux x86-64 and ARM64 are production worker targets. macOS ARM64 and Intel packages are explicitly
-conversation-only control-plane previews: conversation, replay, backup, inspection, and LaunchAgent
-drain are supported, while Linux worker/tool sandbox profiles fail closed. Windows is not a
-release-one target.
+Linux x86-64 and ARM64 are the production worker targets. Arch Linux is x86-64-only upstream;
+Arch Linux ARM remains a derivative rather than an official target. macOS and Windows are outside
+the active production, packaging, and CI contract.
 
 ## Verification and promotion decision
 
@@ -302,8 +303,8 @@ Monitor every tag job and do not announce production readiness until the workflo
 
 ```sh
 gh run list --workflow release.yml --commit "$candidate"
-gh release verify v0.1.0 --format json
-gh release view v0.1.0 --json tagName,targetCommitish,url,assets
+gh release verify "$tag" --format json
+gh release view "$tag" --json tagName,targetCommitish,url,assets
 ```
 
 For each downloaded asset, run `gh release verify-asset`. For archives, packages, installers, and

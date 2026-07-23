@@ -30,11 +30,11 @@ chmod 0755 "$tmp/install-mealy-release.sh"
 The command prints the exact `setup` and service-install handoff. No release is implied when the
 repository has not published and attested these assets.
 
-Published tags also retain attested native macOS ARM64 and Intel preview archives. They support
-provider setup, conversation, inspection, backup, and a LaunchAgent, but intentionally deny
-worker/tool sandbox profiles and are not production worker targets. See the
-[macOS preview instructions](docs/QUICKSTART.md#macos-conversation-only-preview) for the exact
-download, provenance verification, checksum, and owner-local install commands.
+Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and current x86-64 Arch.
+They include `.deb`, `.rpm`, and `.pkg.tar.zst` packages in addition to the generic x86-64/ARM64
+archive. Derivatives are expected to work only when they retain glibc 2.39+, the trusted FHS
+helpers, Bubblewrap/user namespaces, persistent SQLite filesystem semantics, and a systemd user
+manager; review the exact [Linux support contract](docs/LINUX_SUPPORT.md).
 
 To build this checkout instead, run:
 
@@ -65,7 +65,7 @@ governed tools, and `/attach PATH`. For a persistent user service after installi
 side by side, run `mealyctl --home "$HOME/.mealy" service install` and execute the printed
 activation command. See the [quickstart](docs/QUICKSTART.md) for provider setup and capabilities,
 the [CLI reference](docs/CLI.md) for the complete public command map, or the
-[release guide](docs/RELEASE.md) for attested archive and Debian-package
+[release guide](docs/RELEASE.md) for attested archive and native-package
 install/upgrade/rollback behavior. Treat a build as published only when its exact tag workflow has
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.

@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.96"
 license-file = "LICENSE"
@@ -36,12 +36,12 @@ futures-util = "0.3.32"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 jsonschema = { version = "0.47.0", default-features = false }
-mealy-api = { path = "crates/mealy-api", version = "=0.1.0" }
-mealy-application = { path = "crates/mealy-application", version = "=0.1.0" }
-mealy-domain = { path = "crates/mealy-domain", version = "=0.1.0" }
-mealy-infrastructure = { path = "crates/mealy-infrastructure", version = "=0.1.0" }
-mealy-protocol = { path = "crates/mealy-protocol", version = "=0.1.0" }
-mealy-testkit = { path = "crates/mealy-testkit", version = "=0.1.0" }
+mealy-api = { path = "crates/mealy-api", version = "=0.1.1" }
+mealy-application = { path = "crates/mealy-application", version = "=0.1.1" }
+mealy-domain = { path = "crates/mealy-domain", version = "=0.1.1" }
+mealy-infrastructure = { path = "crates/mealy-infrastructure", version = "=0.1.1" }
+mealy-protocol = { path = "crates/mealy-protocol", version = "=0.1.1" }
+mealy-testkit = { path = "crates/mealy-testkit", version = "=0.1.1" }
 proptest = "1.7.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "query", "rustls", "stream"] }
 rusqlite = { version = "0.40.1", features = ["backup", "bundled"] }

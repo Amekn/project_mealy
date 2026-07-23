@@ -89,14 +89,18 @@ jobs:
           set -euo pipefail
           scripts=(
             packaging/assemble-release.sh
+            packaging/build-arch-package.sh
             packaging/build-deb.sh
+            packaging/build-rpm.sh
             packaging/build-release.sh
             packaging/install.sh
             packaging/install-release.sh
             packaging/normalize-sbom.sh
-            packaging/test-macos-packaging.sh
+            packaging/test-arch-packaging.sh
             packaging/test-packaging.sh
             packaging/test-deb-packaging.sh
+            packaging/test-rpm-packaging.sh
+            packaging/verify-release-payload.sh
             scripts/dashboard-smoke.sh
             scripts/build-release-binaries.sh
             scripts/fetch-browser-runtime.sh
@@ -104,13 +108,15 @@ jobs:
             scripts/fetch-zizmor.sh
             scripts/generate-third-party-licenses.sh
             scripts/installed-package-smoke.sh
+            scripts/installed-arch-smoke.sh
             scripts/installed-deb-smoke.sh
-            scripts/macos-control-plane-smoke.sh
+            scripts/installed-rpm-smoke.sh
             scripts/render-release-notes.sh
             scripts/run-soak.sh
             scripts/select-live-provider-acceptance.sh
             scripts/select-protected-ci-run.sh
             scripts/systemd-service-smoke.sh
+            scripts/system-package-runtime-smoke.sh
             scripts/test-live-provider-acceptance-selector.sh
             scripts/test-documentation-validator.sh
             scripts/test-protected-ci-run-selector.sh
@@ -126,7 +132,7 @@ jobs:
           shellcheck "${scripts[@]}"
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" \
             python3 -m py_compile \
-              packaging/build-macos-preview.py scripts/validate-documentation.py
+              scripts/validate-documentation.py
       - name: Verify stable production release tag gate
         run: scripts/test-release-tag-validator.sh
       - name: Verify release-soak evidence gate
@@ -141,7 +147,6 @@ jobs:
         run: scripts/test-public-license-validator.sh
       - name: Verify deterministic release notes
         run: scripts/test-release-notes.sh
-      - run: packaging/test-macos-packaging.sh
       - run: packaging/test-packaging.sh
       - run: packaging/test-deb-packaging.sh
 
@@ -151,7 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,26 +164,103 @@ jobs:
           persist-credentials: false
       - run: rustup show
       - run: cargo check --locked --workspace --all-targets --all-features
-      - name: Test macOS control-plane client
-        if: ${{ runner.os == 'macOS' }}
-        run: cargo test --locked -p mealyctl --bin mealyctl --all-features
-      - name: Build and identify macOS preview binaries
-        if: ${{ runner.os == 'macOS' }}
+      - run: cargo test --locked -p mealyctl --bin mealyctl --all-features
+
+  linux-distro-packages:
+    name: Linux package (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-24.04-x86_64
+            runner: ubuntu-24.04
+            family: deb
+            image: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+          - name: ubuntu-26.04-x86_64
+            runner: ubuntu-24.04
+            family: deb
+            image: ubuntu:26.04@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
+          - name: debian-13-x86_64
+            runner: ubuntu-24.04
+            family: deb
+            image: debian:13@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
+          - name: fedora-44-x86_64
+            runner: ubuntu-24.04
+            family: rpm
+            image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+          - name: arch-rolling-x86_64
+            runner: ubuntu-24.04
+            family: arch
+            image: archlinux:base-devel@sha256:412efebb0eeef0ef322ff24ad73f82b1ba2d3b12377db4c5fbe3074c7e7e8678
+          - name: ubuntu-24.04-arm64
+            runner: ubuntu-24.04-arm
+            family: deb
+            image: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+          - name: ubuntu-26.04-arm64
+            runner: ubuntu-24.04-arm
+            family: deb
+            image: ubuntu:26.04@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
+          - name: debian-13-arm64
+            runner: ubuntu-24.04-arm
+            family: deb
+            image: debian:13@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
+          - name: fedora-44-arm64
+            runner: ubuntu-24.04-arm
+            family: rpm
+            image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify Debian-family package
+        if: ${{ matrix.family == 'deb' }}
+        env:
+          IMAGE: ${{ matrix.image }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --locked --release -p mealyd -p mealyctl --all-features
-          test "$(target/release/mealyd --version)" = "mealyd 0.1.0"
-          test "$(target/release/mealyctl --version)" = "mealyctl 0.1.0"
-          test "$(target/release/mealyd --print-supported-schema-version)" = "16"
-      - name: Verify macOS conversation, replay, backup, and LaunchAgent drain
-        if: ${{ runner.os == 'macOS' }}
+          docker run --rm --volume "$PWD:/workspace:ro" "$IMAGE" sh -lc '
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install --yes binutils jq
+            /workspace/packaging/test-deb-packaging.sh
+          '
+      - name: Verify Fedora RPM
+        if: ${{ matrix.family == 'rpm' }}
         env:
-          MEALY_MACOS_LAUNCHD_SMOKE_ALLOW_HOST: 'true'
-        run: scripts/macos-control-plane-smoke.sh target/release/mealyd target/release/mealyctl
-      - name: Verify native zsh preview commands and quoted paths
-        if: ${{ runner.os == 'macOS' }}
-        run: /bin/zsh scripts/macos-zsh-preview-smoke.zsh target/release/mealyd target/release/mealyctl
+          IMAGE: ${{ matrix.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --volume "$PWD:/workspace:ro" "$IMAGE" sh -lc '
+            dnf install --assumeyes cpio findutils gzip jq rpm-build tar
+            /workspace/packaging/test-rpm-packaging.sh
+          '
+      - name: Verify Arch package
+        if: ${{ matrix.family == 'arch' }}
+        env:
+          IMAGE: ${{ matrix.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --volume "$PWD:/workspace:ro" "$IMAGE" sh -lc '
+            pacman -Syu --noconfirm jq
+            useradd --create-home --uid 1000 builder
+            runuser -u builder -- /workspace/packaging/test-arch-packaging.sh
+          '
+
+  linux-distribution-compatibility:
+    name: Linux distribution compatibility
+    if: ${{ always() }}
+    needs: linux-distro-packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every qualified distribution lane
+        env:
+          RESULT: ${{ needs.linux-distro-packages.result }}
+        run: test "$RESULT" = success
 
   linux-sandbox-conformance:
     name: Linux sandbox conformance

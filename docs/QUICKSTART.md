@@ -1,22 +1,23 @@
 # Quickstart
 
-This guide runs the current Mealy release-one runtime from source or from a verified tagged
-release. A successfully published tag provides attested owner-local archives and native
-`amd64`/`arm64` Debian packages; the GitHub Releases page and that tag's workflow evidence are
-authoritative for whether those assets exist. This guide is suitable for evaluating
+This guide runs Mealy from Linux source or from a verified tagged release. A successfully
+published tag provides attested owner-local archives, `amd64`/`arm64` Debian packages,
+`x86_64`/`aarch64` RPMs, and an x86-64 Arch package; the GitHub Releases page and that tag's
+workflow evidence are authoritative for whether those assets exist. This guide is suitable for evaluating
 the durable agent loop, policy, sandbox, approvals, recovery, replay, memory, extensions, channels,
 and operational controls.
 
-Command examples use a per-user `$HOME/.local/bin` installation. A Debian package instead provides
-the same commands at `/usr/bin/mealyd` and `/usr/bin/mealyctl`; substituting those paths does not
-change the required `--home` value or any lifecycle step.
+Command examples use a per-user `$HOME/.local/bin` installation. Debian, RPM, and Arch packages
+instead provide the same commands at `/usr/bin/mealyd` and `/usr/bin/mealyctl`; substituting those
+paths does not change the required `--home` value or any lifecycle step. See the
+[Linux support contract](LINUX_SUPPORT.md) before installing on a derivative distribution.
 
 ## Fast verified Linux install
 
 A published stable release includes an attested rootless bootstrap. It selects the native x86-64
 or ARM64 archive, resolves an exact stable tag, verifies the bootstrap, manager, target checksum
 manifest, and archive against that tag's release-workflow attestations, verifies the complete
-five-asset target checksum inventory, and installs beneath `$HOME/.local`. It never uses `sudo`,
+target checksum inventory, and installs beneath `$HOME/.local`. It never uses `sudo`,
 starts a service, creates a Mealy home, or requires Rust:
 
 ```sh
@@ -43,67 +44,12 @@ self-hosted provenance, a different signer workflow/ref, and any checksum or inv
 It prints the exact `mealyctl setup` and service-install commands after success. Continue with the
 prerequisites and first-run checks below before enabling governed tools.
 
-## macOS conversation-only preview
+## Native Linux packages
 
-Each published tag also contains attested native preview archives for Apple Silicon and Intel
-macOS. This is deliberately narrower than the Linux production target: provider conversation,
-durable state, inspection, backup/restore, and the LaunchAgent control plane are available, while
-worker, effect, extension, MCP, and browser sandbox profiles remain denied. Do not use the preview
-for turns that require governed host tools.
-
-Download and verify one exact tag before copying its binaries into an owner-local prefix:
-
-```sh
-VERSION=v0.1.0
-REPOSITORY=Amekn/project_mealy
-case "$(uname -m)" in
-  arm64) TARGET=macos-arm64-preview ;;
-  x86_64) TARGET=macos-x86_64-preview ;;
-  *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-mkdir -p "$HOME/Downloads/mealy-$VERSION-macos"
-cd "$HOME/Downloads/mealy-$VERSION-macos"
-for ASSET in \
-  "mealy-${VERSION}-${TARGET}.tar.gz" \
-  "mealy-${VERSION}-${TARGET}.cdx.json" \
-  "SHA256SUMS-${TARGET}" \
-  "ATTESTATION-${TARGET}.sigstore.json"; do
-  curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    --output "$ASSET" \
-    "https://github.com/$REPOSITORY/releases/download/$VERSION/$ASSET"
-done
-ATTESTATION=(--repo "$REPOSITORY" \
-  --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
-  --source-ref "refs/tags/$VERSION" --deny-self-hosted-runners)
-gh attestation verify "SHA256SUMS-${TARGET}" "${ATTESTATION[@]}" \
-  --bundle "ATTESTATION-${TARGET}.sigstore.json"
-gh attestation verify "mealy-${VERSION}-${TARGET}.tar.gz" "${ATTESTATION[@]}" \
-  --bundle "ATTESTATION-${TARGET}.sigstore.json"
-gh attestation verify "mealy-${VERSION}-${TARGET}.cdx.json" "${ATTESTATION[@]}" \
-  --bundle "ATTESTATION-${TARGET}.sigstore.json"
-shasum -a 256 -c "SHA256SUMS-${TARGET}"
-tar -xzf "mealy-${VERSION}-${TARGET}.tar.gz"
-PACKAGE="$PWD/mealy-${VERSION}-${TARGET}"
-(cd "$PACKAGE" && shasum -a 256 -c PAYLOAD-SHA256SUMS)
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$PACKAGE/bin/mealyd" "$PACKAGE/bin/mealyctl" "$HOME/.local/bin/"
-```
-
-In `zsh`, add `$HOME/.local/bin` to `PATH` if needed, then run `mealyctl --home
-"$HOME/.mealy" setup`. Keep the extracted package for its exact manifest, CycloneDX SBOM,
-licenses, and operating guidance. Upgrades are manual replacement after a clean drain; the Linux
-archive manager's automatic previous-slot rollback does not claim macOS support.
-
-The native ARM64 and Intel release gates run the extracted commands through `/bin/zsh`, including
-an owner home and Mealy state path containing spaces, then complete a conversation, recorded replay,
-bounded drain, and LaunchAgent rendering. These checks cover the shell and quoting used by this
-procedure; they do not broaden the preview into a macOS worker-sandbox claim.
-
-`mealyctl --home "$HOME/.mealy" service install` generates a `RunAtLoad` LaunchAgent that starts
-once when bootstrapped and deliberately has no unconditional `KeepAlive`. Consequently,
-`mealyctl --home "$HOME/.mealy" drain` leaves an intentionally stopped daemon stopped. Restart a
-loaded agent explicitly with `launchctl kickstart -k gui/$(id -u)/dev.mealy.mealyd`, or unload it
-with `launchctl bootout gui/$(id -u)/dev.mealy.mealyd`.
+Use the verified `.deb` on Debian 13 or Ubuntu 24.04/26.04, the verified `.rpm` on Fedora 44, and
+the verified `.pkg.tar.zst` on current x86-64 Arch. The [release guide](RELEASE.md) gives exact
+download, attestation, checksum, install, upgrade, and removal commands. Native packages are
+passive: installing one does not create a user, start a service, or modify `$HOME`.
 
 > **Current capability boundary:** Mealy can now use explicit same-trust fallback chains containing
 > independently implemented `OpenAI` Responses and Anthropic Messages endpoints for bounded,
@@ -175,7 +121,13 @@ sudo apt-get update
 sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap build-essential curl jq unzip util-linux
 ```
 
-The optional pinned Chrome Headless Shell is dynamically linked. On the supported Ubuntu 24.04
+Arch Linux:
+
+```sh
+sudo pacman -Syu --needed bubblewrap curl jq unzip util-linux
+```
+
+The optional pinned Chrome Headless Shell is dynamically linked. On the supported Ubuntu LTS
 and Debian 13 releases, install its direct runtime libraries and a deterministic basic font set
 before `browser-add`:
 
@@ -187,8 +139,9 @@ sudo apt-get install --yes \
   libxfixes3 libxkbcommon0 libxrandr2
 ```
 
-The Debian package lists these libraries, the font, `curl`, and `unzip` as optional `Suggests`;
-core daemon/chat use does not require them.
+The Debian package lists these libraries as optional `Suggests`; RPM and Arch packages carry
+equivalent weak dependencies for the helper, font, and extraction tools. Core daemon/chat use does
+not require them.
 `browser-inspect` and `browser-add` still execute the exact downloaded runtime's `--version`
 inside its no-network sandbox and fail closed when the host loader cannot satisfy it.
 
@@ -218,27 +171,8 @@ dedicated reviewed host policy rather than making Bubblewrap setuid or globally 
 `mealyctl doctor` to report the `observe` and `workspace_write` profiles `enforceable`; Mealy fails
 closed when it cannot enforce the requested worker profile.
 
-macOS receives a real locked control-plane build in CI, but release one does not claim a native
-worker sandbox on that platform. Windows is outside the release-one support and CI contract. Full
-effect and extension execution currently requires a conforming Linux host.
-
-### macOS source-build preview
-
-For a source checkout on macOS, use the Rust commands directly from `zsh`. Published preview
-archives follow the verified install path above; the Linux atomic archive manager remains a
-Linux-only lifecycle boundary:
-
-```zsh
-cargo test --locked -p mealyctl --bin mealyctl --all-features
-cargo build --locked --release -p mealyd -p mealyctl --all-features
-target/release/mealyd --version
-target/release/mealyctl --version
-```
-
-Conversation and administration can run as a preview, and `mealyctl service install` can render an
-owner LaunchAgent. Governed worker profiles remain denied because release one does not ship a
-reviewed macOS sandbox adapter. macOS binaries are CI evidence, not Linux release assets or a
-production-worker claim.
+macOS and Windows are outside the active source, package, CI, and production support contract. The
+historical macOS preview remains available from `v0.1.0`, but it is archived and unmaintained.
 
 ## Build release binaries
 
@@ -1770,8 +1704,8 @@ With `mealyd` and `mealyctl` installed beside each other in `$HOME/.local/bin`:
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" service install
 ```
 
-The command writes an owner-level systemd unit on Linux or LaunchAgent on macOS and prints the exact
-activation command. Review the emitted path and command before running it. The service references
+The command writes an owner-level systemd user unit on Linux and prints the exact activation
+command. Review the emitted path and command before running it. The service references
 the canonical daemon path, so do not install it from an expendable Cargo target directory. On
 Linux the JSON response lists `readWritePaths`: the private Mealy home plus only the
 currently configured writable workspaces. Re-run this command after every workspace grant,
@@ -1780,11 +1714,6 @@ private `/tmp`/`/var/tmp` namespace, so installation rejects a home or workspace
 temporary hierarchy; it also rejects a home backed by `tmpfs` or `ramfs`. Keep durable state on a
 local persistent filesystem. A custom `--destination` must still be named `mealy.service`; the
 printed activation command links that exact absolute unit before enabling it.
-
-On macOS, the LaunchAgent starts once when bootstrapped but does not automatically undo an
-intentional drain. Restart the loaded agent with `launchctl kickstart -k
-gui/$(id -u)/dev.mealy.mealyd`; unload it with `launchctl bootout
-gui/$(id -u)/dev.mealy.mealyd`.
 
 ## Stop safely
 

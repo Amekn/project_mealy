@@ -1,11 +1,8 @@
-# Dependency policy for the complete all-feature, supported-platform graph.
+# Dependency policy for the complete all-feature Linux production graph.
 [graph]
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
 ]
 all-features = true
 

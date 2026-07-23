@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic, attested macOS conversation-only preview archive."""
+"""Archived v0.1.0 deterministic macOS conversation-only preview packager."""
 
 from __future__ import annotations
 

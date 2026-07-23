@@ -44,7 +44,7 @@ public command cannot be added or removed without updating this reference.
 | `restore-activate` | Activate one exact verified encrypted backup while stopped. |
 | `garbage-collect` | Erase only eligible unreferenced artifact files. |
 | `export` | Publish an immutable owner-scoped evidence bundle. |
-| `service` | Render and install an owner-level systemd unit or macOS LaunchAgent. |
+| `service` | Render and install an owner-level systemd user unit on supported Linux hosts. |
 | `config` | Inspect or change governed stopped-home configuration. |
 
 Most non-interactive commands emit one bounded JSON value on standard output and diagnostics on

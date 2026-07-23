@@ -17,6 +17,8 @@ use std::{
     time::SystemTime,
 };
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn package_manager_compensates_denial_then_activates_matching_binary_and_home() {
@@ -79,7 +81,7 @@ fn package_manager_compensates_denial_then_activates_matching_binary_and_home() 
             .env("MEALY_TEST_REAL_MEALYCTL", env!("CARGO_BIN_EXE_mealyctl"))
             .arg("install")
             .arg("--archive")
-            .arg(old_package.join(format!("mealy-v0.1.0-{target}.tar.gz")))
+            .arg(old_package.join(format!("mealy-v{VERSION}-{target}.tar.gz")))
             .arg("--checksums")
             .arg(old_package.join("SHA256SUMS"))
             .arg("--prefix")
@@ -95,7 +97,7 @@ fn package_manager_compensates_denial_then_activates_matching_binary_and_home() 
             .env("MEALY_TEST_REAL_MEALYCTL", env!("CARGO_BIN_EXE_mealyctl"))
             .arg("install")
             .arg("--archive")
-            .arg(new_package.join(format!("mealy-v0.1.0-{target}.tar.gz")))
+            .arg(new_package.join(format!("mealy-v{VERSION}-{target}.tar.gz")))
             .arg("--checksums")
             .arg(new_package.join("SHA256SUMS"))
             .arg("--prefix")
@@ -186,14 +188,16 @@ fn prepare_sbom(root: &Path, repository: &Path, target: &str) -> PathBuf {
     let normalized = root.join("mealy.cdx.json");
     fs::write(
         &raw,
-        br#"{"bomFormat":"CycloneDX","specVersion":"1.6","serialNumber":"urn:uuid:00000000-0000-4000-8000-000000000000","version":1,"metadata":{"timestamp":"2099-01-01T00:00:00Z","component":{"name":"temporary"}},"components":[{"type":"application","name":"mealyd","version":"0.1.0"},{"type":"application","name":"mealyctl","version":"0.1.0"}]}"#,
+        format!(
+            r#"{{"bomFormat":"CycloneDX","specVersion":"1.6","serialNumber":"urn:uuid:00000000-0000-4000-8000-000000000000","version":1,"metadata":{{"timestamp":"2099-01-01T00:00:00Z","component":{{"name":"temporary"}}}},"components":[{{"type":"application","name":"mealyd","version":"{VERSION}"}},{{"type":"application","name":"mealyctl","version":"{VERSION}"}}]}}"#
+        ),
     )
     .expect("raw SBOM");
     run_success(
         Command::new(repository.join("packaging/normalize-sbom.sh"))
             .arg(&raw)
             .arg(&normalized)
-            .arg("0.1.0")
+            .arg(VERSION)
             .arg(target)
             .arg("0123456789abcdef0123456789abcdef01234567")
             .arg("1700000000"),
@@ -230,7 +234,7 @@ fn build_package(
     fs::write(
         binaries.join("mealyd"),
         format!(
-            "#!/usr/bin/env bash\nif [[ ${{1-}} == --version ]]; then printf 'mealyd 0.1.0\\n'; elif [[ ${{1-}} == --print-supported-schema-version ]]; then printf '{schema}\\n'; else printf 'mealyd-{label}\\n'; fi\n"
+            "#!/usr/bin/env bash\nif [[ ${{1-}} == --version ]]; then printf 'mealyd {VERSION}\\n'; elif [[ ${{1-}} == --print-supported-schema-version ]]; then printf '{schema}\\n'; else printf 'mealyd-{label}\\n'; fi\n"
         ),
     )
     .expect("fixture mealyd");
@@ -243,7 +247,7 @@ fn build_package(
     run_success(
         Command::new(repository.join("packaging/build-release.sh"))
             .env("MEALY_TEST_REAL_MEALYCTL", env!("CARGO_BIN_EXE_mealyctl"))
-            .arg("0.1.0")
+            .arg(VERSION)
             .arg(target)
             .arg(&binaries)
             .arg(sbom)

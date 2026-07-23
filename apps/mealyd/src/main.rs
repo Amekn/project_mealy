@@ -2436,7 +2436,11 @@ async fn fetch_discord_page(
     query: &str,
 ) -> Result<(Vec<Value>, Duration), DiscordFetchError> {
     const MAXIMUM_RESPONSE_BYTES: usize = 1024 * 1024;
-    const USER_AGENT: &str = "DiscordBot (https://github.com/Amekn/project_mealy, 0.1.0)";
+    const USER_AGENT: &str = concat!(
+        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        env!("CARGO_PKG_VERSION"),
+        ")"
+    );
     let url = format!(
         "{}/channels/{channel_id}/messages?limit=100{query}",
         api_base_url.trim_end_matches('/'),
@@ -3260,7 +3264,11 @@ async fn deliver_discord_message(
     target: &OutboundDiscordTarget,
     delivery: &OutboxDelivery,
 ) -> OutboxDeliveryResult {
-    const USER_AGENT: &str = "DiscordBot (https://github.com/Amekn/project_mealy, 0.1.0)";
+    const USER_AGENT: &str = concat!(
+        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        env!("CARGO_PKG_VERSION"),
+        ")"
+    );
     let credential_store = Arc::clone(credentials);
     let secret_id = target.token_secret_id.clone();
     let Ok(Ok(token)) =

@@ -176,11 +176,12 @@ trap cleanup EXIT
   printf '# Mealy %s\n\n' "$tag"
   printf '%s\n\n' 'Mealy is a local-first personal-agent runtime with durable execution, explicit policy and approval boundaries, crash recovery, replay, and owner-operated Linux packaging.'
   printf '%s\n\n' '## Supported release surfaces'
-  printf '%s\n' '- Linux x86-64 and ARM64: production control plane, governed tools, sandboxed workers, rootless archive installation, and native Debian packages.'
-  printf '%s\n\n' '- macOS Apple Silicon and Intel: conversation-only preview with durable state, replay, backup/restore, and LaunchAgent control; governed worker profiles remain intentionally denied.'
-  printf '%s\n\n' 'Windows is outside this release contract.'
+  printf '%s\n' '- Ubuntu 24.04/26.04 LTS and Debian 13 on x86-64/ARM64: native Debian package or rootless archive.'
+  printf '%s\n' '- Fedora 44 on x86-64/ARM64: native RPM or rootless archive.'
+  printf '%s\n\n' '- Arch Linux on x86-64: native Arch package or rootless archive.'
+  printf '%s\n\n' 'Compatible derivatives are expected to work when they preserve the documented glibc, filesystem, user-namespace, Bubblewrap, and systemd-user contract. macOS, Windows, musl-only, and non-FHS systems are outside this release contract.'
   printf '%s\n\n' '## Install and operate'
-  printf 'Follow the [verified Linux quickstart](https://github.com/%s/blob/%s/docs/QUICKSTART.md#fast-verified-linux-install) or the [macOS preview procedure](https://github.com/%s/blob/%s/docs/QUICKSTART.md#macos-conversation-only-preview). The [release guide](https://github.com/%s/blob/%s/docs/RELEASE.md) covers attestation, Debian installation, upgrade, rollback, and uninstall.\n\n' \
+  printf 'Follow the [verified Linux quickstart](https://github.com/%s/blob/%s/docs/QUICKSTART.md#fast-verified-linux-install), [Linux support contract](https://github.com/%s/blob/%s/docs/LINUX_SUPPORT.md), and [release guide](https://github.com/%s/blob/%s/docs/RELEASE.md) for attestation, native package installation, upgrade, rollback, and uninstall.\n\n' \
     "$repository" "$tag" "$repository" "$tag" "$repository" "$tag"
   printf '%s\n\n' '## Exact acceptance evidence'
   printf -- "- Release commit: [\`%s\`](https://github.com/%s/commit/%s)\n" \
@@ -209,7 +210,7 @@ trap cleanup EXIT
     printf -- "- Rebase-safe identical-tree lineage proof: [\`docs/benchmarks/release-soak-lineage.json\`](https://github.com/%s/blob/%s/docs/benchmarks/release-soak-lineage.json)\n\n" \
       "$repository" "$tag"
   fi
-  printf '%s\n\n' 'The linked release workflow is the final authority: the release is complete only when its native Linux/macOS package jobs and all dependent public-download acceptance jobs are green.'
+  printf '%s\n\n' 'The linked release workflow is the final authority: the release is complete only when its native Linux package jobs and all dependent clean-distribution public-download acceptance jobs are green.'
   printf '%s\n' '## Security and licensing'
   printf 'Review the tag-pinned [security policy](https://github.com/%s/blob/%s/SECURITY.md), [threat model](https://github.com/%s/blob/%s/docs/THREAT_MODEL.md), project [license](https://github.com/%s/blob/%s/LICENSE), per-asset CycloneDX SBOMs, third-party license notices, checksums, and offline Sigstore bundles before deployment.\n' \
     "$repository" "$tag" "$repository" "$tag" "$repository" "$tag"

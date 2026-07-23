@@ -634,11 +634,10 @@ scripts/validate-documentation.py --cli target/debug/mealyctl
 real-daemon dashboard smoke, RustSec audit, Bash syntax plus ShellCheck, and packaging lifecycle
 ```
 
-The checked-in CI matrix compiles every release-one control-plane target on Linux x86_64/ARM64 and
-native macOS ARM64/Intel, gives both macOS architectures native client unit tests plus a locked
-release build and binary/schema identity smoke, and runs the
-strict/sandbox/browser Linux gates on the explicit Ubuntu 24.04 image rather than a moving
-`ubuntu-latest`, semantically validates all workflow files with pinned `actionlint`, scans them
+The checked-in CI matrix compiles both production control-plane targets on Linux x86-64/ARM64,
+runs clean native package builds on Ubuntu 24.04/26.04, Debian 13, and Fedora 44 for both
+architectures plus Arch Linux on x86-64, and runs the strict/sandbox/browser Linux gates on the
+explicit Ubuntu 24.04 image. It semantically validates all workflow files with pinned `actionlint`, scans them
 offline for unsafe triggers, permissions, secret handling, interpolation, and credential persistence
 with pinned `zizmor`, and has separate Bubblewrap, generated-systemd-service, and pinned-browser
 conformance lanes. The service lane checks an actual approved mutation because a startup probe
@@ -666,9 +665,8 @@ expression, and a member package that does not inherit the workspace license. Th
 runs the validator on the real checkout; the copyright-holder-selected canonical Apache-2.0 text
 and existing exact license-file inheritance now pass that public-use gate.
 The current tree additionally passed the equivalent GCC cross-check for
-`aarch64-unknown-linux-gnu`; native macOS build/package evidence and ARM64 Linux runtime/package
-evidence remain the CI and tag matrices' responsibility. Windows is outside the release-one support and CI
-contract.
+`aarch64-unknown-linux-gnu`; ARM64 Linux runtime/package evidence remains the native CI and tag
+matrix's responsibility. macOS and Windows are outside the active support and CI contract.
 Every workflow job has an explicit scope-appropriate timeout instead of inheriting GitHub's loose
 default.
 
