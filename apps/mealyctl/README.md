@@ -52,7 +52,10 @@ published payload and distinguishes managed archives from Debian, RPM, Arch, dev
 unknown layouts. `update`, `repair`, `rollback`, and `uninstall` emit no-mutation plans by default
 and require explicit approval for an owner-local mutation; native packages always hand control back
 to their package database. The bundled attested bootstrap lets `update` compare the exact target
-state schema before a same-schema archive swap, and Bash/Zsh/Fish completion is generated offline.
+state schema before a same-schema archive swap. Approved apply runs in a separate restartable user
+service, records its phases, backs up and drains first, health-gates commit, and automatically
+restores a qualified prior slot on failure; `update-status` inspects that durable transaction.
+Bash/Zsh/Fish completion is generated offline.
 
 `chat --session-id SESSION_ID` also reconstructs local watchers for the retained active task and
 pending durable inputs; leaving the REPL never cancels accepted daemon work. `session list` returns

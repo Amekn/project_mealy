@@ -86,6 +86,7 @@ release_documents=(
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
   decisions/0009-sqlite-writer-and-snapshot-readers.md
+  decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
   research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md

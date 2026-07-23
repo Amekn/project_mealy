@@ -2437,7 +2437,7 @@ async fn fetch_discord_page(
 ) -> Result<(Vec<Value>, Duration), DiscordFetchError> {
     const MAXIMUM_RESPONSE_BYTES: usize = 1024 * 1024;
     const USER_AGENT: &str = concat!(
-        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        "DiscordBot (https://github.com/Amekn/mealy, ",
         env!("CARGO_PKG_VERSION"),
         ")"
     );
@@ -3265,7 +3265,7 @@ async fn deliver_discord_message(
     delivery: &OutboxDelivery,
 ) -> OutboxDeliveryResult {
     const USER_AGENT: &str = concat!(
-        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        "DiscordBot (https://github.com/Amekn/mealy, ",
         env!("CARGO_PKG_VERSION"),
         ")"
     );

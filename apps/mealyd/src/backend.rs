@@ -3106,7 +3106,7 @@ fn verify_discord_dm(
     expected_channel_id: &str,
 ) -> Result<VerifiedDiscordDm, BackendError> {
     const USER_AGENT: &str = concat!(
-        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        "DiscordBot (https://github.com/Amekn/mealy, ",
         env!("CARGO_PKG_VERSION"),
         ")"
     );

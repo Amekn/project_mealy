@@ -20,7 +20,7 @@ USAGE
 
 version=latest
 check=false
-repository=Amekn/project_mealy
+repository=Amekn/mealy
 prefix=${HOME:+$HOME/.local}
 home=${MEALY_HOME:-${HOME:+$HOME/.mealy}}
 while [[ $# -gt 0 ]]; do

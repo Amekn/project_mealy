@@ -12,6 +12,7 @@ use std::{
     process::{Command, Stdio},
 };
 use thiserror::Error;
+use uuid::Uuid;
 
 const STATUS_SCHEMA_VERSION: &str = "mealy.install-status.v1";
 const RELEASE_SCHEMA_VERSION: &str = "mealy.release.v2";
@@ -20,12 +21,13 @@ const MAXIMUM_CHECKSUM_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_PAYLOAD_FILES: usize = 96;
 const MAXIMUM_PAYLOAD_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAXIMUM_UPDATE_CHECK_BYTES: usize = 64 * 1024;
-const RELEASE_REPOSITORY: &str = "Amekn/project_mealy";
+const MAXIMUM_UPDATE_TRANSACTION_BYTES: u64 = 64 * 1024;
+const RELEASE_REPOSITORY: &str = "Amekn/mealy";
 const STABLE_MANAGER_ISSUE: &str =
     "stable release manager is absent, redirected, or does not match a verified slot";
 
 /// Supported installation provenance.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum InstallationKind {
     /// Owner-local atomic release slots managed by the attested archive installer.
@@ -45,7 +47,7 @@ pub(crate) enum InstallationKind {
 }
 
 /// Result of verifying the complete active release checksum inventory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum IntegrityStatus {
     /// Every declared release file is a no-follow regular file with the exact signed digest.
@@ -57,7 +59,7 @@ pub(crate) enum IntegrityStatus {
 }
 
 /// How updates are safely owned for this installation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum UpdateMode {
     /// The verified owner-local release bootstrap may stage an attested archive update.
@@ -75,17 +77,20 @@ pub(crate) enum UpdateMode {
 }
 
 /// Bounded, non-secret installation report.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct InstallationStatus {
     /// Stable output contract.
-    pub(crate) schema_version: &'static str,
+    pub(crate) schema_version: String,
     /// Detected install provenance.
     pub(crate) installation_kind: InstallationKind,
     /// Complete active-slot verification result.
     pub(crate) integrity: IntegrityStatus,
     /// Version declared by the active release, or the compiled version outside a release.
     pub(crate) current_version: String,
+    /// Source commit declared by the active published release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) current_commit: Option<String>,
     /// Durable state schema supported by the active published release.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) state_schema_version: Option<u64>,
@@ -150,6 +155,94 @@ pub(crate) struct UpdatePlan {
     /// Native package-manager handoff, when native ownership applies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) native_update_command: Option<String>,
+}
+
+/// Durable phase of one disconnect-resistant archive update.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum UpdateTransactionPhase {
+    /// Exact request was durably recorded before helper scheduling.
+    Scheduled,
+    /// Immutable pre-update backup completed.
+    Prepared,
+    /// Admission is closing and the daemon is draining.
+    Draining,
+    /// Owner service is inactive and the home lock is available.
+    Stopped,
+    /// Exact candidate slot was activated.
+    Activated,
+    /// The updated owner service is starting.
+    Starting,
+    /// Updated service is undergoing health, doctor, version, and integrity qualification.
+    Verifying,
+    /// Target passed every qualification gate.
+    Committed,
+    /// The exact request failed before program mutation; the prior service remains qualified.
+    Aborted,
+    /// Target failed qualification and the prior verified slot is being restored.
+    RollingBack,
+    /// Prior release was restored and passed qualification.
+    RolledBack,
+    /// Automated recovery could not establish one safe qualified slot.
+    RecoveryFailed,
+}
+
+impl UpdateTransactionPhase {
+    /// Whether no more automatic phase transition is expected.
+    pub(crate) const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Committed | Self::Aborted | Self::RolledBack | Self::RecoveryFailed
+        )
+    }
+}
+
+/// Minimal immutable-backup evidence retained by an update transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateBackupEvidence {
+    /// Immutable backup label.
+    pub(crate) name: String,
+    /// Digest of exact canonical manifest bytes.
+    pub(crate) manifest_digest: String,
+    /// Captured durable-state schema.
+    pub(crate) state_schema_version: u64,
+}
+
+/// Durable, non-secret evidence and recovery cursor for one archive update.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateTransaction {
+    /// Stable transaction-document contract.
+    pub(crate) schema_version: String,
+    /// `UUIDv7` transaction identity.
+    pub(crate) transaction_id: String,
+    /// Monotonic recovery phase.
+    pub(crate) phase: UpdateTransactionPhase,
+    /// Exact canonical daemon home.
+    pub(crate) home: PathBuf,
+    /// Exact owner-local installation prefix.
+    pub(crate) prefix: PathBuf,
+    /// Exact canonical systemd user-service fragment.
+    pub(crate) service_fragment: PathBuf,
+    /// Private immutable copy of the already-qualified client that owns recovery.
+    pub(crate) helper_executable: PathBuf,
+    /// SHA-256 of the private recovery helper.
+    pub(crate) helper_sha256: String,
+    /// Exact qualified version before update.
+    pub(crate) previous_version: String,
+    /// Exact source commit before update.
+    pub(crate) previous_commit: String,
+    /// Exact attested target identity.
+    pub(crate) candidate: UpdateCandidate,
+    /// Pre-update backup evidence once available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) backup: Option<UpdateBackupEvidence>,
+    /// Bounded safe failure classification, never provider or process output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) failure: Option<String>,
+    /// Whether automatic rollback was required.
+    pub(crate) rollback_attempted: bool,
 }
 
 /// Owner-facing installed-program maintenance operation.
@@ -219,6 +312,12 @@ pub(crate) enum LifecycleError {
     },
     #[error("managed archive {0} is unavailable for this installation")]
     ManagerActionUnavailable(&'static str),
+    #[error("update transaction evidence is invalid or inconsistent")]
+    InvalidUpdateTransaction,
+    #[error("update transaction evidence could not be persisted: {0}")]
+    UpdateTransactionIo(#[source] io::Error),
+    #[error("installed release status could not be executed or validated")]
+    InvalidInstalledStatus,
 }
 
 #[derive(Clone, Copy)]
@@ -271,6 +370,54 @@ pub(crate) fn inspect_current_installation() -> Result<InstallationStatus, Lifec
     let executable = std::env::current_exe().map_err(LifecycleError::CurrentExecutable)?;
     let executable = fs::canonicalize(&executable).map_err(LifecycleError::CurrentExecutable)?;
     Ok(inspect_executable(&executable))
+}
+
+/// Inspect the binary currently active in a managed prefix through its own compiled identity.
+pub(crate) fn inspect_managed_prefix(prefix: &Path) -> Result<InstallationStatus, LifecycleError> {
+    let prefix = canonical_real_directory(prefix)?;
+    let executable = prefix.join("bin/mealyctl");
+    let metadata =
+        fs::symlink_metadata(&executable).map_err(LifecycleError::UpdateTransactionIo)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.permissions().mode() & 0o111 == 0
+    {
+        return Err(LifecycleError::InvalidInstalledStatus);
+    }
+    let output = Command::new(&executable)
+        .arg("install-status")
+        .env_clear()
+        .env("PATH", lifecycle_path())
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| LifecycleError::InvalidInstalledStatus)?;
+    if !output.status.success() || output.stdout.len() > MAXIMUM_UPDATE_CHECK_BYTES {
+        return Err(LifecycleError::InvalidInstalledStatus);
+    }
+    let status: InstallationStatus = serde_json::from_slice(&output.stdout)
+        .map_err(|_| LifecycleError::InvalidInstalledStatus)?;
+    if status.schema_version != STATUS_SCHEMA_VERSION
+        || status.installation_kind != InstallationKind::ManagedArchive
+        || status.integrity != IntegrityStatus::Verified
+        || status.managed_prefix.as_deref() != Some(prefix.as_path())
+        || status.release_root.as_deref() != Some(prefix.join("share/mealy").as_path())
+        || status.executable != executable
+        || !valid_release_version(&status.current_version)
+        || !status
+            .current_commit
+            .as_deref()
+            .is_some_and(valid_sha256_commit)
+        || status.state_schema_version.is_none()
+        || !status
+            .target
+            .as_deref()
+            .is_some_and(|target| matches!(target, "linux-x86_64-gnu" | "linux-aarch64-gnu"))
+    {
+        return Err(LifecycleError::InvalidInstalledStatus);
+    }
+    Ok(status)
 }
 
 /// Build a no-mutation plan for repair, rollback, or uninstall.
@@ -326,10 +473,26 @@ pub(crate) fn plan_update(
     home: &Path,
     requested_version: &str,
 ) -> Result<UpdatePlan, LifecycleError> {
+    plan_update_for_installation(home, requested_version, inspect_current_installation()?)
+}
+
+/// Recheck a target from a pinned managed prefix while running its private recovery helper.
+pub(crate) fn plan_update_for_managed_prefix(
+    home: &Path,
+    requested_version: &str,
+    prefix: &Path,
+) -> Result<UpdatePlan, LifecycleError> {
+    plan_update_for_installation(home, requested_version, inspect_managed_prefix(prefix)?)
+}
+
+fn plan_update_for_installation(
+    home: &Path,
+    requested_version: &str,
+    installation: InstallationStatus,
+) -> Result<UpdatePlan, LifecycleError> {
     if !valid_requested_version(requested_version) {
         return Err(LifecycleError::InvalidUpdateVersion);
     }
-    let installation = inspect_current_installation()?;
     if installation.integrity != IntegrityStatus::Verified {
         return Err(LifecycleError::IntegrityFailed);
     }
@@ -464,6 +627,484 @@ pub(crate) fn apply_archive_update(home: &Path, plan: &UpdatePlan) -> Result<(),
     }
 }
 
+/// Durably record one exact archive-update request before scheduling its independent helper.
+pub(crate) fn prepare_update_transaction(
+    home: &Path,
+    plan: &UpdatePlan,
+    service_fragment: &Path,
+) -> Result<UpdateTransaction, LifecycleError> {
+    if !plan.update_available
+        || !plan.state_schema_compatible
+        || !plan.apply_supported
+        || plan.installation.integrity != IntegrityStatus::Verified
+        || plan.installation.installation_kind != InstallationKind::ManagedArchive
+    {
+        return Err(LifecycleError::ArchiveUpdateRequired);
+    }
+    let home = canonical_real_directory(home)?;
+    let prefix = plan
+        .installation
+        .managed_prefix
+        .as_ref()
+        .ok_or(LifecycleError::ArchiveUpdateRequired)?;
+    let prefix = canonical_real_directory(prefix)?;
+    let service_fragment = canonical_regular_file(service_fragment)?;
+    let helper_source = canonical_regular_file(&plan.installation.executable)?;
+    if helper_source != prefix.join("bin/mealyctl") {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    let previous_commit = plan
+        .installation
+        .current_commit
+        .clone()
+        .ok_or(LifecycleError::InvalidUpdateTransaction)?;
+    let transaction_id = Uuid::now_v7().to_string();
+    let directory = update_transaction_directory(&home)?;
+    let helper_executable = directory.join(format!("{transaction_id}.helper"));
+    let helper_sha256 = copy_update_helper(&helper_source, &helper_executable)?;
+    let record = UpdateTransaction {
+        schema_version: "mealy.update-transaction.v1".to_owned(),
+        transaction_id,
+        phase: UpdateTransactionPhase::Scheduled,
+        home,
+        prefix,
+        service_fragment,
+        helper_executable,
+        helper_sha256,
+        previous_version: plan.installation.current_version.clone(),
+        previous_commit,
+        candidate: plan.candidate.clone(),
+        backup: None,
+        failure: None,
+        rollback_attempted: false,
+    };
+    if let Err(error) = validate_update_transaction(&record) {
+        let _ = fs::remove_file(&record.helper_executable);
+        return Err(error);
+    }
+    let destination = directory.join(format!("{}.json", record.transaction_id));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    let mut file = match options.open(&destination) {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = fs::remove_file(&record.helper_executable);
+            return Err(LifecycleError::UpdateTransactionIo(error));
+        }
+    };
+    let bytes =
+        serde_json::to_vec_pretty(&record).map_err(|_| LifecycleError::InvalidUpdateTransaction)?;
+    if let Err(error) = file
+        .write_all(&bytes)
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+    {
+        let _ = fs::remove_file(&destination);
+        let _ = fs::remove_file(&record.helper_executable);
+        return Err(LifecycleError::UpdateTransactionIo(error));
+    }
+    if let Err(error) = File::open(&directory).and_then(|directory| directory.sync_all()) {
+        let _ = fs::remove_file(&destination);
+        let _ = fs::remove_file(&record.helper_executable);
+        return Err(LifecycleError::UpdateTransactionIo(error));
+    }
+    Ok(record)
+}
+
+/// Prove that an invocation is the exact old-client recovery copy pinned by this transaction.
+pub(crate) fn verify_update_helper_identity(
+    record: &UpdateTransaction,
+    executable: &Path,
+) -> Result<(), LifecycleError> {
+    validate_update_transaction(record)?;
+    let executable = canonical_regular_file(executable)?;
+    let mode = fs::metadata(&executable)
+        .map_err(LifecycleError::UpdateTransactionIo)?
+        .permissions()
+        .mode()
+        & 0o777;
+    if executable != record.helper_executable
+        || mode != 0o500
+        || digest_regular_file(&executable).map_err(LifecycleError::UpdateTransactionIo)?
+            != record.helper_sha256
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(())
+}
+
+/// Remove a terminal transaction's verified helper copy while retaining its durable digest record.
+pub(crate) fn retire_update_helper(record: &UpdateTransaction) -> Result<(), LifecycleError> {
+    if !matches!(
+        record.phase,
+        UpdateTransactionPhase::Committed
+            | UpdateTransactionPhase::Aborted
+            | UpdateTransactionPhase::RolledBack
+    ) {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    verify_update_helper_identity(record, &record.helper_executable)?;
+    fs::remove_file(&record.helper_executable).map_err(LifecycleError::UpdateTransactionIo)?;
+    File::open(update_transaction_directory(&record.home)?)
+        .and_then(|directory| directory.sync_all())
+        .map_err(LifecycleError::UpdateTransactionIo)
+}
+
+fn copy_update_helper(source: &Path, destination: &Path) -> Result<String, LifecycleError> {
+    let mut input = open_no_follow(source).map_err(LifecycleError::UpdateTransactionIo)?;
+    let metadata = input
+        .metadata()
+        .map_err(LifecycleError::UpdateTransactionIo)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAXIMUM_PAYLOAD_FILE_BYTES {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true).mode(0o500);
+    let mut output = options
+        .open(destination)
+        .map_err(LifecycleError::UpdateTransactionIo)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut total = 0_u64;
+    let result = (|| -> io::Result<String> {
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total = total
+                .checked_add(u64::try_from(count).unwrap_or(u64::MAX))
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "update helper is too large")
+                })?;
+            if total > MAXIMUM_PAYLOAD_FILE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "update helper is too large",
+                ));
+            }
+            hasher.update(&buffer[..count]);
+            output.write_all(&buffer[..count])?;
+        }
+        if total != metadata.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "update helper changed while being copied",
+            ));
+        }
+        output.set_permissions(fs::Permissions::from_mode(0o500))?;
+        output.sync_all()?;
+        Ok(lowercase_hex(&hasher.finalize()))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
+    }
+    result.map_err(LifecycleError::UpdateTransactionIo)
+}
+
+/// Load and fully validate one transaction by its canonical `UUIDv7` identity.
+pub(crate) fn load_update_transaction(
+    home: &Path,
+    transaction_id: &str,
+) -> Result<UpdateTransaction, LifecycleError> {
+    validate_transaction_id(transaction_id)?;
+    let home = canonical_real_directory(home)?;
+    let path = home
+        .join("update-transactions")
+        .join(format!("{transaction_id}.json"));
+    let bytes = read_bounded_regular_file(&path, MAXIMUM_UPDATE_TRANSACTION_BYTES)
+        .map_err(LifecycleError::UpdateTransactionIo)?;
+    let record: UpdateTransaction =
+        serde_json::from_slice(&bytes).map_err(|_| LifecycleError::InvalidUpdateTransaction)?;
+    validate_update_transaction(&record)?;
+    if record.transaction_id != transaction_id || record.home != home {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(record)
+}
+
+/// Atomically advance one transaction after validating immutable identity and phase ordering.
+pub(crate) fn persist_update_transaction(record: &UpdateTransaction) -> Result<(), LifecycleError> {
+    validate_update_transaction(record)?;
+    let current = load_update_transaction(&record.home, &record.transaction_id)?;
+    if !same_update_transaction_identity(&current, record)
+        || !valid_update_phase_transition(current.phase, record.phase)
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    let directory = update_transaction_directory(&record.home)?;
+    let destination = directory.join(format!("{}.json", record.transaction_id));
+    let temporary = directory.join(format!(
+        ".{}.{}.new",
+        record.transaction_id,
+        std::process::id()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    let mut file = options
+        .open(&temporary)
+        .map_err(LifecycleError::UpdateTransactionIo)?;
+    let bytes =
+        serde_json::to_vec_pretty(record).map_err(|_| LifecycleError::InvalidUpdateTransaction)?;
+    let result = file
+        .write_all(&bytes)
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+        .and_then(|()| fs::rename(&temporary, &destination))
+        .and_then(|()| File::open(&directory)?.sync_all());
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map_err(LifecycleError::UpdateTransactionIo)
+}
+
+/// Exact active slot relevant to one update transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActiveTransactionSlot {
+    /// The qualified release from before the transaction.
+    Previous,
+    /// The checked target release.
+    Candidate,
+}
+
+/// Classify which exact transaction slot is currently active.
+pub(crate) fn active_transaction_slot(
+    record: &UpdateTransaction,
+) -> Result<ActiveTransactionSlot, LifecycleError> {
+    validate_update_transaction(record)?;
+    let status = inspect_managed_prefix(&record.prefix)?;
+    let identity = (
+        status.current_version.as_str(),
+        status.current_commit.as_deref(),
+        status.state_schema_version,
+        status.target.as_deref(),
+    );
+    if identity
+        == (
+            record.previous_version.as_str(),
+            Some(record.previous_commit.as_str()),
+            Some(record.candidate.state_schema_version),
+            Some(record.candidate.target.as_str()),
+        )
+    {
+        return Ok(ActiveTransactionSlot::Previous);
+    }
+    if identity
+        == (
+            record.candidate.version.as_str(),
+            Some(record.candidate.commit.as_str()),
+            Some(record.candidate.state_schema_version),
+            Some(record.candidate.target.as_str()),
+        )
+    {
+        return Ok(ActiveTransactionSlot::Candidate);
+    }
+    Err(LifecycleError::InvalidInstalledStatus)
+}
+
+/// Restore the exact prior same-schema slot, or prove that it is already active.
+pub(crate) fn rollback_update_transaction(
+    record: &UpdateTransaction,
+) -> Result<(), LifecycleError> {
+    match active_transaction_slot(record)? {
+        ActiveTransactionSlot::Previous => return Ok(()),
+        ActiveTransactionSlot::Candidate => {}
+    }
+    let installation = inspect_managed_prefix(&record.prefix)?;
+    if !installation.rollback_available {
+        return Err(LifecycleError::ManagerActionUnavailable("rollback"));
+    }
+    run_archive_manager(&installation, &record.home, ArchiveManagerAction::Rollback)?;
+    if active_transaction_slot(record)? != ActiveTransactionSlot::Previous {
+        return Err(LifecycleError::InvalidInstalledStatus);
+    }
+    Ok(())
+}
+
+fn validate_update_transaction(record: &UpdateTransaction) -> Result<(), LifecycleError> {
+    validate_transaction_id(&record.transaction_id)?;
+    if record.schema_version != "mealy.update-transaction.v1"
+        || !valid_absolute_path(&record.home)
+        || !valid_absolute_path(&record.prefix)
+        || !valid_absolute_path(&record.service_fragment)
+        || record.helper_executable
+            != record
+                .home
+                .join("update-transactions")
+                .join(format!("{}.helper", record.transaction_id))
+        || !valid_sha256(&record.helper_sha256)
+        || !valid_release_version(&record.previous_version)
+        || !valid_sha256_commit(&record.previous_commit)
+        || record.candidate.schema_version != "mealy.update-check.v1"
+        || !record.candidate.verified
+        || !valid_release_version(&record.candidate.version)
+        || !valid_sha256_commit(&record.candidate.commit)
+        || !matches!(
+            record.candidate.target.as_str(),
+            "linux-x86_64-gnu" | "linux-aarch64-gnu"
+        )
+        || !(1..=9999).contains(&record.candidate.state_schema_version)
+        || record.previous_commit == record.candidate.commit
+        || record.failure.as_ref().is_some_and(|value| {
+            value.is_empty() || value.len() > 512 || value.chars().any(char::is_control)
+        })
+        || record.backup.as_ref().is_some_and(|backup| {
+            !valid_portable_name(&backup.name)
+                || !valid_sha256(&backup.manifest_digest)
+                || !(1..=9999).contains(&backup.state_schema_version)
+        })
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    if !matches!(
+        record.phase,
+        UpdateTransactionPhase::Scheduled
+            | UpdateTransactionPhase::Aborted
+            | UpdateTransactionPhase::RecoveryFailed
+    ) && record.backup.is_none()
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    if matches!(
+        record.phase,
+        UpdateTransactionPhase::RollingBack | UpdateTransactionPhase::RolledBack
+    ) != record.rollback_attempted
+        || (record.rollback_attempted
+            && !matches!(
+                record.phase,
+                UpdateTransactionPhase::RollingBack
+                    | UpdateTransactionPhase::RolledBack
+                    | UpdateTransactionPhase::RecoveryFailed
+            ))
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(())
+}
+
+fn same_update_transaction_identity(left: &UpdateTransaction, right: &UpdateTransaction) -> bool {
+    left.schema_version == right.schema_version
+        && left.transaction_id == right.transaction_id
+        && left.home == right.home
+        && left.prefix == right.prefix
+        && left.service_fragment == right.service_fragment
+        && left.helper_executable == right.helper_executable
+        && left.helper_sha256 == right.helper_sha256
+        && left.previous_version == right.previous_version
+        && left.previous_commit == right.previous_commit
+        && left.candidate == right.candidate
+}
+
+fn valid_update_phase_transition(from: UpdateTransactionPhase, to: UpdateTransactionPhase) -> bool {
+    if from == to {
+        return true;
+    }
+    matches!(
+        (from, to),
+        (
+            UpdateTransactionPhase::Scheduled,
+            UpdateTransactionPhase::Prepared
+                | UpdateTransactionPhase::Aborted
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Prepared,
+            UpdateTransactionPhase::Draining
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Draining,
+            UpdateTransactionPhase::Stopped
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Stopped,
+            UpdateTransactionPhase::Activated
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Activated,
+            UpdateTransactionPhase::Starting
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Starting,
+            UpdateTransactionPhase::Verifying
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::Verifying,
+            UpdateTransactionPhase::Committed
+                | UpdateTransactionPhase::RollingBack
+                | UpdateTransactionPhase::RecoveryFailed
+        ) | (
+            UpdateTransactionPhase::RollingBack,
+            UpdateTransactionPhase::RolledBack | UpdateTransactionPhase::RecoveryFailed
+        )
+    )
+}
+
+fn validate_transaction_id(value: &str) -> Result<(), LifecycleError> {
+    let parsed = Uuid::parse_str(value).map_err(|_| LifecycleError::InvalidUpdateTransaction)?;
+    if parsed.get_version_num() != 7 || parsed.hyphenated().to_string() != value {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(())
+}
+
+fn valid_portable_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn valid_absolute_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
+fn canonical_real_directory(path: &Path) -> Result<PathBuf, LifecycleError> {
+    let metadata = fs::symlink_metadata(path).map_err(LifecycleError::UpdateTransactionIo)?;
+    let canonical = fs::canonicalize(path).map_err(LifecycleError::UpdateTransactionIo)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() || !valid_absolute_path(&canonical) {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(canonical)
+}
+
+fn canonical_regular_file(path: &Path) -> Result<PathBuf, LifecycleError> {
+    let metadata = fs::symlink_metadata(path).map_err(LifecycleError::UpdateTransactionIo)?;
+    let canonical = fs::canonicalize(path).map_err(LifecycleError::UpdateTransactionIo)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || !valid_absolute_path(&canonical)
+    {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(canonical)
+}
+
+fn update_transaction_directory(home: &Path) -> Result<PathBuf, LifecycleError> {
+    let directory = home.join("update-transactions");
+    match fs::create_dir(&directory) {
+        Ok(()) => {
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .map_err(LifecycleError::UpdateTransactionIo)?;
+            File::open(home)
+                .and_then(|home| home.sync_all())
+                .map_err(LifecycleError::UpdateTransactionIo)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(LifecycleError::UpdateTransactionIo(error)),
+    }
+    let metadata = fs::symlink_metadata(&directory).map_err(LifecycleError::UpdateTransactionIo)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(LifecycleError::InvalidUpdateTransaction);
+    }
+    Ok(directory)
+}
+
 fn inspect_executable(executable: &Path) -> InstallationStatus {
     let compiled_version = env!("CARGO_PKG_VERSION").to_owned();
     if let Some(prefix) = archive_prefix(executable) {
@@ -530,10 +1171,11 @@ fn inspect_executable(executable: &Path) -> InstallationStatus {
         InstallationKind::Unknown
     };
     InstallationStatus {
-        schema_version: STATUS_SCHEMA_VERSION,
+        schema_version: STATUS_SCHEMA_VERSION.to_owned(),
         installation_kind: kind,
         integrity: IntegrityStatus::NotApplicable,
         current_version: compiled_version,
+        current_commit: None,
         state_schema_version: None,
         target: None,
         executable: executable.to_owned(),
@@ -688,12 +1330,14 @@ fn published_status(
         .manifest
         .as_ref()
         .map(|value| value.state_schema_version);
+    let current_commit = slot.manifest.as_ref().map(|value| value.commit.clone());
     let target = slot.manifest.as_ref().map(|value| value.target.clone());
     InstallationStatus {
-        schema_version: STATUS_SCHEMA_VERSION,
+        schema_version: STATUS_SCHEMA_VERSION.to_owned(),
         installation_kind: kind,
         integrity,
         current_version,
+        current_commit,
         state_schema_version,
         target,
         executable: executable.to_owned(),
@@ -791,7 +1435,7 @@ fn slot_path(layout: SlotLayout<'_>, logical: &str) -> PathBuf {
     }
 }
 
-fn read_bounded_regular_file(path: &Path, maximum: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn read_bounded_regular_file(path: &Path, maximum: u64) -> io::Result<Vec<u8>> {
     let file = open_no_follow(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > maximum {
@@ -1307,5 +1951,145 @@ mod tests {
             build_update_plan(installation, "v0.2.0", wrong_target).is_err(),
             "a target mismatch must fail closed"
         );
+    }
+
+    #[test]
+    fn update_transaction_is_private_restartable_and_phase_fenced() {
+        let (_temporary, executable) = fixture();
+        let prefix = executable.parent().expect("bin").parent().expect("prefix");
+        let home = prefix.join("home");
+        fs::create_dir(&home).expect("home");
+        let service = prefix.join("mealy.service");
+        fs::write(&service, b"[Service]\n").expect("service");
+        let installation = inspect_executable(&executable);
+        let candidate = UpdateCandidate {
+            schema_version: "mealy.update-check.v1".to_owned(),
+            version: "0.2.0".to_owned(),
+            target: "linux-x86_64-gnu".to_owned(),
+            commit: "b".repeat(40),
+            state_schema_version: 15,
+            verified: true,
+        };
+        let plan = build_update_plan(installation, "v0.2.0", candidate).expect("update plan");
+        let mut transaction =
+            prepare_update_transaction(&home, &plan, &service).expect("transaction");
+        assert_eq!(transaction.phase, UpdateTransactionPhase::Scheduled);
+        assert_eq!(
+            fs::metadata(&transaction.helper_executable)
+                .expect("helper metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o500
+        );
+        verify_update_helper_identity(&transaction, &transaction.helper_executable)
+            .expect("pinned private helper");
+        assert!(
+            verify_update_helper_identity(&transaction, &service).is_err(),
+            "a different executable cannot own transaction recovery"
+        );
+        let path = home
+            .join("update-transactions")
+            .join(format!("{}.json", transaction.transaction_id));
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("transaction metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            load_update_transaction(&home, &transaction.transaction_id)
+                .expect("loaded transaction"),
+            transaction
+        );
+
+        transaction.backup = Some(UpdateBackupEvidence {
+            name: format!("pre-update-{}", transaction.transaction_id),
+            manifest_digest: "c".repeat(64),
+            state_schema_version: 15,
+        });
+        transaction.phase = UpdateTransactionPhase::Prepared;
+        persist_update_transaction(&transaction).expect("prepared phase");
+
+        let mut skipped = transaction.clone();
+        skipped.phase = UpdateTransactionPhase::Activated;
+        assert!(
+            persist_update_transaction(&skipped).is_err(),
+            "a durable update phase cannot be skipped"
+        );
+
+        let mut changed = transaction.clone();
+        changed.candidate.commit = "d".repeat(40);
+        changed.phase = UpdateTransactionPhase::Draining;
+        assert!(
+            persist_update_transaction(&changed).is_err(),
+            "immutable candidate identity cannot change"
+        );
+
+        transaction.phase = UpdateTransactionPhase::Draining;
+        persist_update_transaction(&transaction).expect("draining phase");
+        assert_eq!(
+            load_update_transaction(&home, &transaction.transaction_id)
+                .expect("advanced transaction")
+                .phase,
+            UpdateTransactionPhase::Draining
+        );
+        assert!(
+            retire_update_helper(&transaction).is_err(),
+            "a nonterminal transaction must retain its recovery executable"
+        );
+        let mut aborted =
+            prepare_update_transaction(&home, &plan, &service).expect("aborted transaction");
+        aborted.failure = Some("candidate-reverification-failed".to_owned());
+        aborted.phase = UpdateTransactionPhase::Aborted;
+        persist_update_transaction(&aborted).expect("aborted phase");
+        retire_update_helper(&aborted).expect("retire terminal helper");
+        assert!(!aborted.helper_executable.exists());
+
+        fs::set_permissions(
+            &transaction.helper_executable,
+            fs::Permissions::from_mode(0o700),
+        )
+        .expect("make helper owner-writable");
+        fs::write(&transaction.helper_executable, b"tampered helper").expect("tamper helper");
+        assert!(
+            verify_update_helper_identity(&transaction, &transaction.helper_executable).is_err(),
+            "a changed helper cannot resume transaction recovery"
+        );
+    }
+
+    #[test]
+    fn update_transaction_failure_transitions_cover_every_mutation_boundary() {
+        assert!(UpdateTransactionPhase::Aborted.is_terminal());
+        assert!(valid_update_phase_transition(
+            UpdateTransactionPhase::Scheduled,
+            UpdateTransactionPhase::Aborted
+        ));
+        for phase in [
+            UpdateTransactionPhase::Prepared,
+            UpdateTransactionPhase::Draining,
+            UpdateTransactionPhase::Stopped,
+            UpdateTransactionPhase::Activated,
+            UpdateTransactionPhase::Starting,
+            UpdateTransactionPhase::Verifying,
+        ] {
+            assert!(
+                valid_update_phase_transition(phase, UpdateTransactionPhase::RollingBack),
+                "{phase:?} must have a durable rollback edge"
+            );
+        }
+        for phase in [
+            UpdateTransactionPhase::Committed,
+            UpdateTransactionPhase::Aborted,
+            UpdateTransactionPhase::RolledBack,
+            UpdateTransactionPhase::RecoveryFailed,
+        ] {
+            assert!(
+                !valid_update_phase_transition(phase, UpdateTransactionPhase::RollingBack),
+                "terminal phase {phase:?} must not re-enter rollback"
+            );
+        }
     }
 }

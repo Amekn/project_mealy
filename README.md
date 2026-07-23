@@ -14,13 +14,13 @@ installs rootlessly beneath `$HOME/.local` without a Rust toolchain, root access
 tmp=$(mktemp -d)
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/install-mealy-release.sh" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/install-mealy-release.sh
+  https://github.com/Amekn/mealy/releases/latest/download/install-mealy-release.sh
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/ATTESTATION-installers.sigstore.json" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
+  https://github.com/Amekn/mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
 gh attestation verify "$tmp/install-mealy-release.sh" \
-  --repo Amekn/project_mealy \
-  --signer-workflow Amekn/project_mealy/.github/workflows/release.yml \
+  --repo Amekn/mealy \
+  --signer-workflow Amekn/mealy/.github/workflows/release.yml \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
@@ -69,8 +69,11 @@ Published installs expose the same plan-first maintenance UX across supported Li
 `mealyctl install-status` verifies the complete release payload, `mealyctl update` verifies an
 attested target without mutation, and `repair`, `rollback`, or `uninstall` require explicit
 approval. Owner-local archives retain atomic release slots; Debian, RPM, and Arch operations return
-the exact native package-manager handoff and never write around the distribution database. Bash,
-Zsh, and Fish completion is generated with `mealyctl completion SHELL`.
+the exact native package-manager handoff and never write around the distribution database.
+Approved same-schema archive updates run through a separate restartable user-service helper that
+backs up, drains, restarts, verifies health and `doctor`, and rolls back failed qualification;
+`update-status` remains available after a terminal disconnect. Bash, Zsh, and Fish completion is
+generated with `mealyctl completion SHELL`.
 
 Local integrations can use the authenticated versioned HTTP/JSON and SSE surface documented in
 the [API reference](docs/API.md). Contributors and release operators should follow the

@@ -112,16 +112,18 @@ evidence, not a retroactive property of the v0.1.1 candidate under soak; install
 supported-distribution onboarding-to-chat acceptance must pass before the newer tag can claim it.
 
 The same post-v0.1.1 source now adds an install-provenance layer and plan-first `install-status`,
-`update`, `repair`, `rollback`, `uninstall`, and shell-completion surfaces. The update check uses
+`update`, `update-status`, `repair`, `rollback`, `uninstall`, and shell-completion surfaces. The update check uses
 the release-digest-bound bootstrap to verify tag workflow provenance, complete checksums, target,
 version, commit, and state schema without mutation. Owner-local apply is restricted to strictly
 newer same-schema targets; native packages retain APT/DNF/Pacman ownership. Archive repair can only
 restore the stable manager from a complete verified active slot, and rollback/uninstall still
 delegate to the locked manager. The archive, Debian, RPM, and Arch installed-runtime smokes now
 assert the detected owner and handoff. This closes the lifecycle discovery and safe delegation
-slice, not the full competitor-grade transaction: automatic backup, service drain/stop/restart,
-post-update `doctor`, automatic failed-health rollback, service removal, repository delivery, and
-tag-qualified public acceptance remain open.
+slice. A later stacked slice now composes same-schema archive apply into a separately supervised,
+durably phased transaction with immutable pre-update backup, drain/stop/start, target
+version/commit plus health/`doctor` qualification, and automatic verified-slot rollback. Its
+restart/failure-injection and installed-package acceptance must still pass before it is qualified.
+Service removal, signed repository delivery, and tag-qualified public acceptance remain open.
 
 The release-quality row's clean soak remains valid historical schema-16 evidence for exact
 version-0.1.0 revision `9b3653f` and daemon SHA-256

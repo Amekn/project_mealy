@@ -121,11 +121,13 @@ Check for an attested stable update without changing anything:
 mealyctl --home "$HOME/.mealy" update
 ```
 
-The plan identifies an owner-local archive or the native Debian, RPM, or Arch package manager. A
-same-schema archive update requires a stopped service and explicit `--approve`; schema changes use
-the staged migration procedure, and native packages use the exact command in `nativeUpdateCommand`.
-`repair`, `rollback`, and `uninstall` follow the same plan-first/approve-second pattern and never
-delete the Mealy home.
+The plan identifies an owner-local archive or the native Debian, RPM, or Arch package manager. An
+explicitly approved same-schema archive update takes its own backup, drains and restarts the
+verified owner service through a disconnect-resistant helper, checks health and `doctor`, and
+automatically restores the prior slot if qualification fails. Use `update-status TRANSACTION_UUID`
+after reconnecting. Schema changes use the staged migration procedure, and native packages use the
+exact command in `nativeUpdateCommand`. `repair`, `rollback`, and `uninstall` follow the same
+plan-first/approve-second pattern and never delete the Mealy home.
 
 Optional shell completion is generated locally:
 

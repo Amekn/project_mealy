@@ -85,7 +85,7 @@ pkgver="${MEALY_PACKAGE_VERSION:?}"
 pkgrel=1
 pkgdesc='Local-first durable personal agent runtime'
 arch=('x86_64')
-url='https://github.com/Amekn/project_mealy'
+url='https://github.com/Amekn/mealy'
 license=('Apache-2.0')
 depends=('bubblewrap' 'ca-certificates' 'gcc-libs' 'glibc>=2.39')
 optdepends=(

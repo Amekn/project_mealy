@@ -40,6 +40,7 @@ public command cannot be added or removed without updating this reference.
 | `doctor` | Diagnose control-plane, permission, and sandbox conformance. |
 | `install-status` | Inspect install provenance, complete release integrity, rollback availability, and update ownership. |
 | `update` | Verify a stable release target and optionally apply a same-schema archive update. |
+| `update-status` | Inspect one durable disconnect-resistant update transaction. |
 | `repair` | Verify and optionally restore owner-local installation-management evidence. |
 | `rollback` | Verify and optionally exchange same-schema owner-local release slots. |
 | `uninstall` | Verify and optionally remove program files while preserving durable state. |
@@ -94,12 +95,29 @@ the target manifest from the attested archive. The resulting `mealy.update-plan.
 current and target versions and state schemas.
 
 An owner-local archive update may be applied with `--approve` only when the target is strictly
-newer and uses the exact active state schema. Drain and stop `mealy.service` first; the stable
-manager independently refuses a busy home, re-verifies the download, swaps atomic release slots,
-and preserves the previous matching slot for rollback. A target with a different state schema is
-deliberately refused by this convenience path and must use the staged migration procedure in the
-[release guide](RELEASE.md). Debian, RPM, and Arch installations always retain native package
-ownership; the plan reports the exact `apt`, `dnf`, or `pacman` handoff and never writes `/usr`.
+newer, uses the exact active state schema, and the running `mealy.service` definition exactly owns
+the verified binary and home. The foreground command records a `mealy.update-transaction.v1`
+request, prints its UUID, and launches a separate restart-on-failure user-service helper. That
+helper is a private digest-pinned copy of the qualified old client, so restart cannot resolve
+through an unqualified candidate. It independently re-verifies the candidate, creates an immutable
+backup, drains the daemon,
+activates the retained-slot update, starts the service, and requires liveness, readiness,
+`doctor`, target version/commit, and complete installed integrity before commit. Failed
+qualification automatically restores and verifies the prior same-schema slot. Terminal
+disconnect does not cancel the helper; inspect its durable phase with:
+
+```sh
+mealyctl --home "$HOME/.mealy" update-status TRANSACTION_UUID
+```
+
+`aborted` means verification failed before program mutation and the prior service still qualified;
+`rolled-back` means the prior slot was restored and qualified after mutation began;
+`recovery-failed` leaves evidence and the safest established slot in place for inspection.
+
+A target with a different state schema is deliberately refused by this convenience path and must
+use the staged migration procedure in the [release guide](RELEASE.md). Debian, RPM, and Arch
+installations always retain native package ownership; the plan reports the exact `apt`, `dnf`, or
+`pacman` handoff and never writes `/usr`.
 
 `repair`, `rollback`, and `uninstall` also plan without mutation unless `--approve` is present.
 Repair can reconstruct a missing or modified stable archive manager only from the checksum-verified

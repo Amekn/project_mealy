@@ -46,7 +46,7 @@ use mealy_protocol::{
     MemoryLifecycleRequest, MemoryPromotionAuthorizationCommand, MemoryResponse,
     MemoryRetentionCommand, MemorySearchResponse, MemorySensitivityCommand, MemorySourceCommand,
     MemoryStatusResponse, MigrationBackupActivationResponse, MissedRunPolicyCommand,
-    PendingApprovalsResponse, PromoteMemoryRequest, ProposeMemoryRequest,
+    PendingApprovalsResponse, PromoteMemoryRequest, ProposeMemoryRequest, ReadinessResponse,
     RebuildMemoryIndexRequest, ReconcileEffectRequest, ReconciliationOutcomeCommand,
     ResolveApprovalRequest, RevokeDiscordChannelRequest, RevokeTelegramChannelRequest,
     RevokeWebhookChannelRequest, RunGarbageCollectionRequest, ScheduleLifecycleRequest,
@@ -68,7 +68,7 @@ use std::{
     io::{BufRead, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
-    process::{Command as ProcessCommand, ExitCode},
+    process::{Command as ProcessCommand, ExitCode, Stdio},
     time::{Duration, SystemTime},
 };
 
@@ -173,6 +173,11 @@ enum LifecycleCommand {
         #[arg(long)]
         approve: bool,
     },
+    /// Inspect one durable disconnect-resistant update transaction.
+    UpdateStatus {
+        /// Exact transaction UUID printed by `update --approve`.
+        transaction_id: String,
+    },
     /// Verify and optionally restore bounded installation-management evidence.
     Repair {
         /// Apply the verified repair plan.
@@ -196,6 +201,12 @@ enum LifecycleCommand {
         /// Shell whose completion syntax should be generated.
         #[arg(value_enum)]
         shell: CompletionShellArgument,
+    },
+    /// Internal restartable update helper owned by a transient user service.
+    #[command(hide = true)]
+    UpdateTransaction {
+        /// Exact durable transaction UUID prepared by the foreground client.
+        transaction_id: String,
     },
 }
 
@@ -2113,7 +2124,14 @@ fn lifecycle_invocation(arguments: &[OsString]) -> bool {
         return argument.to_str().is_some_and(|value| {
             matches!(
                 value,
-                "install-status" | "update" | "repair" | "rollback" | "uninstall" | "completion"
+                "install-status"
+                    | "update"
+                    | "update-status"
+                    | "repair"
+                    | "rollback"
+                    | "uninstall"
+                    | "completion"
+                    | "update-transaction"
             )
         });
     }
@@ -2126,7 +2144,7 @@ fn parse_operational_arguments(arguments: Vec<OsString>) -> Arguments {
         .unwrap_or_else(|error| error.exit())
 }
 
-fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
+async fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
     match arguments.command {
         LifecycleCommand::InstallStatus => print_json(lifecycle::inspect_current_installation()?),
         LifecycleCommand::Update { version, approve } => {
@@ -2144,9 +2162,11 @@ fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
                 print_json(&plan)?;
                 return Err(CliError::NativePackageUpdate);
             }
-            eprintln!("{}", terminal_safe_pretty_json(&plan)?);
-            lifecycle::apply_archive_update(&arguments.home, &plan).map_err(CliError::from)
+            launch_update_transaction(&arguments.home, &plan).await
         }
+        LifecycleCommand::UpdateStatus { transaction_id } => print_json(
+            lifecycle::load_update_transaction(&arguments.home, &transaction_id)?,
+        ),
         LifecycleCommand::Repair { approve } => run_maintenance(
             &arguments.home,
             lifecycle::MaintenanceOperation::Repair,
@@ -2178,7 +2198,713 @@ fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
             std::io::stdout().write_all(&output)?;
             Ok(())
         }
+        LifecycleCommand::UpdateTransaction { transaction_id } => {
+            run_update_transaction(&arguments.home, &transaction_id).await
+        }
     }
+}
+
+#[derive(Clone, Debug)]
+struct VerifiedOwnerService {
+    fragment: PathBuf,
+}
+
+async fn launch_update_transaction(
+    home: &Path,
+    plan: &lifecycle::UpdatePlan,
+) -> Result<(), CliError> {
+    let service = verify_owner_service(home, plan, true)?;
+    let mut transaction = lifecycle::prepare_update_transaction(home, plan, &service.fragment)?;
+    eprintln!("{}", terminal_safe_pretty_json(&transaction)?);
+    if let Err(error) = launch_update_helper(&transaction) {
+        transaction.failure = Some("update-helper-scheduling-failed".to_owned());
+        transaction.phase = lifecycle::UpdateTransactionPhase::Aborted;
+        lifecycle::persist_update_transaction(&transaction)?;
+        return Err(error);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_mins(35);
+    loop {
+        let record =
+            lifecycle::load_update_transaction(&transaction.home, &transaction.transaction_id)?;
+        if record.phase.is_terminal() {
+            print_json(&record)?;
+            return match record.phase {
+                lifecycle::UpdateTransactionPhase::Committed => Ok(()),
+                lifecycle::UpdateTransactionPhase::Aborted => Err(CliError::UpdateAborted),
+                lifecycle::UpdateTransactionPhase::RolledBack => Err(CliError::UpdateRolledBack),
+                lifecycle::UpdateTransactionPhase::RecoveryFailed => {
+                    Err(CliError::UpdateRecoveryFailed)
+                }
+                _ => unreachable!("terminal update phase is exhaustive"),
+            };
+        }
+        if tokio::time::Instant::now() >= deadline {
+            print_json(&record)?;
+            return Err(CliError::UpdateHelperPending(record.transaction_id));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn launch_update_helper(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = transaction;
+        return Err(CliError::UnsupportedPlatform(
+            "disconnect-resistant update apply is supported only by the Linux user service"
+                .to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let systemd_run = Path::new("/usr/bin/systemd-run");
+        if !systemd_run.is_file() || !is_trusted_system_executable(systemd_run) {
+            return Err(CliError::InvalidService(
+                "update apply requires trusted /usr/bin/systemd-run".to_owned(),
+            ));
+        }
+        let executable = &transaction.helper_executable;
+        let unit = format!(
+            "mealy-update-{}.service",
+            transaction.transaction_id.replace('-', "")
+        );
+        let output = ProcessCommand::new(systemd_run)
+            .arg("--user")
+            .arg("--quiet")
+            .arg("--collect")
+            .arg(format!("--unit={unit}"))
+            .arg("--property=Type=exec")
+            .arg("--property=Restart=on-failure")
+            .arg("--property=RestartSec=2s")
+            .arg("--property=StartLimitIntervalSec=60s")
+            .arg("--property=StartLimitBurst=5")
+            .arg("--property=NoNewPrivileges=yes")
+            .arg("--property=PrivateTmp=yes")
+            .arg("--property=UMask=0077")
+            .arg("--property=TasksMax=64")
+            .arg("--property=MemoryMax=1G")
+            .arg("--property=TimeoutStartSec=30min")
+            .arg(executable)
+            .arg("--home")
+            .arg(&transaction.home)
+            .arg("update-transaction")
+            .arg(&transaction.transaction_id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.stdout.len() > 64 * 1024 || output.stderr.len() > 64 * 1024 {
+            return Err(CliError::InvalidService(
+                "systemd update-helper response exceeded its bound".to_owned(),
+            ));
+        }
+        if !output.status.success() {
+            return Err(CliError::InvalidService(format!(
+                "could not schedule the independent update helper: {}",
+                terminal_safe_single_line(String::from_utf8_lossy(&output.stderr).trim())
+            )));
+        }
+        Ok(())
+    }
+}
+
+async fn run_update_transaction(home: &Path, transaction_id: &str) -> Result<(), CliError> {
+    let mut transaction = lifecycle::load_update_transaction(home, transaction_id)?;
+    lifecycle::verify_update_helper_identity(&transaction, &std::env::current_exe()?)?;
+    let _update_lock = lock_update_transactions(&transaction.home)?;
+    if transaction.phase.is_terminal() {
+        return finish_update_helper(&transaction);
+    }
+    if let Err(failure) = resume_update_transaction(&mut transaction).await {
+        recover_failed_update_transaction(&mut transaction, failure).await?;
+    }
+    finish_update_helper(&transaction)
+}
+
+fn lock_update_transactions(home: &Path) -> Result<File, CliError> {
+    let lock = open_private_home_lock(&home.join("update-transactions/update.lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn finish_update_helper(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    print_json(transaction)?;
+    if matches!(
+        transaction.phase,
+        lifecycle::UpdateTransactionPhase::Committed
+            | lifecycle::UpdateTransactionPhase::Aborted
+            | lifecycle::UpdateTransactionPhase::RolledBack
+    ) {
+        let _ = lifecycle::retire_update_helper(transaction);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UpdateTransactionFailure {
+    ServiceIdentity,
+    CandidateVerification,
+    Backup,
+    Drain,
+    Activation,
+    ServiceStart,
+    Qualification,
+    Rollback,
+}
+
+impl UpdateTransactionFailure {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ServiceIdentity => "owner-service-identity-failed",
+            Self::CandidateVerification => "candidate-reverification-failed",
+            Self::Backup => "pre-update-backup-failed",
+            Self::Drain => "daemon-drain-failed",
+            Self::Activation => "candidate-activation-failed",
+            Self::ServiceStart => "updated-service-start-failed",
+            Self::Qualification => "updated-service-qualification-failed",
+            Self::Rollback => "automatic-rollback-failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdateRecoveryRoute {
+    AbortUntouched,
+    RestorePrevious,
+    FailClosed,
+}
+
+fn update_recovery_route(
+    phase: lifecycle::UpdateTransactionPhase,
+    slot: Option<lifecycle::ActiveTransactionSlot>,
+    backup_available: bool,
+    service_identity_trusted: bool,
+) -> UpdateRecoveryRoute {
+    if phase.is_terminal() {
+        return UpdateRecoveryRoute::FailClosed;
+    }
+    if phase == lifecycle::UpdateTransactionPhase::Scheduled
+        && slot == Some(lifecycle::ActiveTransactionSlot::Previous)
+        && service_identity_trusted
+    {
+        return UpdateRecoveryRoute::AbortUntouched;
+    }
+    if backup_available
+        && (slot.is_some()
+            || matches!(
+                phase,
+                lifecycle::UpdateTransactionPhase::Activated
+                    | lifecycle::UpdateTransactionPhase::Starting
+                    | lifecycle::UpdateTransactionPhase::Verifying
+                    | lifecycle::UpdateTransactionPhase::RollingBack
+            ))
+    {
+        return UpdateRecoveryRoute::RestorePrevious;
+    }
+    UpdateRecoveryRoute::FailClosed
+}
+
+fn require_transaction_service(
+    transaction: &lifecycle::UpdateTransaction,
+    active: bool,
+) -> Result<(), UpdateTransactionFailure> {
+    verify_transaction_service(transaction, active)
+        .map(|_| ())
+        .map_err(|_| UpdateTransactionFailure::ServiceIdentity)
+}
+
+async fn resume_update_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+) -> Result<(), UpdateTransactionFailure> {
+    loop {
+        match transaction.phase {
+            lifecycle::UpdateTransactionPhase::Scheduled => {
+                require_transaction_service(transaction, false)?;
+                let plan = reverify_transaction_candidate(transaction)
+                    .map_err(|_| UpdateTransactionFailure::CandidateVerification)?;
+                if lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::CandidateVerification)?
+                    != lifecycle::ActiveTransactionSlot::Previous
+                {
+                    return Err(UpdateTransactionFailure::CandidateVerification);
+                }
+                let backup = create_update_backup(transaction)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Backup)?;
+                transaction.backup = Some(backup);
+                transaction.phase = lifecycle::UpdateTransactionPhase::Prepared;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Backup)?;
+                drop(plan);
+            }
+            lifecycle::UpdateTransactionPhase::Prepared => {
+                require_transaction_service(transaction, false)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Draining;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+            }
+            lifecycle::UpdateTransactionPhase::Draining => {
+                require_transaction_service(transaction, false)?;
+                drain_owner_service(transaction)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Stopped;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+            }
+            lifecycle::UpdateTransactionPhase::Stopped => {
+                require_transaction_service(transaction, false)?;
+                match lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?
+                {
+                    lifecycle::ActiveTransactionSlot::Previous => {
+                        let plan = reverify_transaction_candidate(transaction)
+                            .map_err(|_| UpdateTransactionFailure::CandidateVerification)?;
+                        lifecycle::apply_archive_update(&transaction.home, &plan)
+                            .map_err(|_| UpdateTransactionFailure::Activation)?;
+                    }
+                    lifecycle::ActiveTransactionSlot::Candidate => {}
+                }
+                if lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?
+                    != lifecycle::ActiveTransactionSlot::Candidate
+                {
+                    return Err(UpdateTransactionFailure::Activation);
+                }
+                transaction.phase = lifecycle::UpdateTransactionPhase::Activated;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?;
+            }
+            lifecycle::UpdateTransactionPhase::Activated => {
+                require_transaction_service(transaction, false)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Starting;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+            }
+            lifecycle::UpdateTransactionPhase::Starting => {
+                require_transaction_service(transaction, false)?;
+                start_owner_service().map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Verifying;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+            }
+            lifecycle::UpdateTransactionPhase::Verifying => {
+                require_transaction_service(transaction, true)?;
+                qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Candidate)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Qualification)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Committed;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Qualification)?;
+                return Ok(());
+            }
+            lifecycle::UpdateTransactionPhase::RollingBack => {
+                resume_rollback_transaction(transaction).await?;
+                return Ok(());
+            }
+            lifecycle::UpdateTransactionPhase::Committed
+            | lifecycle::UpdateTransactionPhase::Aborted
+            | lifecycle::UpdateTransactionPhase::RolledBack
+            | lifecycle::UpdateTransactionPhase::RecoveryFailed => return Ok(()),
+        }
+    }
+}
+
+async fn resume_rollback_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+) -> Result<(), UpdateTransactionFailure> {
+    stop_owner_service(&transaction.home)
+        .await
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    lifecycle::rollback_update_transaction(transaction)
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    require_transaction_service(transaction, false)?;
+    start_owner_service().map_err(|_| UpdateTransactionFailure::Rollback)?;
+    qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Previous)
+        .await
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    transaction.phase = lifecycle::UpdateTransactionPhase::RolledBack;
+    lifecycle::persist_update_transaction(transaction)
+        .map_err(|_| UpdateTransactionFailure::Rollback)
+}
+
+async fn recover_failed_update_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+    failure: UpdateTransactionFailure,
+) -> Result<(), CliError> {
+    transaction.failure = Some(failure.code().to_owned());
+    let slot = lifecycle::active_transaction_slot(transaction).ok();
+    let recovery = update_recovery_route(
+        transaction.phase,
+        slot,
+        transaction.backup.is_some(),
+        !matches!(failure, UpdateTransactionFailure::ServiceIdentity),
+    );
+    if recovery == UpdateRecoveryRoute::AbortUntouched {
+        let service_available = match owner_service_active() {
+            Ok(true) => true,
+            Ok(false) => start_owner_service().is_ok(),
+            Err(_) => false,
+        };
+        if service_available
+            && qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Previous)
+                .await
+                .is_ok()
+        {
+            transaction.phase = lifecycle::UpdateTransactionPhase::Aborted;
+            lifecycle::persist_update_transaction(transaction)?;
+            return Ok(());
+        }
+    }
+    if recovery == UpdateRecoveryRoute::RestorePrevious {
+        transaction.phase = lifecycle::UpdateTransactionPhase::RollingBack;
+        transaction.rollback_attempted = true;
+        lifecycle::persist_update_transaction(transaction)?;
+        if resume_update_transaction(transaction).await.is_ok() {
+            return Ok(());
+        }
+        transaction.failure = Some(UpdateTransactionFailure::Rollback.code().to_owned());
+    } else {
+        let _ = start_owner_service();
+    }
+    transaction.phase = lifecycle::UpdateTransactionPhase::RecoveryFailed;
+    lifecycle::persist_update_transaction(transaction)?;
+    Ok(())
+}
+
+fn reverify_transaction_candidate(
+    transaction: &lifecycle::UpdateTransaction,
+) -> Result<lifecycle::UpdatePlan, CliError> {
+    let plan = lifecycle::plan_update_for_managed_prefix(
+        &transaction.home,
+        &format!("v{}", transaction.candidate.version),
+        &transaction.prefix,
+    )?;
+    if plan.candidate != transaction.candidate
+        || plan.installation.current_version != transaction.previous_version
+        || plan.installation.current_commit.as_deref() != Some(transaction.previous_commit.as_str())
+        || !plan.update_available
+        || !plan.state_schema_compatible
+        || !plan.apply_supported
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(plan)
+}
+
+async fn create_update_backup(
+    transaction: &lifecycle::UpdateTransaction,
+) -> Result<lifecycle::UpdateBackupEvidence, CliError> {
+    let connection = load_connection(&transaction.home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let client = lifecycle_client()?;
+    let name = format!("pre-update-{}", transaction.transaction_id);
+    let response = authorized_long(
+        client.post(format!("{}/v1/admin/backups", connection.base_url)),
+        &connection,
+    )
+    .json(&CreateBackupRequest {
+        api_version: API_VERSION.to_owned(),
+        name: name.clone(),
+        include_secrets: false,
+        secret_passphrase: None,
+    })
+    .send()
+    .await?;
+    let backup = if response.status().is_success() {
+        decode::<BackupResponse>(response).await?
+    } else {
+        let response = authorized_long(
+            client.post(format!(
+                "{}/v1/admin/backup-verifications",
+                connection.base_url
+            )),
+            &connection,
+        )
+        .json(&VerifyBackupRequest {
+            api_version: API_VERSION.to_owned(),
+            name: name.clone(),
+            secret_passphrase: None,
+        })
+        .send()
+        .await?;
+        let verified = decode::<BackupVerificationResponse>(response).await?;
+        BackupResponse {
+            api_version: verified.api_version,
+            name: verified.name,
+            path: verified.path,
+            manifest_digest: verified.manifest_digest,
+            file_count: verified.file_count,
+            total_bytes: verified.total_bytes,
+            schema_version: verified.schema_version,
+            artifact_count: verified.artifact_count,
+            secrets_included: verified.secrets_included,
+        }
+    };
+    if backup.api_version != API_VERSION
+        || backup.name != name
+        || backup.secrets_included
+        || backup.schema_version != transaction.candidate.state_schema_version
+        || backup.file_count == 0
+        || backup.manifest_digest.len() != 64
+        || !backup
+            .manifest_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(lifecycle::UpdateBackupEvidence {
+        name: backup.name,
+        manifest_digest: backup.manifest_digest,
+        state_schema_version: backup.schema_version,
+    })
+}
+
+async fn drain_owner_service(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    if !owner_service_active()? {
+        let (_home, lock) = lock_stopped_home(&transaction.home)?;
+        drop(lock);
+        return Ok(());
+    }
+    let connection = load_connection(&transaction.home)?;
+    let client = lifecycle_client()?;
+    let response = authorized_long(
+        client.post(format!("{}/v1/admin/drain", connection.base_url)),
+        &connection,
+    )
+    .json(&DrainDaemonRequest {
+        api_version: API_VERSION.to_owned(),
+    })
+    .send()
+    .await?;
+    let drain = decode::<DrainDaemonResponse>(response).await?;
+    if drain.api_version != API_VERSION
+        || drain.start_id.is_empty()
+        || drain.start_id.len() > 128
+        || drain.deadline_ms > 300_000
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_millis(drain.deadline_ms.saturating_add(30_000));
+    loop {
+        if !owner_service_active()? && !transaction.home.join("connection.json").exists() {
+            let (_home, lock) = lock_stopped_home(&transaction.home)?;
+            drop(lock);
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn stop_owner_service(home: &Path) -> Result<(), CliError> {
+    run_systemctl(&["--user", "stop", "--no-block", "mealy.service"], true)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_mins(2);
+    loop {
+        if !owner_service_active()? {
+            let (_home, lock) = lock_stopped_home(home)?;
+            drop(lock);
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn start_owner_service() -> Result<(), CliError> {
+    run_systemctl(&["--user", "start", "--no-block", "mealy.service"], true)
+}
+
+async fn qualify_update_slot(
+    transaction: &lifecycle::UpdateTransaction,
+    expected: lifecycle::ActiveTransactionSlot,
+) -> Result<(), CliError> {
+    let doctor = wait_for_onboard_readiness(&transaction.home).await?;
+    if doctor.api_version != API_VERSION || !doctor.control_plane_ready || !doctor.sandbox_available
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let connection = load_connection(&transaction.home)?;
+    let client = lifecycle_client()?;
+    let readiness = authorized(
+        client.get(format!("{}/health/ready", connection.base_url)),
+        &connection,
+    )
+    .send()
+    .await?;
+    let readiness = decode::<ReadinessResponse>(readiness).await?;
+    if readiness.api_version != API_VERSION || !readiness.ready {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    if !owner_service_active()? || lifecycle::active_transaction_slot(transaction)? != expected {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(())
+}
+
+fn lifecycle_client() -> Result<Client, CliError> {
+    Ok(Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(2))
+        .build()?)
+}
+
+fn verify_transaction_service(
+    transaction: &lifecycle::UpdateTransaction,
+    require_active: bool,
+) -> Result<VerifiedOwnerService, CliError> {
+    let plan = lifecycle::UpdatePlan {
+        schema_version: "mealy.update-plan.v1",
+        installation: lifecycle::inspect_managed_prefix(&transaction.prefix)?,
+        requested_version: format!("v{}", transaction.candidate.version),
+        candidate: transaction.candidate.clone(),
+        update_available: false,
+        state_schema_compatible: true,
+        apply_supported: true,
+        native_update_command: None,
+    };
+    let service = verify_owner_service(&transaction.home, &plan, require_active)?;
+    if service.fragment != transaction.service_fragment {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(service)
+}
+
+fn verify_owner_service(
+    home: &Path,
+    plan: &lifecycle::UpdatePlan,
+    require_active: bool,
+) -> Result<VerifiedOwnerService, CliError> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (home, plan, require_active);
+        return Err(CliError::UnsupportedPlatform(
+            "managed update apply requires the Linux user service".to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if plan.installation.installation_kind != lifecycle::InstallationKind::ManagedArchive
+            || plan.installation.integrity != lifecycle::IntegrityStatus::Verified
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        let home = fs::canonicalize(home)?;
+        let daemon = plan
+            .installation
+            .managed_prefix
+            .as_ref()
+            .ok_or(CliError::UpdateTransactionInconsistent)?
+            .join("bin/mealyd")
+            .canonicalize()?;
+        let paths = service_read_write_paths(&home)?;
+        let (_, _, expected, _) = service_definition(&daemon, &home, &paths)?;
+        let output = run_systemctl_output(&[
+            "--user",
+            "show",
+            "--property=FragmentPath",
+            "--value",
+            "mealy.service",
+        ])?;
+        let fragment_text = std::str::from_utf8(&output)
+            .map_err(|_| CliError::UpdateTransactionInconsistent)?
+            .trim_end_matches('\n');
+        if fragment_text.is_empty()
+            || fragment_text.contains('\n')
+            || fragment_text.chars().any(char::is_control)
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        let fragment = PathBuf::from(fragment_text);
+        let metadata = fs::symlink_metadata(&fragment)?;
+        let canonical = fragment.canonicalize()?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || canonical != fragment
+            || lifecycle::read_bounded_regular_file(&fragment, 64 * 1024)? != expected.as_bytes()
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        if require_active && !owner_service_active()? {
+            return Err(CliError::InvalidService(
+                "managed update apply requires the active verified mealy.service; the no-mutation plan remains valid"
+                    .to_owned(),
+            ));
+        }
+        Ok(VerifiedOwnerService { fragment })
+    }
+}
+
+fn owner_service_active() -> Result<bool, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let status = ProcessCommand::new(systemctl)
+        .args(["--user", "is-active", "--quiet", "mealy.service"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(3) => Ok(false),
+        _ => Err(CliError::UpdateTransactionInconsistent),
+    }
+}
+
+fn run_systemctl(arguments: &[&str], require_success: bool) -> Result<(), CliError> {
+    let systemctl = trusted_systemctl()?;
+    let output = ProcessCommand::new(systemctl)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.stdout.len() > 64 * 1024 || output.stderr.len() > 64 * 1024 {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    if require_success && !output.status.success() {
+        return Err(CliError::InvalidService(format!(
+            "systemctl {} failed: {}",
+            arguments.join(" "),
+            terminal_safe_single_line(String::from_utf8_lossy(&output.stderr).trim())
+        )));
+    }
+    Ok(())
+}
+
+fn run_systemctl_output(arguments: &[&str]) -> Result<Vec<u8>, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let output = ProcessCommand::new(systemctl)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !output.status.success()
+        || output.stdout.len() > 64 * 1024
+        || output.stderr.len() > 64 * 1024
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(output.stdout)
+}
+
+fn trusted_systemctl() -> Result<&'static Path, CliError> {
+    let systemctl = Path::new("/usr/bin/systemctl");
+    if !systemctl.is_file() || !is_trusted_system_executable(systemctl) {
+        return Err(CliError::InvalidService(
+            "managed update apply requires trusted /usr/bin/systemctl".to_owned(),
+        ));
+    }
+    Ok(systemctl)
 }
 
 fn run_maintenance(
@@ -2223,7 +2949,7 @@ fn run_maintenance(
 async fn run() -> Result<(), CliError> {
     let raw_arguments: Vec<OsString> = std::env::args_os().collect();
     if lifecycle_invocation(&raw_arguments) {
-        return run_lifecycle(LifecycleArguments::parse_from(raw_arguments));
+        return run_lifecycle(LifecycleArguments::parse_from(raw_arguments)).await;
     }
     let arguments = parse_operational_arguments(raw_arguments);
     if let Command::Onboard(options) = &arguments.command {
@@ -5815,7 +6541,7 @@ async fn discord_pair_request(
         .header(
             reqwest::header::USER_AGENT,
             concat!(
-                "DiscordBot (https://github.com/Amekn/project_mealy, ",
+                "DiscordBot (https://github.com/Amekn/mealy, ",
                 env!("CARGO_PKG_VERSION"),
                 ")"
             ),
@@ -13244,6 +13970,25 @@ enum CliError {
     /// Current evidence cannot authorize the requested installation mutation.
     #[error("the requested installation maintenance action is unavailable from verified evidence")]
     MaintenanceUnavailable,
+    /// The detached helper is still running after the foreground observation window.
+    #[error(
+        "update helper is still running for transaction {0}; inspect the transaction or user-service journal"
+    )]
+    UpdateHelperPending(String),
+    /// The candidate failed qualification and the prior release was restored.
+    #[error("the update failed qualification and was automatically rolled back")]
+    UpdateRolledBack,
+    /// The target was rejected before program mutation and the prior service remains qualified.
+    #[error("the update was aborted before activation; the prior release remains qualified")]
+    UpdateAborted,
+    /// Neither target nor rollback could be fully qualified automatically.
+    #[error(
+        "the update helper could not establish a qualified release; preserve the transaction, backup, slots, and user-service journal"
+    )]
+    UpdateRecoveryFailed,
+    /// Durable update identity, service ownership, or phase evidence disagreed.
+    #[error("update transaction evidence is inconsistent with the installed system")]
+    UpdateTransactionInconsistent,
     /// HTTP client failed before a structured response.
     #[error(transparent)]
     Http(#[from] reqwest::Error),
@@ -13438,13 +14183,13 @@ mod tests {
         MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
         ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand,
         SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
-        TelegramPairUpdate, TelegramPairUser, configure_workspace_grant, decode,
-        generate_discord_pair_challenge, generate_telegram_pair_challenge, initialize_setup_home,
-        inspect_mcp_executable, lifecycle_invocation, load_connection,
+        TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute, configure_workspace_grant,
+        decode, generate_discord_pair_challenge, generate_telegram_pair_challenge,
+        initialize_setup_home, inspect_mcp_executable, lifecycle_invocation, load_connection,
         normalize_openrouter_display_name, observe_discord_pair_messages,
         observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
         openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
-        resolve_setup, setup_provider_config, telegram_pair_api_url,
+        resolve_setup, setup_provider_config, telegram_pair_api_url, update_recovery_route,
         validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
         validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
@@ -13489,6 +14234,68 @@ mod tests {
             }],
             "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}
         })
+    }
+
+    #[test]
+    fn update_recovery_routes_every_crash_boundary_without_false_commit() {
+        use super::lifecycle::{ActiveTransactionSlot as Slot, UpdateTransactionPhase as Phase};
+
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Previous), false, true),
+            UpdateRecoveryRoute::AbortUntouched
+        );
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Previous), false, false),
+            UpdateRecoveryRoute::FailClosed
+        );
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Candidate), false, true),
+            UpdateRecoveryRoute::FailClosed
+        );
+
+        for phase in [
+            Phase::Prepared,
+            Phase::Draining,
+            Phase::Stopped,
+            Phase::Activated,
+            Phase::Starting,
+            Phase::Verifying,
+            Phase::RollingBack,
+        ] {
+            for slot in [Slot::Previous, Slot::Candidate] {
+                assert_eq!(
+                    update_recovery_route(phase, Some(slot), true, true),
+                    UpdateRecoveryRoute::RestorePrevious,
+                    "{phase:?} with {slot:?} must restore the prior slot"
+                );
+            }
+        }
+
+        for phase in [
+            Phase::Activated,
+            Phase::Starting,
+            Phase::Verifying,
+            Phase::RollingBack,
+        ] {
+            assert_eq!(
+                update_recovery_route(phase, None, true, false),
+                UpdateRecoveryRoute::RestorePrevious,
+                "{phase:?} must attempt stopped rollback even when inspection is damaged"
+            );
+        }
+
+        for phase in [
+            Phase::Committed,
+            Phase::Aborted,
+            Phase::RolledBack,
+            Phase::RecoveryFailed,
+        ] {
+            assert_eq!(
+                update_recovery_route(phase, Some(Slot::Candidate), true, true),
+                UpdateRecoveryRoute::FailClosed,
+                "terminal phase {phase:?} cannot be resumed by recovery routing"
+            );
+        }
     }
 
     #[tokio::test]
@@ -13864,8 +14671,14 @@ mod tests {
             OsString::from("v1.2.3"),
         ];
         let operational = vec![OsString::from("mealyctl"), OsString::from("status")];
+        let helper = vec![
+            OsString::from("mealyctl"),
+            OsString::from("update-transaction"),
+            OsString::from("019f9010-977b-7c32-9c1b-f21e083ce845"),
+        ];
         assert!(lifecycle_invocation(&direct));
         assert!(lifecycle_invocation(&home_prefixed));
+        assert!(lifecycle_invocation(&helper));
         assert!(!lifecycle_invocation(&operational));
 
         let parsed = LifecycleArguments::try_parse_from(home_prefixed)

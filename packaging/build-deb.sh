@@ -82,6 +82,7 @@ release_documents=(
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
   decisions/0009-sqlite-writer-and-snapshot-readers.md
+  decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
   research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
@@ -253,7 +254,7 @@ ln -s ../lib/mealy/release/bin/mealyctl "$data_root/usr/bin/mealyctl"
 printf '%s\n' \
   'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/' \
   'Upstream-Name: Mealy' \
-  'Source: https://github.com/Amekn/project_mealy' \
+  'Source: https://github.com/Amekn/mealy' \
   '' \
   'Files: *' \
   'Copyright: 2026 Amekn' \
@@ -336,7 +337,7 @@ printf '%s\n' \
   'Depends: bubblewrap, ca-certificates, libc-bin (>= 2.39), libc6 (>= 2.39), libgcc-s1' \
   'Suggests: apparmor-profiles, apparmor-utils, curl, fonts-liberation, libasound2t64, libatk-bridge2.0-0t64, libatk1.0-0t64, libatspi2.0-0t64, libdbus-1-3, libexpat1, libgbm1, libglib2.0-0t64, libnspr4, libnss3, libudev1, libx11-6, libxcb1, libxcomposite1, libxdamage1, libxext6, libxfixes3, libxkbcommon0, libxrandr2, unzip' \
   "Installed-Size: $installed_size" \
-  'Homepage: https://github.com/Amekn/project_mealy' \
+  'Homepage: https://github.com/Amekn/mealy' \
   'Description: local-first durable personal agent runtime' \
   ' Mealy runs a single-owner local daemon with durable sessions, recovery,' \
   ' governed tools, approvals, memory, channels, scheduling, and replay.' \

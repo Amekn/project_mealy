@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-repository=Amekn/project_mealy
+repository=Amekn/mealy
 server_url=https://github.com
 required_title="Mealy CI: push @ $sha"
 valid=$temporary/valid.json
@@ -70,7 +70,7 @@ jq -n \
   }
   ' >"$valid"
 
-expected_url=https://github.com/Amekn/project_mealy/actions/runs/201
+expected_url=https://github.com/Amekn/mealy/actions/runs/201
 selected_url=$("$selector" "$valid" "$sha" "$repository" "$server_url")
 test "$selected_url" = "$expected_url"
 

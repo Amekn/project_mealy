@@ -818,6 +818,7 @@ Inspect the program separately from daemon health:
 ```sh
 mealyctl install-status
 mealyctl --home "$HOME/.mealy" update
+mealyctl --home "$HOME/.mealy" update-status TRANSACTION_UUID
 mealyctl repair
 mealyctl --home "$HOME/.mealy" rollback
 mealyctl --home "$HOME/.mealy" uninstall
@@ -827,8 +828,17 @@ These commands emit versioned plans and do not mutate by default. Archive status
 in the release inventory and separately verifies the stable manager against the active or complete
 previous slot. `update` downloads and verifies an exact stable release plus its hosted-workflow
 attestation before comparing versions and state schemas. Only a strictly newer, same-schema
-owner-local target can use `update --approve`; drain and stop `mealy.service` first. Native installs
-return an `apt`, `dnf`, or `pacman` handoff and retain root package ownership.
+owner-local target can use `update --approve`. Apply requires the active exact owner service and
+delegates to a separate restart-on-failure user-service helper copied and digest-pinned from the
+qualified old client. It durably records the target,
+creates and verifies an immutable backup, drains to a free home lock, re-verifies and activates the
+candidate, restarts, and requires liveness, readiness, `doctor`, exact version/commit, and complete
+installed integrity. Failed qualification restores the prior same-schema slot, restarts it, and
+still returns a failed update result with rollback evidence. A failure before program mutation is
+recorded as `aborted` only after the prior service qualifies; damaged service identity restores the
+prior slot when necessary but leaves it stopped as `recovery-failed`. `update-status` reads the mode-`0600`
+transaction document after a client or terminal disconnect. Native installs return an `apt`,
+`dnf`, or `pacman` handoff and retain root package ownership.
 
 `repair --approve` is intentionally limited to replacing the stable archive manager from its
 verified active metadata copy. `rollback --approve` delegates only with two complete slots and

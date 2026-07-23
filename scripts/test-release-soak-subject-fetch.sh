@@ -31,7 +31,7 @@ tag_revision=$revision
 asset_name=mealy-soak-test-linux-x86_64-gnu-mealyd
 
 jq -n \
-  --arg repository Amekn/project_mealy \
+  --arg repository Amekn/mealy \
   --arg name "$asset_name" \
   --arg sha256 "$asset_sha256" \
   --arg revision "$revision" \
@@ -103,7 +103,7 @@ run_fetch() {
     MOCK_ASSET="$asset" \
     MOCK_REVISION="$tag_revision" \
     "$fetcher" "$temporary/manifest.json" "$temporary/report.json" \
-      "$temporary/output/mealyd" Amekn/project_mealy
+      "$temporary/output/mealyd" Amekn/mealy
 }
 
 run_fetch >/dev/null

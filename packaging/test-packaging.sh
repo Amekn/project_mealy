@@ -328,7 +328,7 @@ MEALY_TEST_TARGET="$target" \
 MEALY_TEST_GH_LOG="$temporary/bootstrap-gh.log" \
 PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap prefix" --home "$temporary/bootstrap home" \
     >"$temporary/bootstrap-output"
 [[ $("$temporary/bootstrap prefix/bin/mealyd") == mealyd-v1 ]]
@@ -342,7 +342,7 @@ if grep -F -- ' service install' "$temporary/bootstrap-output"; then
 fi
 for asset in "$archive" "SHA256SUMS-${target}" install-mealy.sh \
   install-mealy-release.sh; do
-  grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
+  grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
     "$temporary/bootstrap-gh.log"
 done
 grep -Eq "attestation verify .*${archive} .*--bundle .*ATTESTATION-${target}.sigstore.json" \
@@ -352,14 +352,14 @@ grep -Eq "attestation verify .*install-mealy-release.sh .*--bundle .*ATTESTATION
 # The bootstrap verifies the archive before execution, and the verified manager
 # independently enforces the same exact workflow, tag ref, and hosted-runner
 # provenance rather than accepting an arbitrary repository attestation.
-[[ $(grep -Ec "attestation verify .*${archive} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
+[[ $(grep -Ec "attestation verify .*${archive} .*--signer-workflow .*Amekn/mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
   "$temporary/bootstrap-gh.log") -eq 2 ]]
 MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
 MEALY_TEST_TARGET="$target" \
 MEALY_TEST_GH_LOG="$temporary/bootstrap-gh-check.log" \
 PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --check --version v0.1.0 --repository Amekn/project_mealy \
+    --check --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap-check-prefix" \
     --home "$temporary/bootstrap-check-home" >"$temporary/bootstrap-check.json"
 jq -e --arg target "$target" '
@@ -377,7 +377,7 @@ if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_GH_FAIL_ASSET=install-mealy-release.sh \
   PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap-denied-prefix" \
     --home "$temporary/bootstrap-denied-home" >/dev/null 2>&1; then
   echo "release bootstrap accepted a failed provenance verification" >&2
@@ -390,7 +390,7 @@ if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_GLIBC_VERSION=2.38 \
   PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap-old-glibc-prefix" \
     --home "$temporary/bootstrap-old-glibc-home" >/dev/null 2>&1; then
   echo "release bootstrap accepted an unsupported glibc host" >&2

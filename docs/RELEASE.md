@@ -173,18 +173,22 @@ workflow signed it on a GitHub-hosted runner, and run it:
 tmp=$(mktemp -d)
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/install-mealy-release.sh" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/install-mealy-release.sh
+  https://github.com/Amekn/mealy/releases/latest/download/install-mealy-release.sh
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/ATTESTATION-installers.sigstore.json" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
+  https://github.com/Amekn/mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
 gh attestation verify "$tmp/install-mealy-release.sh" \
-  --repo Amekn/project_mealy \
-  --signer-workflow Amekn/project_mealy/.github/workflows/release.yml \
+  --repo Amekn/mealy \
+  --signer-workflow Amekn/mealy/.github/workflows/release.yml \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
 "$tmp/install-mealy-release.sh"
 ```
+
+The canonical signer identity for new releases is `Amekn/mealy`. Historical v0.1.0 bundles were
+issued before the repository rename and continue to verify only against `Amekn/project_mealy`;
+do not rewrite that retained evidence or use its legacy identity for a newly published tag.
 
 The bootstrap resolves one exact stable tag from bounded public release metadata, downloads the
 matching native archive, checksum manifest, manager, a second copy of itself, and the architecture
@@ -199,7 +203,7 @@ empty directory:
 
 ```sh
 VERSION=vX.Y.Z
-REPOSITORY=Amekn/project_mealy
+REPOSITORY=Amekn/mealy
 case "$(uname -m)" in
   x86_64|amd64)
     TARGET=linux-x86_64-gnu
@@ -380,17 +384,13 @@ and release workflow. Keep the active home on a persistent local filesystem outs
 
 ## Upgrade an existing installation
 
-Never replace a running daemon. First inspect the installation, pending approvals, and unknown
-effects, take a verified backup, and obtain a no-mutation, fully attested update plan:
+First inspect the installation, pending approvals, and unknown effects, then obtain a no-mutation,
+fully attested update plan:
 
 ```sh
 mealyctl install-status
 mealyctl --home "$HOME/.mealy" update
 mealyctl --home "$HOME/.mealy" status
-mealyctl --home "$HOME/.mealy" backup "pre-upgrade-$VERSION"
-mealyctl --home "$HOME/.mealy" restore-verify "pre-upgrade-$VERSION"
-mealyctl --home "$HOME/.mealy" drain
-systemctl --user stop mealy.service
 ```
 
 For an owner-local archive whose plan says `updateAvailable`, `stateSchemaCompatible`, and
@@ -402,13 +402,27 @@ mealyctl --home "$HOME/.mealy" update --approve
 
 The client pins `latest` to the exact verified candidate before the second download; the bootstrap
 and stable manager independently verify hosted-workflow provenance, the outer inventory, the
-archive, and complete active slots. This convenience update refuses state-schema changes. Use the
-manual verified release and migration path below when `stateSchemaCompatible` is false.
+archive, and complete active slots. Apply verifies the exact active owner service, records and
+prints a durable transaction UUID, then launches an independent restart-on-failure user-service
+helper. The helper repeats candidate verification, creates an immutable secret-free backup, drains
+to a stopped home, activates the slot, restarts, and requires liveness, readiness, `doctor`, exact
+version/commit, and installed integrity. A failed target is stopped and the prior verified
+same-schema slot is automatically restored, restarted, and qualified. The helper continues after a
+terminal disconnect:
 
-For a native system-package installation, run the plan's exact `nativeUpdateCommand`. The
-distribution package manager replaces the root-owned program files but never restarts the owner
-service. For either ownership model, reinstall the user service definition so
-its reviewed canonical executable path and rollback copy are current, then start and validate:
+```sh
+mealyctl --home "$HOME/.mealy" update-status TRANSACTION_UUID
+```
+
+A rolled-back transaction is a failed update even when recovery succeeds. Preserve a
+`recovery-failed` transaction, its backup, both release slots, and the named user-service journal
+before repair. This convenience update refuses state-schema changes. Use the manual verified
+release and migration path below when `stateSchemaCompatible` is false.
+
+For a native system-package installation, take and verify a backup, drain the daemon, then run the
+plan's exact `nativeUpdateCommand`. The distribution package manager replaces the root-owned
+program files but never restarts the owner service. Reinstall the user service definition so its
+reviewed canonical executable path and rollback copy are current, then start and validate:
 
 ```sh
 mealyctl --home "$HOME/.mealy" service install

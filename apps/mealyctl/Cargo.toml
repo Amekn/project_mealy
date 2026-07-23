@@ -29,6 +29,7 @@ subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 dunce.workspace = true
