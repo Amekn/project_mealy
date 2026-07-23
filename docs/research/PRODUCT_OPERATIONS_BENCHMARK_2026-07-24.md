@@ -20,10 +20,15 @@ The following recovery slice implements the researched OpenClaw/Hermes pattern
 as a separately supervised, durably phased update helper with pre-update
 backup, drain/stop/start, health/doctor/version/integrity qualification, and
 automatic same-schema slot rollback.
+The next delivery slice builds package-manager-native signed APT, DNF, and
+Pacman repositories from the exact qualified artifacts, attests their complete
+manifest, deploys the prebuilt site through protected Pages, and requires clean
+public HTTPS installation on native x86-64 and ARM64 runners.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:
-signed distribution repositories and a published qualifying tag remain open.
+an owner-controlled production signing identity and a published qualifying tag
+remain external gates.
 Exact generated-service removal is now plan-first and composed into owner-local
 uninstall. Installed two-release failure injection now activates a checksum-valid
 but deliberately unready newer package under the real owner service, proves the
