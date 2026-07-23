@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Archived after v0.1.0; excluded from active platform qualification.
 set -euo pipefail
 export LC_ALL=C
 umask 077

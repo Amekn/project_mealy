@@ -3105,7 +3105,11 @@ fn verify_discord_dm(
     expected_user_id: &str,
     expected_channel_id: &str,
 ) -> Result<VerifiedDiscordDm, BackendError> {
-    const USER_AGENT: &str = "DiscordBot (https://github.com/Amekn/project_mealy, 0.1.0)";
+    const USER_AGENT: &str = concat!(
+        "DiscordBot (https://github.com/Amekn/project_mealy, ",
+        env!("CARGO_PKG_VERSION"),
+        ")"
+    );
     validate_discord_api_base_url(api_base_url)?;
     let authorization = format!("Bot {token}");
     let base = api_base_url.trim_end_matches('/');

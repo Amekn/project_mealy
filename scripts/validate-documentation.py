@@ -22,6 +22,7 @@ CORE_DOCUMENTS = (
     "docs/API.md",
     "docs/CI_CD.md",
     "docs/CLI.md",
+    "docs/LINUX_SUPPORT.md",
     "docs/OPERATIONS.md",
     "docs/PRODUCTION_READINESS.md",
     "docs/QUICKSTART.md",

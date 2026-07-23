@@ -149,29 +149,29 @@ for release_target in linux-x86_64-gnu linux-aarch64-gnu; do
   install -m 0644 "$source_dir/SHA256SUMS" \
     "$temporary/merged-input/SHA256SUMS-${release_target}"
   case $release_target in
-    linux-x86_64-gnu) deb="mealy_0.1.0_amd64.deb" ;;
-    linux-aarch64-gnu) deb="mealy_0.1.0_arm64.deb" ;;
+    linux-x86_64-gnu)
+      deb="mealy_0.1.0_amd64.deb"
+      rpm="mealy-0.1.0-1.x86_64.rpm"
+      arch="mealy-0.1.0-1-x86_64.pkg.tar.zst"
+      ;;
+    linux-aarch64-gnu)
+      deb="mealy_0.1.0_arm64.deb"
+      rpm="mealy-0.1.0-1.aarch64.rpm"
+      arch=
+      ;;
   esac
   printf 'Debian package assembly fixture for %s\n' "$release_target" \
     >"$temporary/merged-input/$deb"
+  printf 'RPM package assembly fixture for %s\n' "$release_target" \
+    >"$temporary/merged-input/$rpm"
+  if [[ -n $arch ]]; then
+    printf 'Arch package assembly fixture for %s\n' "$release_target" \
+      >"$temporary/merged-input/$arch"
+  fi
   (
     cd "$temporary/merged-input"
-    sha256sum "$deb" >>"SHA256SUMS-${release_target}"
+    sha256sum "$deb" "$rpm" ${arch:+"$arch"} >>"SHA256SUMS-${release_target}"
     sort -k2 -o "SHA256SUMS-${release_target}" "SHA256SUMS-${release_target}"
-  )
-  printf 'offline provenance bundle fixture for %s\n' "$release_target" \
-    >"$temporary/merged-input/ATTESTATION-${release_target}.sigstore.json"
-done
-for release_target in macos-arm64-preview macos-x86_64-preview; do
-  printf 'macOS preview archive fixture for %s\n' "$release_target" \
-    >"$temporary/merged-input/mealy-v0.1.0-${release_target}.tar.gz"
-  printf 'macOS preview SBOM fixture for %s\n' "$release_target" \
-    >"$temporary/merged-input/mealy-v0.1.0-${release_target}.cdx.json"
-  (
-    cd "$temporary/merged-input"
-    sha256sum "mealy-v0.1.0-${release_target}.tar.gz" \
-      "mealy-v0.1.0-${release_target}.cdx.json" | sort -k2 \
-      >"SHA256SUMS-${release_target}"
   )
   printf 'offline provenance bundle fixture for %s\n' "$release_target" \
     >"$temporary/merged-input/ATTESTATION-${release_target}.sigstore.json"
@@ -180,7 +180,7 @@ done
   "$temporary/merged-input" "$temporary/merged-output" >/dev/null
 [[ -x $temporary/merged-output/install-mealy.sh ]]
 [[ -x $temporary/merged-output/install-mealy-release.sh ]]
-[[ $(find "$temporary/merged-output" -mindepth 1 -maxdepth 1 -type f | wc -l) -eq 20 ]]
+[[ $(find "$temporary/merged-output" -mindepth 1 -maxdepth 1 -type f | wc -l) -eq 15 ]]
 cp -a "$temporary/merged-input" "$temporary/unexpected-input"
 touch "$temporary/unexpected-input/unexpected"
 if "$repository_root/packaging/assemble-release.sh" 0.1.0 \
@@ -201,8 +201,16 @@ bootstrap_fake_bin="$temporary/bootstrap-fake-bin"
 mkdir -p "$bootstrap_release" "$bootstrap_fake_bin"
 archive="mealy-v0.1.0-${target}.tar.gz"
 case $target in
-  linux-x86_64-gnu) bootstrap_deb=mealy_0.1.0_amd64.deb ;;
-  linux-aarch64-gnu) bootstrap_deb=mealy_0.1.0_arm64.deb ;;
+  linux-x86_64-gnu)
+    bootstrap_deb=mealy_0.1.0_amd64.deb
+    bootstrap_rpm=mealy-0.1.0-1.x86_64.rpm
+    bootstrap_arch=mealy-0.1.0-1-x86_64.pkg.tar.zst
+    ;;
+  linux-aarch64-gnu)
+    bootstrap_deb=mealy_0.1.0_arm64.deb
+    bootstrap_rpm=mealy-0.1.0-1.aarch64.rpm
+    bootstrap_arch=
+    ;;
 esac
 install -m 0644 "$temporary/first/$archive" "$bootstrap_release/$archive"
 install -m 0644 "$temporary/first/mealy-v0.1.0-${target}.cdx.json" \
@@ -216,10 +224,15 @@ printf '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}\n' \
 printf '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}\n' \
   >"$bootstrap_release/ATTESTATION-installers.sigstore.json"
 printf 'bootstrap Debian fixture\n' >"$bootstrap_release/$bootstrap_deb"
+printf 'bootstrap RPM fixture\n' >"$bootstrap_release/$bootstrap_rpm"
+if [[ -n $bootstrap_arch ]]; then
+  printf 'bootstrap Arch fixture\n' >"$bootstrap_release/$bootstrap_arch"
+fi
 (
   cd "$bootstrap_release"
   sha256sum "$archive" install-mealy.sh install-mealy-release.sh \
-    "mealy-v0.1.0-${target}.cdx.json" "$bootstrap_deb" | sort -k2 \
+    "mealy-v0.1.0-${target}.cdx.json" "$bootstrap_deb" "$bootstrap_rpm" \
+    ${bootstrap_arch:+"$bootstrap_arch"} | sort -k2 \
     >"SHA256SUMS-${target}"
 )
 cat >"$bootstrap_fake_bin/gh" <<'SCRIPT'
@@ -283,7 +296,11 @@ case $url in
             {name: ("mealy-v0.1.0-" + $target + ".tar.gz")},
             {name: ("mealy-v0.1.0-" + $target + ".cdx.json")},
             {name: (if $target == "linux-x86_64-gnu" then
-              "mealy_0.1.0_amd64.deb" else "mealy_0.1.0_arm64.deb" end)}
+              "mealy_0.1.0_amd64.deb" else "mealy_0.1.0_arm64.deb" end)},
+            {name: (if $target == "linux-x86_64-gnu" then
+              "mealy-0.1.0-1.x86_64.rpm" else "mealy-0.1.0-1.aarch64.rpm" end)},
+            (if $target == "linux-x86_64-gnu" then
+              {name: "mealy-0.1.0-1-x86_64.pkg.tar.zst"} else empty end)
           ]
         }
       ' >"$output"

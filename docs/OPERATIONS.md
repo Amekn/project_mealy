@@ -103,9 +103,10 @@ Follow [`QUICKSTART.md`](QUICKSTART.md) to install the pinned Rust toolchain, Li
 prerequisite, and stable release binaries before using the commands below. Tagged package
 verification, clean install, upgrade, and binary/schema rollback boundaries are in
 [`RELEASE.md`](RELEASE.md).
-The owner-local archive provides active/previous rollback slots; the root-owned Debian package
-provides ordinary `apt` install/upgrade/remove without maintainer scripts or home mutation. Neither
-package form starts the daemon or creates a service during installation.
+The owner-local archive provides active/previous rollback slots; the root-owned Debian, RPM, and
+Arch packages provide ordinary system-package-manager install/upgrade/remove without maintainer
+scripts, install hooks, or home mutation. No package form starts the daemon or creates a service
+during installation.
 
 On a clean home, activate one provider before starting the service:
 
@@ -146,16 +147,11 @@ Or install an owner-level service definition:
 mealyctl --home "$HOME/.mealy" service install
 ```
 
-The installer atomically writes an owner-private systemd user unit on Linux or LaunchAgent on
-macOS and prints the explicit activation command. Reinstalling first preserves a `.previous`
+The installer atomically writes an owner-private systemd user unit on Linux and prints the explicit
+activation command. Reinstalling first preserves a `.previous`
 rollback copy. Unsupported service-manager platforms fail explicitly instead of emitting a weaker
 unit. The daemon itself remains portable; arbitrary worker execution is separately fail-closed by
 the sandbox profile reported by `doctor`.
-
-The macOS definition uses `RunAtLoad` without unconditional `KeepAlive`: bootstrapping starts it
-once, while a successful operator-requested drain stays stopped. Restart a loaded definition with
-`launchctl kickstart -k gui/$(id -u)/dev.mealy.mealyd`, or unload it with `launchctl bootout
-gui/$(id -u)/dev.mealy.mealyd`.
 
 On Linux, service installation requires the canonical Mealy home to remain outside host `/tmp` and
 `/var/tmp` and on a non-`tmpfs`, non-`ramfs` filesystem. This prevents volatile state from being
@@ -243,8 +239,7 @@ permissions and reports each sandbox profile as `enforceable` or `denied` with a
 restore, stopped-soak, and release validation repeat the deep checks on consistent copies or a
 stopped database. Release one currently enforces `observe` and `workspace_write` through
 Bubblewrap on a conforming Linux host. `networked`, `service_operator`, and `full_trust` are denied.
-The macOS control plane receives a real locked build in CI, but worker profiles remain explicitly
-denied until a native adapter exists. Windows is outside the release-one support and CI contract.
+macOS and Windows are outside the active source, CI, packaging, and production support contract.
 On Ubuntu 24.04, a denied profile paired with `RTM_NEWADDR` or user-namespace audit messages should
 be repaired through the reviewed distro `bwrap-userns-restrict` activation and probe in
 [`QUICKSTART.md`](QUICKSTART.md), not by making Bubblewrap setuid or disabling the host-wide
@@ -381,7 +376,7 @@ unset MEALY_BACKUP_PASSPHRASE
 This is an offline operation: it takes the actual daemon-home lock, re-verifies and decrypts the
 backup into a private sibling directory, opens the copied database, checks schema/foreign keys,
 artifacts, configuration, and active identity, removes the encrypted transport envelope, and
-creates a new locked home. On Linux and macOS it then uses one same-filesystem atomic directory
+creates a new locked home. On Linux it then uses one same-filesystem atomic directory
 exchange, so observers see either the complete old home or the complete restored home—never a
 partially copied one. The exact old home is retained beside it as
 `HOME.pre-restore-TIMESTAMP-DIGEST`, and `restore-activation.json` records the activation evidence.

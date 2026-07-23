@@ -85,6 +85,13 @@ grep -Fq "$revision" "$temporary/first.md"
 grep -Fq "$daemon_sha256" "$temporary/first.md"
 grep -Fq "86401 observed seconds (86401234 ms)" "$temporary/first.md"
 grep -Fq "80 completed turns across 8 sessions and 10 rounds" "$temporary/first.md"
+grep -Fq "Ubuntu 24.04/26.04 LTS and Debian 13" "$temporary/first.md"
+grep -Fq "Fedora 44" "$temporary/first.md"
+grep -Fq "Arch Linux on x86-64" "$temporary/first.md"
+if grep -Fqi "macOS preview" "$temporary/first.md"; then
+  echo "release notes advertised the archived macOS preview" >&2
+  exit 1
+fi
 grep -Fq "CI run](https://github.com/Amekn/project_mealy/actions/runs/321)" \
   "$temporary/first.md"
 grep -Fq "live-provider run](https://github.com/Amekn/project_mealy/actions/runs/123)" \

@@ -1,4 +1,5 @@
 #!/bin/zsh
+# Archived after v0.1.0; excluded from active platform qualification.
 emulate -LR zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 export LC_ALL=C

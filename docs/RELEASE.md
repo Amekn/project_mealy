@@ -1,15 +1,18 @@
 # Release, install, rollback, and uninstall
 
-Mealy's supported native worker targets are `linux-x86_64-gnu` and `linux-aarch64-gnu`. A version
-tag matching the Cargo workspace version runs the same strict lint/test/sandbox gates as CI on
-GitHub's explicit native Ubuntu 24.04 x86_64 and ARM64 runners, including Bash/ShellCheck
-validation of every packaging and operational entry point. Each runner builds locked release binaries with
-their exact Rust dependency graphs embedded through `scripts/build-release-binaries.sh`. That
-boundary remaps repository, Cargo-cache, and account-home source paths to stable virtual identities;
-the packager independently rejects common Linux, macOS, and Windows user-home paths. Each runner
-scans both `Cargo.lock` and the resulting binaries
-against RustSec, and generates a bounded CycloneDX SBOM with pinned Syft. Each architecture creates
-and attests a reproducible archive, root-owned Debian package, target checksum manifest, and SBOM.
+Mealy's supported native worker targets are `linux-x86_64-gnu` and `linux-aarch64-gnu`. The tested
+distribution contract is Ubuntu 24.04/26.04 LTS, Debian 13, and Fedora 44 on both architectures,
+plus Arch Linux on x86-64. See [LINUX_SUPPORT.md](LINUX_SUPPORT.md) for the derivative boundary.
+A version tag matching the Cargo workspace version runs the same strict lint/test/sandbox gates as
+CI on GitHub's explicit native Ubuntu 24.04 x86-64 and ARM64 runners, including Bash/ShellCheck
+validation of every packaging and operational entry point. Each runner builds locked release
+binaries with their exact Rust dependency graphs embedded through
+`scripts/build-release-binaries.sh`. That boundary remaps repository, Cargo-cache, and account-home
+source paths to stable virtual identities; the packager independently rejects common user-home
+paths. Each runner scans both `Cargo.lock` and the resulting binaries against RustSec and generates
+a bounded CycloneDX SBOM with pinned Syft. Each architecture creates and attests a reproducible
+archive, root-owned Debian package, RPM, target checksum manifest, and SBOM; x86-64 also creates
+the official Arch package.
 A tag's native x86-64 job also rejects publication unless the checked
 `docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report for
 at least 86,400 seconds, has the exact SHA-256/version of the newly built auditable daemon, and
@@ -22,28 +25,19 @@ exercises its positive fixture and short/dirty/wrong-binary/volatile-home/residu
 rejections.
 A frozen, pinned `cargo-about` pass also generates the exact dependency license notice twice and
 requires byte-identical output before the notice enters the checksummed package payload.
-The `.deb` is constructed from the already verified release payload without maintainer scripts,
-service activation, or home mutation and is rejected for any Lintian error or warning tag. Before
-retention, each native runner installs both exact
-package forms and proves binary/schema
-identity, hardened owner-service generation, doctor/readiness, one durable task, recorded-only replay, usage, online backup plus
-isolated restore verification, clean drain, and state-preserving removal. Only after both jobs pass
-and the separate x86_64 pinned real-browser process/CLI/model/replay job passes does one dependent
-job validate the complete merged inventory, add and attest the common
-installer, retain all assets, and create the GitHub release. Third-party actions are pinned by
-commit and supply-chain tools by version. Explicit macOS 15 ARM64 and Intel jobs run locked
-control-plane tests, build and binary-audit native executables, generate normalized CycloneDX SBOMs
-and license notices, then retain deterministic, attested conversation-only preview archives. A
-separate native `/bin/zsh` path completes a quoted-path conversation, recorded replay, bounded
-drain, and LaunchAgent rendering against both the build output and the extracted package. These
-archives are useful installable control planes, not production worker targets: every governed
-worker/tool sandbox profile remains denied. Windows is outside the release-one support and CI contract.
-
-The rootless Linux archive path also passes the complete installed-package lifecycle on Fedora 44
-x86_64 with glibc 2.43 and Bubblewrap 0.11.0, including mandatory sandbox enforcement, replay,
-backup verification, drain, uninstall, and state preservation. That checked observation is
-[pre-release evidence](benchmarks/2026-07-15-fedora-44-installed-package-smoke.md), not a claim that
-the Debian asset is an RPM or that a local archive is an attested public release.
+The native packages are constructed from the same verified release payload without maintainer
+scripts, service activation, install hooks, or home mutation. Debian packages are additionally
+rejected for any Lintian error or warning tag. Before retention, each native runner installs the
+archive and its native system packages and proves binary/schema identity, hardened owner-service
+generation, doctor/readiness, one durable task, recorded-only replay, usage, online backup plus
+isolated restore verification, clean drain, and state-preserving removal. Clean pinned containers
+then reproduce package construction on every supported distribution/architecture pair. Only after
+both architecture jobs pass and the separate x86-64 pinned real-browser
+process/CLI/model/replay job passes does one dependent job validate the complete merged inventory,
+add and attest the common installer, retain all assets, and create the GitHub release. Public
+acceptance downloads those immutable packages and repeats lifecycle smokes on clean Ubuntu,
+Debian, Fedora, and Arch environments. Third-party actions are pinned by commit and supply-chain
+tools by version. macOS and Windows are outside the active production and release contract.
 
 ## Repository release controls
 
@@ -135,10 +129,11 @@ live-provider workflow runs, commit, soak subject and daemon digest, and record 
 duration, workload, recovery, latency, memory, storage, integrity, and residue instead of
 substituting generic generated notes. On 2026-07-14, `main`
 was protected with administrator enforcement, pull-request-only changes, linear history, resolved
-conversations, and force-push/deletion denial. On 2026-07-15, strict protection began requiring the
-seven authoritative checks `Strict workspace gate`, `Linux sandbox conformance`, `Linux
-rendered-browser conformance`, and `Control plane` on Ubuntu x86-64, Ubuntu ARM64, macOS ARM64, and
-macOS Intel. Repository-level immutable releases and private vulnerability reporting are enabled.
+conversations, and force-push/deletion denial. The authoritative Linux-only protection set is
+`Strict workspace gate`, `Linux sandbox conformance`, `Linux rendered-browser conformance`,
+`Control plane (ubuntu-24.04)`, `Control plane (ubuntu-24.04-arm)`, and
+`Linux distribution compatibility`. Repository-level immutable releases and private vulnerability
+reporting are enabled.
 The `live-provider-smoke` Environment requires an explicit repository-owner review and now contains
 owner-supplied `OPENROUTER_API_KEY` and `LOCAL_API_KEY` secrets. The checked workflow consumes only
 the selected provider secret. Its default OpenRouter gate dynamically requires an exact
@@ -160,11 +155,11 @@ successful `push` run on `main` from the canonical CI workflow and repository UR
 green pull-request check alone cannot qualify a tag.
 
 After publication, the same tag workflow downloads the immutable public assets without build-job
-state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory on
-native Linux x86-64/ARM64 and macOS ARM64/Intel runners. Linux repeats the tokenless bootstrap plus
-archive and Debian lifecycle smokes; macOS repeats the packaged conversation, replay,
-backup/restore, LaunchAgent-drain, and native-zsh quoted-path smokes. A release workflow is green
-only after all four public delivery checks pass.
+state and verifies release integrity, asset integrity, provenance, checksums, and exact inventory
+on native Linux x86-64/ARM64 runners. It repeats the tokenless bootstrap plus archive and Debian
+lifecycle smokes on Ubuntu 24.04, then repeats each public native package lifecycle on clean pinned
+Ubuntu 26.04, Debian 13, Fedora 44, and Arch Linux environments. A release workflow is green only
+after every public Linux delivery check passes.
 
 ## Verify and install a published release
 
@@ -199,22 +194,23 @@ GitHub login or token is required. It delegates the actual atomic
 install to that verified release manager and prints setup/service commands. Pass
 `--version vX.Y.Z`, `--prefix DIR`, or `--home DIR` when the defaults are not appropriate.
 
-The release also contains `macos-arm64-preview` and `macos-x86_64-preview` archives, matching SBOMs,
-and two-entry target checksum manifests. Their payloads include both native executables, an exact
-build/capability manifest, SBOM, dependency license notice, and the same complete checked
-documentation tree shipped by the Linux archives, so package-local links remain usable offline.
-Follow the [macOS preview quickstart](QUICKSTART.md#macos-conversation-only-preview); the Linux
-bootstrap and archive manager intentionally reject these preview targets.
-
 For manual package selection or independent inspection, download one exact release into a new
 empty directory:
 
 ```sh
-VERSION=v0.1.0
+VERSION=vX.Y.Z
 REPOSITORY=Amekn/project_mealy
 case "$(uname -m)" in
-  x86_64|amd64) TARGET=linux-x86_64-gnu; DEB_ARCH=amd64 ;;
-  aarch64|arm64) TARGET=linux-aarch64-gnu; DEB_ARCH=arm64 ;;
+  x86_64|amd64)
+    TARGET=linux-x86_64-gnu
+    DEB_ARCH=amd64
+    RPM_ARCH=x86_64
+    ;;
+  aarch64|arm64)
+    TARGET=linux-aarch64-gnu
+    DEB_ARCH=arm64
+    RPM_ARCH=aarch64
+    ;;
   *) echo "unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 DEB_VERSION=${VERSION#v}
@@ -225,15 +221,20 @@ gh release download "$VERSION" --repo "$REPOSITORY" \
   --pattern "mealy-*-${TARGET}.tar.gz" \
   --pattern "mealy-*-${TARGET}.cdx.json" \
   --pattern "mealy_*_${DEB_ARCH}.deb" \
+  --pattern "mealy-*-1.${RPM_ARCH}.rpm" \
   --pattern "SHA256SUMS-${TARGET}" \
   --pattern "ATTESTATION-${TARGET}.sigstore.json" \
   --pattern ATTESTATION-installers.sigstore.json \
   --pattern install-mealy.sh \
   --pattern install-mealy-release.sh
+if [ "$TARGET" = linux-x86_64-gnu ]; then
+  gh release download "$VERSION" --repo "$REPOSITORY" \
+    --pattern 'mealy-*-1-x86_64.pkg.tar.zst'
+fi
 ```
 
 Verify the attested checksum manifest and every asset before executing the installer. The local
-checksum pass also proves that the independently downloaded installer, SBOM, and Debian package
+checksum pass also proves that the independently downloaded installers, SBOM, and native packages
 match the manifest:
 
 ```sh
@@ -252,32 +253,45 @@ gh attestation verify "mealy-${VERSION}-${TARGET}.cdx.json" "${ATTESTATION[@]}" 
   --bundle "ATTESTATION-${TARGET}.sigstore.json"
 gh attestation verify "mealy_${DEB_VERSION}_${DEB_ARCH}.deb" "${ATTESTATION[@]}" \
   --bundle "ATTESTATION-${TARGET}.sigstore.json"
+gh attestation verify "mealy-${DEB_VERSION}-1.${RPM_ARCH}.rpm" "${ATTESTATION[@]}" \
+  --bundle "ATTESTATION-${TARGET}.sigstore.json"
+if [ "$TARGET" = linux-x86_64-gnu ]; then
+  gh attestation verify "mealy-${DEB_VERSION}-1-x86_64.pkg.tar.zst" \
+    "${ATTESTATION[@]}" --bundle "ATTESTATION-${TARGET}.sigstore.json"
+fi
 sha256sum --check --strict "SHA256SUMS-${TARGET}"
 ```
 
-On Ubuntu 24.04+ or Debian 13+, install the root-owned package with the system package manager:
+Install the root-owned package for the supported distribution family:
 
 ```sh
+# Ubuntu 24.04/26.04 or Debian 13
 sudo apt install --yes "./mealy_${DEB_VERSION}_${DEB_ARCH}.deb"
+
+# Fedora 44
+sudo dnf install --assumeyes "./mealy-${DEB_VERSION}-1.${RPM_ARCH}.rpm"
+
+# Arch Linux x86-64
+sudo pacman -U --noconfirm "./mealy-${DEB_VERSION}-1-x86_64.pkg.tar.zst"
 ```
 
-The Debian package requires `libc6 >= 2.39`, `libgcc-s1`, `libc-bin >= 2.39` for the exact
-root-controlled `/usr/bin/ldd` runtime inspector, Bubblewrap, and CA certificates. It places two fixed
-relative command links at `/usr/bin/mealyd` and `/usr/bin/mealyctl`, retains the actual executables
-and exact checksummed release payload under `/usr/lib/mealy/release`, and exposes usage/security documents under
-`/usr/share/doc/mealy`, including `third-party-licenses.html`. It contains only `control` and
-`md5sums` metadata: installation does not
-start a daemon, write a user service, inspect credentials, or create/migrate `$HOME/.mealy`.
+The packages require glibc 2.39 or newer, Bubblewrap, CA certificates, and the matching GCC runtime
+library. The Debian package additionally requires `libc-bin >= 2.39` for the exact root-controlled
+`/usr/bin/ldd` runtime inspector. Every format places fixed relative command links at
+`/usr/bin/mealyd` and `/usr/bin/mealyctl`, retains the actual executables and exact checksummed
+release payload under `/usr/lib/mealy/release`, and exposes usage/security documents under
+`/usr/share/doc/mealy`, including `third-party-licenses.html`. Installation does not start a daemon,
+write a user service, inspect credentials, or create/migrate `$HOME/.mealy`.
 The package builder reads the exact ELF `NEEDED` entries and rejects any new native library until
 the fixed Debian dependency contract is reviewed and updated; this prevents an incidental build-
 host library from silently becoming an undeclared clean-install prerequisite.
 The complete checked release documentation tree is mirrored beneath `/usr/share/doc/mealy/docs` so
 links from the packaged README and readiness ledger remain local and valid; stable convenience
 links expose the quickstart, operations, release, and threat-model documents one level above.
-It also suggests `apparmor-profiles`/`apparmor-utils`, `curl`/`unzip` for the checksummed browser
-fetch helper, and the optional dynamically linked Headless Shell runtime/font packages, but
-deliberately does not activate a host-wide policy or install a browser in a package maintainer
-script. On Ubuntu 24.04, follow the reviewed
+Optional package metadata suggests `curl`/`unzip` for the checksummed browser fetch helper and the
+dynamically linked Headless Shell runtime/font packages, but no package activates a host-wide
+policy or installs a browser through a maintainer script or install hook. On Ubuntu 24.04, follow
+the reviewed
 `bwrap-userns-restrict` activation and probe in [`QUICKSTART.md`](QUICKSTART.md) before enabling
 effect, extension, MCP, or browser tools.
 
@@ -340,14 +354,15 @@ installed daemon must also report its required observe and workspace-write sandb
 enforceable on both native Linux runners. The script does not substitute for published attestation or a clean supported
 host, but prevents a source-tree-only smoke from masking a broken release payload.
 
-The tag job also runs `scripts/installed-deb-smoke.sh` on the native package. It rejects maintainer
-scripts and wrong architecture, re-verifies the embedded payload, installs with `dpkg`, checks
-root ownership/modes and the generated owner-service unit, completes and recorded-replays a real
-daemon task, drains, removes the package, and proves the temporary user database remains.
+The tag job also runs the Debian, RPM, and Arch installed-package smokes on their applicable native
+packages. They reject maintainer scripts/install hooks and wrong architecture, re-verify the
+embedded payload, install with the native package manager, check root ownership/modes and the
+generated owner-service unit, complete and recorded-replay a real daemon task, drain, remove the
+package, and prove the temporary user database remains.
 Before packaging, each native tag runner launches the exact auditable binaries through their
-generated systemd user unit. After constructing and linting the native Debian package, it installs
-that exact package and repeats the same proof from the root-owned package paths before purging it
-and running the independent install/removal smoke. Both passes approve one workspace mutation,
+generated systemd user unit. After constructing the native system packages, clean distribution
+containers install each exact package and repeat the same proof from the root-owned package paths
+before removing it. Both passes approve one workspace mutation,
 require the effect and exact file bytes to succeed, and drain the unit. This catches an outer
 service restriction that can pass startup/`doctor` yet block a secure nested worker syscall. The
 standalone command requires a reachable systemd user manager, refuses to replace an existing
@@ -373,9 +388,10 @@ mealyctl --home "$HOME/.mealy" restore-verify "pre-upgrade-$VERSION"
 mealyctl --home "$HOME/.mealy" drain
 ```
 
-Download, verify, and install the new release as above. For a Debian installation, `apt install`
-replaces the root-owned program files but never restarts the owner service; for an archive
-installation, the stable manager replaces its verified slots. Reinstall the user service definition so
+Download, verify, and install the new release as above. For a native system-package installation,
+the distribution package manager replaces the root-owned program files but never restarts the
+owner service; for an archive installation, the stable manager replaces its verified slots.
+Reinstall the user service definition so
 its reviewed canonical executable path and rollback copy are current, then start and validate:
 
 ```sh
@@ -387,18 +403,17 @@ mealyctl --home "$HOME/.mealy" status
 mealyctl --home "$HOME/.mealy" doctor
 ```
 
-Use the activation command printed by `service install` instead of `systemctl` on a supported
-non-systemd control-plane host. Startup validates configuration, records the exact effective
-digest, creates a pre-migration snapshot before any schema upgrade, performs migrations
-transactionally, and publishes readiness only after recovery.
+Startup validates configuration, records the exact effective digest, creates a pre-migration
+snapshot before any schema upgrade, performs migrations transactionally, and publishes readiness
+only after recovery.
 
 ## Roll back a release
 
-The owner-local archive is the supported rollback form. A Debian package can be downgraded only
-after draining and only when both versions support the same state schema; verify the older asset,
-then use `apt install --allow-downgrades ./mealy_VERSION_ARCH.deb`. A `.deb` has no hidden previous
-slot and cannot coordinate a cross-schema home exchange. If rollback guarantees are required,
-install through the archive manager before the upgrade.
+The owner-local archive is the supported rollback form. A native system package can be downgraded
+only after draining and only when both versions support the same state schema; verify the older
+asset, then use the distribution package manager's explicit downgrade operation. A `.deb`, `.rpm`,
+or `.pkg.tar.zst` has no hidden previous slot and cannot coordinate a cross-schema home exchange.
+If rollback guarantees are required, install through the archive manager before the upgrade.
 
 For a binary regression where both releases support the same state schema, drain the daemon and
 swap the complete active/previous slots through the installed manager:
@@ -506,15 +521,16 @@ remove it before uninstalling.
    its `live-provider-smoke` environment deployment, and retain the successful run URL. Then create
    and push the reviewed tag. The release workflow refuses a mismatched version, a tag that does
    not point at the checked-out commit, or missing/stale live-provider workflow evidence.
-5. Wait for the native Linux and macOS jobs to pass the full all-feature/doc/RustSec suites, real
-   daemon/dashboard or preview-control-plane smoke, auditable locked build, exact-binary audit,
-   SBOM/license validation, archive and Debian reproducibility/lifecycle/Lintian tests, asset
+5. Wait for the native Linux jobs to pass the full all-feature/doc/RustSec suites, real
+   daemon/dashboard smoke, auditable locked build, exact-binary audit, SBOM/license validation,
+   archive plus Debian/RPM/Arch reproducibility and lifecycle tests, asset
    attestation, remote-tag revalidation, and the single dependent `gh release create --verify-tag`
    step.
 6. Wait for the post-publication native jobs to run `gh release verify` and `gh release
-   verify-asset`, then repeat tokenless bootstrap, archive/Debian lifecycle, and packaged macOS
-   control-plane acceptance against only the downloaded public assets. Independently download and
-   inspect the retained verification evidence before declaring the release complete.
+   verify-asset`, then repeat tokenless bootstrap, archive lifecycle, and native package acceptance
+   on clean Ubuntu, Debian, Fedora, and Arch environments against only the downloaded public assets.
+   Independently download and inspect the retained verification evidence before declaring the
+   release complete.
 7. Record clean-install, upgrade, backup/restore, rollback, uninstall, soak, and optional
    live-provider observations in the release notes. The workflow renders the exact soak metrics and
    live/release run links automatically; review that deterministic body and use the linked final

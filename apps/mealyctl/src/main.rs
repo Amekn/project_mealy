@@ -5531,7 +5531,11 @@ async fn discord_pair_request(
         .header(reqwest::header::AUTHORIZATION, format!("Bot {token}"))
         .header(
             reqwest::header::USER_AGENT,
-            "DiscordBot (https://github.com/Amekn/project_mealy, 0.1.0)",
+            concat!(
+                "DiscordBot (https://github.com/Amekn/project_mealy, ",
+                env!("CARGO_PKG_VERSION"),
+                ")"
+            ),
         )
         .send()
         .await
@@ -11522,37 +11526,11 @@ fn service_definition(
             linux_activation_command,
         ))
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "linux"))]
     {
-        let _ = read_write_paths;
-        let user_home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-            CliError::InvalidService("HOME is required for LaunchAgent installation".to_owned())
-        })?;
-        // Run once when bootstrapped, but remain stopped after an intentional clean drain.
-        // Unconditional KeepAlive would immediately relaunch the successfully drained daemon.
-        let body = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
-             \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-             <plist version=\"1.0\"><dict>\n<key>Label</key><string>dev.mealy.mealyd</string>\n\
-             <key>ProgramArguments</key><array><string>{}</string><string>--home</string>\
-             <string>{}</string></array>\n<key>RunAtLoad</key><true/>\n\
-             <key>ProcessType</key><string>Background</string>\n</dict></plist>\n",
-            xml_escape(&daemon_text),
-            xml_escape(&home_text),
-        );
-        Ok((
-            "macos-launch-agent".to_owned(),
-            user_home.join("Library/LaunchAgents/dev.mealy.mealyd.plist"),
-            body,
-            macos_activation_command,
-        ))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = (daemon_text, home_text);
+        let _ = (daemon_text, home_text, read_write_paths);
         Err(CliError::UnsupportedPlatform(
-            "automatic user-service installation is not implemented on this platform; run mealyd under an owner-managed service and use doctor to confirm fail-closed profiles"
+            "production service installation is supported only on Linux; archived preview adapters do not provide a supported worker sandbox"
                 .to_owned(),
         ))
     }
@@ -11695,16 +11673,6 @@ fn systemd_quote(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-#[cfg(target_os = "macos")]
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 fn validate_service_text(value: &str) -> Result<(), CliError> {
     if value.is_empty() || value.chars().any(char::is_control) {
         Err(CliError::InvalidService(
@@ -11821,14 +11789,6 @@ fn linux_activation_command(path: &Path) -> Result<String, CliError> {
             setup_shell_argument(&path.display().to_string())
         ))
     }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_activation_command(path: &Path) -> Result<String, CliError> {
-    Ok(format!(
-        "launchctl bootstrap gui/$(id -u) {}",
-        setup_shell_argument(&path.display().to_string())
-    ))
 }
 
 fn authorized(
@@ -12312,7 +12272,7 @@ enum CliError {
     #[error("invalid service installation: {0}")]
     InvalidService(String),
     /// Current platform has no safe built-in service installer.
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(target_os = "linux"))]
     #[error("unsupported platform: {0}")]
     UnsupportedPlatform(String),
 }
@@ -12340,8 +12300,6 @@ mod tests {
     use super::{
         linux_activation_command, service_definition, service_read_write_paths, systemd_quote,
     };
-    #[cfg(target_os = "macos")]
-    use super::{macos_activation_command, service_definition};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
     use mealy_application::{AgentLoopLimits, ProviderConfig};
@@ -12351,7 +12309,7 @@ mod tests {
     use serde_json::json;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     use std::path::Path;
     use std::{collections::BTreeMap, io::Cursor};
 
@@ -12901,35 +12859,6 @@ mod tests {
         assert!(
             quoted_activation
                 .starts_with("systemctl --user link '/srv/owner'\\''s services/mealy.service' && ")
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn launch_agent_starts_once_and_preserves_explicit_drain() {
-        let home = tempfile::tempdir().expect("daemon home");
-        let canonical_home = home.path().canonicalize().expect("canonical home");
-        let (platform, destination, body, _) = service_definition(
-            Path::new("/usr/bin/true"),
-            &canonical_home,
-            std::slice::from_ref(&canonical_home),
-        )
-        .expect("LaunchAgent definition");
-
-        assert_eq!(platform, "macos-launch-agent");
-        assert!(destination.ends_with("Library/LaunchAgents/dev.mealy.mealyd.plist"));
-        assert!(body.contains("<key>RunAtLoad</key><true/>"));
-        assert!(!body.contains("<key>KeepAlive</key>"));
-        assert!(body.contains("<key>ProcessType</key><string>Background</string>"));
-        assert!(body.contains("<string>/usr/bin/true</string>"));
-        assert!(body.contains(&format!("<string>{}</string>", canonical_home.display())));
-
-        let activation =
-            macos_activation_command(Path::new("/Users/owner's services/dev.mealy.mealyd.plist"))
-                .expect("quoted LaunchAgent activation");
-        assert_eq!(
-            activation,
-            "launchctl bootstrap gui/$(id -u) '/Users/owner'\\''s services/dev.mealy.mealyd.plist'"
         );
     }
 

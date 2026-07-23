@@ -61,10 +61,14 @@ case $(uname -m) in
   x86_64|amd64)
     target=linux-x86_64-gnu
     debian_architecture=amd64
+    rpm_architecture=x86_64
+    arch_package=true
     ;;
   aarch64|arm64)
     target=linux-aarch64-gnu
     debian_architecture=arm64
+    rpm_architecture=aarch64
+    arch_package=false
     ;;
   *)
     echo "unsupported Linux architecture: $(uname -m)" >&2
@@ -123,13 +127,23 @@ manager=install-mealy.sh
 bootstrap=install-mealy-release.sh
 sbom="mealy-v${release_version}-${target}.cdx.json"
 deb="mealy_${debian_version}_${debian_architecture}.deb"
+rpm="mealy-${release_version}-1.${rpm_architecture}.rpm"
+arch="mealy-${release_version}-1-x86_64.pkg.tar.zst"
 architecture_bundle="ATTESTATION-${target}.sigstore.json"
 installer_bundle=ATTESTATION-installers.sigstore.json
 
 expected_download=$(printf '%s\n' "$archive" "$architecture_bundle" "$bootstrap" \
   "$checksums" "$installer_bundle" "$manager" | sort)
 expected_release_assets=$(printf '%s\n' "$archive" "$architecture_bundle" "$bootstrap" \
-  "$checksums" "$deb" "$installer_bundle" "$manager" "$sbom" | sort)
+  "$checksums" "$deb" "$installer_bundle" "$manager" "$rpm" "$sbom" | sort)
+expected_manifest=$(printf '%s\n' "$archive" "$bootstrap" "$deb" "$manager" "$rpm" "$sbom")
+expected_manifest_count=6
+if [[ $arch_package == true ]]; then
+  expected_release_assets=$(printf '%s\n' "$expected_release_assets" "$arch" | sort)
+  expected_manifest=$(printf '%s\n' "$expected_manifest" "$arch")
+  expected_manifest_count=7
+fi
+expected_manifest=$(printf '%s\n' "$expected_manifest" | sort)
 while IFS= read -r asset; do
   if ! jq -e --arg asset "$asset" \
     '[.assets[] | select(.name == $asset)] | length == 1' \
@@ -181,14 +195,13 @@ for asset in "$manager" "$bootstrap"; do
     --deny-self-hosted-runners >/dev/null
 done
 
-if ! awk '
+if ! awk -v expected="$expected_manifest_count" '
     NF != 2 || length($1) != 64 || $1 !~ /^[0-9a-f]+$/ {exit 1}
-    END {if (NR != 5) exit 1}
+    END {if (NR != expected) exit 1}
   ' "$temporary/$checksums"; then
   echo "target checksum manifest is not canonical" >&2
   exit 65
 fi
-expected_manifest=$(printf '%s\n' "$archive" "$bootstrap" "$deb" "$manager" "$sbom" | sort)
 actual_manifest=$(awk '{print $2}' "$temporary/$checksums" | sort)
 if [[ $actual_manifest != "$expected_manifest" ]]; then
   echo "target checksum manifest inventory does not match the release" >&2

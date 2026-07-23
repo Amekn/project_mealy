@@ -47,6 +47,7 @@ release_documents=(
   CLI.md
   DOMAIN_MODEL.md
   IMPLEMENTATION_PLAN.md
+  LINUX_SUPPORT.md
   OPERATIONS.md
   PRODUCTION_READINESS.md
   QUICKSTART.md
@@ -394,7 +395,7 @@ install_release() {
     $1 !~ /^[-d]/ {exit 1}
     $3 !~ /^[0-9]+$/ {exit 1}
     {count += 1; total += $3}
-    count > 64 || $3 > 268435456 || total > 536870912 {exit 1}
+    count > 96 || $3 > 268435456 || total > 536870912 {exit 1}
     END {if (count == 0) exit 1}
   '; then
     echo "release archive type, count, or expanded-size bound is invalid" >&2

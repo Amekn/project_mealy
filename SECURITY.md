@@ -6,11 +6,11 @@ Treat only a non-draft, non-prerelease GitHub release whose exact tag workflow a
 acceptance jobs completed successfully as an attested production release. Never treat an arbitrary
 checkout or development archive as one.
 
-The supported production worker boundary is a single-owner Linux host whose `mealyctl doctor`
-report marks the required sandbox profiles enforceable. macOS is a packaged control-plane preview but
-does not currently provide the claimed native worker isolation. Windows is outside the release-one
-support and CI contract. Keep the daemon API on its authenticated loopback listener; Mealy is not a
-multi-tenant or public-internet service.
+The supported production worker boundary is a single-owner Linux host within the checked
+[distribution compatibility contract](docs/LINUX_SUPPORT.md) whose `mealyctl doctor` report marks
+the required sandbox profiles enforceable. macOS and Windows are outside the active production,
+packaging, and CI contract. Keep the daemon API on its authenticated loopback listener; Mealy is
+not a multi-tenant or public-internet service.
 
 Model, web, channel, skill, MCP, browser, attachment, and memory content is untrusted even after
 authentication. Only explicitly configured capabilities and exact approval/effect boundaries grant

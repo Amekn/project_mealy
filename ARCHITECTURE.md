@@ -1,6 +1,6 @@
 # Mealy Architecture
 
-- Version: 0.1.0
+- Version: 0.1.1
 - Status: implemented release-one baseline; competitive capability work in progress
 - Requirements: [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - Research: [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md)
@@ -514,12 +514,13 @@ The worker emits structured start, progress, and terminal frames. Loss of the wo
 
 ### 10.5 Platform sandbox adapters
 
-- Linux: prefer namespaces/bubblewrap or an equivalent backend with explicit filesystem and network policy.
-- macOS: use Seatbelt or a container/VM adapter with documented limits.
+Linux uses namespaces and Bubblewrap with explicit filesystem and network policy. The supported
+distribution boundary and required kernel/user-space behavior are defined in
+[`docs/LINUX_SUPPORT.md`](docs/LINUX_SUPPORT.md).
 
-Windows is outside the release-one support and CI contract. A future Windows port requires a
-separately reviewed restricted-token/AppContainer/job-object or VM/container adapter; no current
-release claim depends on that design.
+macOS and Windows are outside the active production and CI contract. Any future port requires a
+separately reviewed sandbox adapter and qualification design; no current release claim depends on
+one.
 
 The architecture exposes capability semantics, not one platform's flags. `doctor` reports which profiles the current host can enforce.
 

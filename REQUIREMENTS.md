@@ -1,6 +1,6 @@
 # Mealy Software Requirements
 
-- Version: 0.1.0
+- Version: 0.1.1
 - Status: release-one requirements implemented; pre-1.0 production evidence in progress
 - Normative terms: **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are used as defined by RFC 2119.
 
@@ -250,7 +250,7 @@ These rules apply to every implementation phase.
 
 ### 7.3 Portability and operability
 
-- **NFR-PORT-001:** The control plane MUST support Linux and macOS. Enforcement profiles MAY differ, but downgrades MUST be explicit and fail closed when required guarantees are unavailable. Windows is outside the release-one support and CI contract.
+- **NFR-PORT-001:** The production control plane MUST support Linux on Ubuntu, Debian, Fedora, Arch, and compatible derivatives under the checked compatibility contract. Unsupported operating systems and unenforceable profiles MUST fail closed. macOS and Windows are outside the active production support and CI contract.
 - **NFR-PORT-002:** Core operation MUST not require Docker, Kubernetes, a cloud account, or an external workflow service.
 - **NFR-OPS-001:** A clean installation MUST provide `doctor`, `status`, backup, restore verification, and safe-mode startup commands.
 - **NFR-OPS-002:** The daemon MUST support graceful drain with a bounded deadline and forced termination reporting.

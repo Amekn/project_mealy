@@ -15,12 +15,16 @@ if [[ -n ${RUSTFLAGS-} || -n ${CARGO_ENCODED_RUSTFLAGS-} ]]; then
   echo "release build requires an unmodified Rust flag environment" >&2
   exit 64
 fi
-for command in cargo grep mkdir; do
+for command in cargo grep mkdir uname; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "release build requires $command" >&2
     exit 69
   fi
 done
+if [[ $(uname -s) != Linux ]]; then
+  echo "production release binaries are built and supported only on Linux" >&2
+  exit 65
+fi
 
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 home_root=$(cd "${HOME:?HOME must identify the build account}" && pwd -P)
