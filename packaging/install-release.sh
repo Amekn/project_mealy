@@ -6,6 +6,7 @@ umask 077
 usage() {
   cat >&2 <<'USAGE'
 usage: install-mealy-release.sh [--version TAG|latest] [--check]
+       [--onboard [-- ONBOARD_ARGS...]|--no-onboard]
        [--repository OWNER/REPO] [--prefix DIR] [--home DIR]
 
 Downloads one stable, attested Mealy release for this Linux architecture,
@@ -13,6 +14,9 @@ verifies its release-workflow provenance and complete checksum inventory, and
 installs it through the release's own owner-local manager. No Rust toolchain or
 root access or GitHub account is required. GitHub CLI performs offline-bundle
 verification; curl reads only the public release metadata and exact assets.
+An interactive fresh install continues into guided onboarding by default.
+--onboard forces that handoff; --no-onboard always prints the exact next command.
+Arguments after -- are passed only to the verified installed onboarding command.
 --check performs the same download, provenance, checksum, and target-manifest
 verification but emits bounded JSON without installing anything.
 USAGE
@@ -20,6 +24,8 @@ USAGE
 
 version=latest
 check=false
+onboard_mode=auto
+onboard_arguments=()
 repository=Amekn/mealy
 prefix=${HOME:+$HOME/.local}
 home=${MEALY_HOME:-${HOME:+$HOME/.mealy}}
@@ -32,6 +38,31 @@ while [[ $# -gt 0 ]]; do
     --check)
       check=true
       shift
+      ;;
+    --onboard)
+      if [[ $onboard_mode != auto ]]; then
+        usage
+        exit 64
+      fi
+      onboard_mode=always
+      shift
+      ;;
+    --no-onboard)
+      if [[ $onboard_mode != auto ]]; then
+        usage
+        exit 64
+      fi
+      onboard_mode=never
+      shift
+      ;;
+    --)
+      if [[ $onboard_mode != always ]]; then
+        usage
+        exit 64
+      fi
+      shift
+      onboard_arguments=("$@")
+      break
       ;;
     --repository)
       repository=${2-}
@@ -57,6 +88,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $(uname -s) != Linux || -z $prefix || -z $home \
+  || ( $check == true && $onboard_mode == always ) \
   || ! $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ \
   || ( $version != latest \
     && ! $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ) ]]; then
@@ -275,5 +307,27 @@ if [[ -z $installed_prefix || -z $installed_home ]]; then
   echo "installed Mealy handoff paths could not be canonicalized" >&2
   exit 65
 fi
-printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
-printf '  %q --home %q onboard\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+configured_home=false
+if [[ -e $installed_home/config.json || -L $installed_home/config.json ]]; then
+  configured_home=true
+fi
+run_onboarding=false
+if [[ $onboard_mode == always \
+  || ( $onboard_mode == auto && $configured_home == false \
+    && -t 0 && -t 1 && -t 2 ) ]]; then
+  run_onboarding=true
+fi
+if [[ $run_onboarding == true ]]; then
+  printf 'Installed Mealy %s for %s.\nStarting guided onboarding.\n' \
+    "$release_version" "$target"
+  "$installed_prefix/bin/mealyctl" --home "$installed_home" onboard \
+    "${onboard_arguments[@]}"
+elif [[ $configured_home == true ]]; then
+  printf 'Installed Mealy %s for %s; retained the existing home.\nNext:\n' \
+    "$release_version" "$target"
+  printf '  %q --home %q doctor\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+  printf '  %q --home %q chat\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+else
+  printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
+  printf '  %q --home %q onboard\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+fi

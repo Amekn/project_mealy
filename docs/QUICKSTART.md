@@ -18,7 +18,8 @@ A published stable release includes an attested rootless bootstrap. It selects t
 or ARM64 archive, resolves an exact stable tag, verifies the bootstrap, manager, target checksum
 manifest, and archive against that tag's release-workflow attestations, verifies the complete
 target checksum inventory, and installs beneath `$HOME/.local`. It never uses `sudo`,
-starts a service, creates a Mealy home, or requires Rust:
+requires Rust, or mutates a Mealy home before the verified installation completes. An interactive
+fresh install then continues into guided onboarding; `--no-onboard` keeps installation passive:
 
 ```sh
 tmp=$(mktemp -d)
@@ -34,15 +35,20 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
 Use `--version vX.Y.Z` to select a particular stable release, or `--prefix`/`--home` for custom
 paths. Public release metadata/assets are fetched with bounded HTTPS requests, so no GitHub login
 or token is required. The bootstrap rejects drafts, prereleases, unsupported architectures, incomplete downloads,
 self-hosted provenance, a different signer workflow/ref, and any checksum or inventory mismatch.
-It prints the exact `mealyctl onboard` command after success. Continue with the
-prerequisites and first-run checks below before enabling governed tools.
+`--onboard` forces the guided handoff, while `--no-onboard` prints the exact
+`mealyctl onboard` command for automation. A pre-existing home is retained and receives
+`doctor`/`chat` handoffs instead of being silently reconfigured. Continue with the prerequisites
+and first-run checks below before enabling governed tools. Automation may pass existing non-secret
+onboarding flags after a separator, for example
+`install-mealy-release.sh --onboard -- --route openrouter-free`; credentials still come from the
+named environment variable and never from an installer argument.
 
 ## Native Linux packages
 

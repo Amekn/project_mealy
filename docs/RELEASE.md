@@ -205,7 +205,7 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
 The canonical signer identity for new releases is `Amekn/mealy`. Historical v0.1.0 bundles were
@@ -217,8 +217,14 @@ matching native archive, checksum manifest, manager, a second copy of itself, an
 plus common-installer Sigstore bundles. It verifies all four executable/checksum inputs offline
 against the exact tag ref and release workflow before checking the complete target inventory. No
 GitHub login or token is required. It delegates the actual atomic
-install to that verified release manager and prints setup/service commands. Pass
+install to that verified release manager and composes the first-run handoff described below. Pass
 `--version vX.Y.Z`, `--prefix DIR`, or `--home DIR` when the defaults are not appropriate.
+An interactive fresh install continues into the verified client’s guided onboarding by default;
+`--onboard` forces that handoff and `--no-onboard` keeps automation passive and prints the exact
+next command. A pre-existing home is never silently reconfigured: the bootstrap retains it and
+prints `doctor` and `chat` handoffs. With `--onboard`, a `--` separator may carry non-secret
+onboarding arguments directly to the verified installed client; credential values remain
+environment-only.
 
 For manual package selection or independent inspection, download one exact release into a new
 empty directory:

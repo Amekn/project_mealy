@@ -24,11 +24,13 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
-The command prints the exact `onboard` handoff. No release is implied when the
-repository has not published and attested these assets.
+After the attested install succeeds, this continues directly into the same guided onboarding used
+by packaged installs. An ordinary interactive fresh install also makes that transition by default;
+use `--no-onboard` for automation or to install without creating a Mealy home. No release is implied
+when the repository has not published and attested these assets.
 
 Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and current x86-64 Arch.
 They include `.deb`, `.rpm`, and `.pkg.tar.zst` packages in addition to the generic x86-64/ARM64

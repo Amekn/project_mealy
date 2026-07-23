@@ -110,6 +110,11 @@ cover strict free-OpenRouter catalog/probe behavior, both subscription clients, 
 containment, clean-home configuration, and idempotent refusal. This is next-release source
 evidence, not a retroactive property of the v0.1.1 candidate under soak; installed-package and
 supported-distribution onboarding-to-chat acceptance must pass before the newer tag can claim it.
+The verified release bootstrap now composes installation into that transaction for an interactive
+fresh home, with explicit `--onboard` and `--no-onboard` controls. Pseudo-terminal package
+acceptance proves automatic handoff through the exact installed client path; non-interactive use
+remains passive, and an existing home is retained with `doctor`/`chat` handoffs rather than being
+silently reconfigured.
 
 The same post-v0.1.1 source now adds an install-provenance layer and plan-first `install-status`,
 `update`, `update-status`, `repair`, `rollback`, `uninstall`, and shell-completion surfaces. The update check uses
@@ -129,9 +134,9 @@ restores the previous release, retires itself, and must recover health, `doctor`
 backup, and a durable task. Protected CI and native tag jobs make this qualification mandatory.
 Signed repository construction, package-manager-native trust, tamper rejection, Pages deployment,
 GitHub manifest attestation, and tag-qualified public repository acceptance are now implemented in
-the stacked source. The exact release still requires one owner-controlled signing identity, Pages
-activation, and a fully green tag workflow; source tests do not retroactively create a public
-repository.
+the stacked source. GitHub Pages and protected deployment environments are activated; the exact
+release still requires one owner-controlled signing identity and a fully green qualifying tag
+workflow. Source tests do not retroactively create a public repository.
 
 The release-quality row's clean soak remains valid historical schema-16 evidence for exact
 version-0.1.0 revision `9b3653f` and daemon SHA-256

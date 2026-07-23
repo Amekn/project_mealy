@@ -358,6 +358,14 @@ The packaging fixture also modifies an installed threat model and proves slot ve
 an upgrade before either binary changes; `SECURITY.md` and the threat model are mandatory exact
 payload inventory rather than unverified side documentation. A checksum-mismatched installer is
 rejected before the installed-package smoke creates a prefix or home.
+The public bootstrap fixture additionally proves the final user-journey boundary: a pseudo-terminal
+fresh install automatically invokes the exact verified installed `mealyctl --home ... onboard`;
+`--onboard` forces the same composition for an explicit caller and preserves separated
+non-secret onboarding arguments exactly, while non-interactive and
+`--no-onboard` installs print one exact handoff, `--check --onboard` is rejected before mutation,
+and an existing home receives only `doctor` and `chat` handoffs. The independently installed
+systemd smoke below exercises the real onboarding/service/health/doctor/first-turn transaction, so
+the bootstrap test does not substitute a fake client for that behavior.
 The release builder also requires its explicit inventory to equal the complete regular-file-only
 `docs/` tree. Archive and Debian install smokes verify that documentation indexes, requirements
 coverage, testing guidance, decisions, research, benchmarks, and negative evidence survive the

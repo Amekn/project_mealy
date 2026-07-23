@@ -16,7 +16,8 @@ the signed APT, DNF, or Pacman setup in [LINUX_REPOSITORIES.md](LINUX_REPOSITORI
 attestation-verifying rootless release bootstrap in the
 [fast install instructions](QUICKSTART.md#fast-verified-linux-install) remains available when the
 repository has not yet been deployed or root access is undesirable. Neither route requires a Rust
-toolchain.
+toolchain. The verified bootstrap continues directly into this guide's onboarding flow on an
+interactive fresh install; use its `--no-onboard` option when installation must remain passive.
 
 Make sure `$HOME/.local/bin` is on `PATH`, then check the installed client:
 
@@ -41,7 +42,11 @@ mealyctl --version
 Subscription routes use the existing official client session. Mealy does not extract OAuth tokens,
 inherit API-key variables into that client, or treat a ChatGPT/Claude subscription as an API key.
 
-## 3. Run onboarding
+## 3. Run or continue onboarding
+
+If the verified bootstrap already opened onboarding, choose the matching route below at its
+prompt. Native-package installs and passive bootstrap installs start the same guided transaction
+with one of these commands.
 
 For the recommended no-paid-credit route:
 

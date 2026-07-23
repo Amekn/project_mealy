@@ -8,22 +8,23 @@ Scope: installation, first useful run, provider/authentication setup, daily user
 experience, updates and recovery, documentation maintenance, CI, and release
 publication
 
-Implementation note: post-v0.1.1 source now contains the P1 slice recommended
-below: `mealyctl onboard`, a short `GETTING_STARTED.md`, strict free-OpenRouter
-selection, integrated custom/local/subscription/API routes,
-service start/health/doctor composition, and installed-package process tests.
-The next P2 slice adds complete install-provenance/integrity status,
-attested no-mutation update checks, same-schema archive apply, bounded stable
-manager repair, archive rollback/uninstall delegation, native
-APT/DNF/Pacman handoffs, and Bash/Zsh/Fish completion.
-The following recovery slice implements the researched OpenClaw/Hermes pattern
-as a separately supervised, durably phased update helper with pre-update
-backup, drain/stop/start, health/doctor/version/integrity qualification, and
-automatic same-schema slot rollback.
-The next delivery slice builds package-manager-native signed APT, DNF, and
-Pacman repositories from the exact qualified artifacts, attests their complete
-manifest, deploys the prebuilt site through protected Pages, and requires clean
-public HTTPS installation on native x86-64 and ARM64 runners.
+Implementation note: post-v0.1.1 source now contains the P1 and P2 slices
+recommended below: `mealyctl onboard`, a short `GETTING_STARTED.md`, strict
+free-OpenRouter selection, integrated custom/local/subscription/API routes,
+service start/health/doctor composition, installed-package process tests,
+complete install-provenance/integrity status, attested no-mutation update
+checks, same-schema archive apply, bounded stable-manager repair, archive
+rollback/uninstall delegation, native APT/DNF/Pacman handoffs, and
+Bash/Zsh/Fish completion. The researched OpenClaw/Hermes recovery pattern is a
+separately supervised, durably phased update helper with pre-update backup,
+drain/stop/start, health/doctor/version/integrity qualification, and automatic
+same-schema slot rollback. Package-manager-native signed APT, DNF, and Pacman
+repositories are built from the exact qualified artifacts, attested as a
+complete manifest, deployed through protected Pages, and subject to clean
+public HTTPS installation on native x86-64 and ARM64 runners. The verified
+release bootstrap now also follows the observed installer pattern: a fresh
+interactive install enters the exact installed onboarding client automatically,
+with explicit force/passive controls and existing-home preservation.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:

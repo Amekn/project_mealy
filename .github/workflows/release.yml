@@ -995,7 +995,7 @@ jobs:
           GH_CONFIG_DIR="$temporary/gh-config" \
             env -u GH_TOKEN -u GITHUB_TOKEN downloaded/install-mealy-release.sh \
             --version "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" \
-            --prefix "$temporary/prefix" --home "$temporary/home"
+            --prefix "$temporary/prefix" --home "$temporary/home" --no-onboard
           test "$("$temporary/prefix/bin/mealyd" --version)" = "mealyd $version"
           test "$("$temporary/prefix/bin/mealyctl" --version)" = "mealyctl $version"
           mkdir -m 0700 "$temporary/home"
