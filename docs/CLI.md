@@ -165,8 +165,9 @@ being reported as a verified running onboarding result.
 
 `mealyctl --home "$HOME/.mealy" service remove` emits a no-mutation
 `mealy.service-removal.v1` plan for the loaded or default unit. `--approve` is accepted only when
-the exact generated definition still binds its recorded daemon and this home; it disables and
-stops the unit, proves the home lock is free, re-verifies the bytes, removes the definition, and
-reloads the user manager without deleting the home. An approved owner-local archive `uninstall`
-composes this exact cleanup before removing program files. Native package handoffs leave it as an
-explicit owner step.
+the exact generated definition still binds its recorded daemon and this home. For a custom linked
+unit, the plan records both the canonical definition and systemd's loader-visible link. Apply
+disables and stops the unit, proves the home lock is free, re-verifies both identities and the
+definition bytes, removes the loader link and definition, and reloads the user manager without
+deleting the home. An approved owner-local archive `uninstall` composes this exact cleanup before
+removing program files. Native package handoffs leave it as an explicit owner step.

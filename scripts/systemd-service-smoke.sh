@@ -417,10 +417,12 @@ removal_plan=$(
 jq -e \
   --arg home "$home" \
   --arg unit "$unit" \
+  --arg fragment "$default_unit" \
   --arg daemon "$mealyd" '
     .schemaVersion == "mealy.service-removal.v1"
     and .home == $home
     and .serviceDefinition == $unit
+    and .loadedFragment == $fragment
     and .daemonPath == $daemon
     and .installed == true
     and .definitionVerified == true
@@ -440,6 +442,7 @@ jq -e \
   --arg daemon "$mealyd" '
     .home == $home
     and .serviceDefinition == $unit
+    and .loadedFragment == null
     and .daemonPath == $daemon
     and .installed == false
     and .loaded == false
@@ -451,7 +454,7 @@ jq -e \
   ' <<<"$removal" >/dev/null
 linked=false
 service_pid=
-[[ ! -e $unit && -d $home ]]
+[[ ! -e $unit && ! -e $default_unit && ! -L $default_unit && -d $home ]]
 if systemctl_user cat mealy.service >/dev/null 2>&1; then
   echo "approved service removal left mealy.service discoverable" >&2
   exit 70

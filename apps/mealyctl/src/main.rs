@@ -2973,7 +2973,10 @@ fn remove_verified_owner_service_if_present(home: &Path) -> Result<(), CliError>
     if !default_present && loaded.is_none() {
         return Ok(());
     }
-    let plan = plan_service_removal(home, loaded.as_deref())?;
+    let plan = plan_service_removal(
+        home,
+        loaded.as_ref().map(|service| service.definition.as_path()),
+    )?;
     if !plan.action_required || !plan.apply_supported {
         return Err(CliError::InvalidService(
             "installed owner service could not be verified for safe uninstall".to_owned(),
@@ -8817,6 +8820,7 @@ struct ServiceRemovalPlan {
     platform: String,
     home: PathBuf,
     service_definition: PathBuf,
+    loaded_fragment: Option<PathBuf>,
     daemon_path: Option<PathBuf>,
     installed: bool,
     definition_verified: bool,
@@ -8826,6 +8830,15 @@ struct ServiceRemovalPlan {
     apply_supported: bool,
     preserves_home: bool,
     removed: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedOwnerService {
+    /// Path reported by systemd. For a linked unit this is the loader-visible symlink.
+    fragment: PathBuf,
+    /// Canonical regular unit definition to which the fragment resolves.
+    definition: PathBuf,
 }
 
 #[derive(Serialize)]
@@ -13379,11 +13392,12 @@ fn plan_service_removal(
 ) -> Result<ServiceRemovalPlan, CliError> {
     let home = absolute_service_path(home)?.canonicalize()?;
     validate_linux_service_home(&home)?;
-    let loaded_fragment = loaded_owner_service_fragment()?;
+    let loaded_service = loaded_owner_service_fragment()?;
     let destination = destination.map_or_else(
         || {
-            loaded_fragment
-                .clone()
+            loaded_service
+                .as_ref()
+                .map(|service| service.definition.clone())
                 .map_or_else(linux_default_service_destination, Ok)
         },
         absolute_service_path,
@@ -13410,24 +13424,27 @@ fn plan_service_removal(
         Err(error) => return Err(CliError::Io(error)),
     };
     let definition_verified = daemon_path.is_some();
-    let loaded_matches = loaded_fragment
+    let loaded_matches = loaded_service
         .as_ref()
-        .is_none_or(|fragment| fragment == &destination);
-    let action_required = installed || loaded_fragment.is_some();
+        .is_none_or(|service| service.definition == destination);
+    let action_required = installed || loaded_service.is_some();
     let apply_supported = !action_required
         || (installed
             && definition_verified
             && loaded_matches
-            && !(active && loaded_fragment.is_none()));
+            && !(active && loaded_service.is_none()));
     Ok(ServiceRemovalPlan {
         schema_version: "mealy.service-removal.v1",
         platform: "linux-systemd-user".to_owned(),
         home,
         service_definition: destination,
+        loaded_fragment: loaded_service
+            .as_ref()
+            .map(|service| service.fragment.clone()),
         daemon_path,
         installed,
         definition_verified,
-        loaded: loaded_fragment.is_some(),
+        loaded: loaded_service.is_some(),
         active,
         action_required,
         apply_supported,
@@ -13449,10 +13466,10 @@ fn plan_service_removal(
 #[cfg(target_os = "linux")]
 fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
     let loaded = loaded_owner_service_fragment()?;
-    if loaded
-        .as_ref()
-        .is_some_and(|path| path != &plan.service_definition)
-        || (loaded.is_none() && owner_service_active_or_absent()?)
+    if loaded.as_ref().is_some_and(|service| {
+        service.definition != plan.service_definition
+            || Some(&service.fragment) != plan.loaded_fragment.as_ref()
+    }) || (loaded.is_none() && owner_service_active_or_absent()?)
     {
         return Err(CliError::InvalidService(
             "loaded mealy.service does not match the reviewed definition".to_owned(),
@@ -13473,6 +13490,21 @@ fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
             "service definition changed after the reviewed removal plan".to_owned(),
         ));
     }
+    if current.loaded_fragment != plan.loaded_fragment {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment changed after the reviewed removal plan".to_owned(),
+        ));
+    }
+    if let Some(fragment) = current
+        .loaded_fragment
+        .as_ref()
+        .filter(|fragment| *fragment != &plan.service_definition)
+    {
+        fs::remove_file(fragment)?;
+        sync_service_directory(fragment.parent().ok_or_else(|| {
+            CliError::InvalidService("loaded service fragment has no parent directory".to_owned())
+        })?)?;
+    }
     fs::remove_file(&plan.service_definition)?;
     sync_service_directory(plan.service_definition.parent().ok_or_else(|| {
         CliError::InvalidService("service definition has no parent directory".to_owned())
@@ -13490,7 +13522,7 @@ fn apply_service_removal(_plan: &ServiceRemovalPlan) -> Result<(), CliError> {
 }
 
 #[cfg(target_os = "linux")]
-fn loaded_owner_service_fragment() -> Result<Option<PathBuf>, CliError> {
+fn loaded_owner_service_fragment() -> Result<Option<LoadedOwnerService>, CliError> {
     let output = run_systemctl_output(&[
         "--user",
         "show",
@@ -13509,7 +13541,34 @@ fn loaded_owner_service_fragment() -> Result<Option<PathBuf>, CliError> {
             "loaded mealy.service fragment path is invalid".to_owned(),
         ));
     }
-    absolute_service_path(Path::new(value)).map(Some)
+    resolve_loaded_owner_service_fragment(Path::new(value)).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_loaded_owner_service_fragment(path: &Path) -> Result<LoadedOwnerService, CliError> {
+    let fragment = absolute_service_path(path)?;
+    validate_linux_service_destination_name(&fragment)?;
+    let metadata = fs::symlink_metadata(&fragment)?;
+    if !metadata.file_type().is_symlink() && !metadata.is_file() {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment is not a regular file or symbolic link".to_owned(),
+        ));
+    }
+    let definition = fragment.canonicalize()?;
+    let definition_metadata = fs::symlink_metadata(&definition)?;
+    if definition_metadata.file_type().is_symlink()
+        || !definition_metadata.is_file()
+        || definition.canonicalize()? != definition
+    {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service does not resolve to one canonical regular definition".to_owned(),
+        ));
+    }
+    validate_linux_service_destination_name(&definition)?;
+    Ok(LoadedOwnerService {
+        fragment,
+        definition,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -14509,7 +14568,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::{
         decode_systemd_quoted_argument, generated_linux_service_daemon, linux_activation_command,
-        linux_service_body, service_definition, service_read_write_paths, systemd_quote,
+        linux_service_body, resolve_loaded_owner_service_fragment, service_definition,
+        service_read_write_paths, systemd_quote,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
@@ -16326,6 +16386,31 @@ mod tests {
                 command: ServiceCommand::Remove { approve: true, .. }
             }
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loaded_service_resolution_preserves_loader_link_and_canonical_definition() {
+        use std::os::unix::fs::symlink;
+
+        let root = service_test_tempdir("loaded-service-");
+        let definition_directory = root.path().join("definition");
+        let loader_directory = root.path().join("loader");
+        std::fs::create_dir_all(&definition_directory).expect("definition directory");
+        std::fs::create_dir_all(&loader_directory).expect("loader directory");
+        let definition = definition_directory.join("mealy.service");
+        let fragment = loader_directory.join("mealy.service");
+        std::fs::write(&definition, b"[Service]\nExecStart=/bin/false\n")
+            .expect("service definition");
+        symlink(&definition, &fragment).expect("loader link");
+
+        let resolved =
+            resolve_loaded_owner_service_fragment(&fragment).expect("resolved loaded service");
+        assert_eq!(resolved.fragment, fragment);
+        assert_eq!(resolved.definition, definition);
+
+        std::fs::remove_file(&definition).expect("remove definition");
+        assert!(resolve_loaded_owner_service_fragment(&fragment).is_err());
     }
 
     #[test]
