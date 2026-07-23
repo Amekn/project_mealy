@@ -38,6 +38,12 @@ public command cannot be added or removed without updating this reference.
 | `metrics` | Emit stable machine-readable operational gauges. |
 | `usage` | Emit exact settled terminal-run usage for a bounded trailing day range. |
 | `doctor` | Diagnose control-plane, permission, and sandbox conformance. |
+| `install-status` | Inspect install provenance, complete release integrity, rollback availability, and update ownership. |
+| `update` | Verify a stable release target and optionally apply a same-schema archive update. |
+| `repair` | Verify and optionally restore owner-local installation-management evidence. |
+| `rollback` | Verify and optionally exchange same-schema owner-local release slots. |
+| `uninstall` | Verify and optionally remove program files while preserving durable state. |
+| `completion` | Generate native Bash, Zsh, or Fish completion. |
 | `dashboard` | Serve a temporary least-authority loopback dashboard. |
 | `drain` | Close admission and begin bounded graceful daemon shutdown. |
 | `backup` | Create an immutable complete online backup. |
@@ -71,6 +77,51 @@ Commands that mutate stopped-home configuration require the daemon lock to be fr
 require exact explicit approval. Commands against a running daemon authenticate through the
 owner-only `connection.json`. Safe mode and drain intentionally reject ordinary mutations; consult
 the command's JSON error and retryability contract instead of bypassing those states.
+
+## Installation status and completion
+
+`mealyctl install-status` is offline and emits `mealy.install-status.v1`. A published installation
+is reported as healthy only after every checksum-declared file—including both binaries, the stable
+manager inputs, the release bootstrap, documentation, SBOM, and license notices—has been read as a
+bounded no-follow regular file and matched its release digest. It distinguishes owner-local archive
+slots from Debian, RPM, and Arch package ownership. Source builds and unknown layouts never acquire
+a mutating update backend.
+
+`mealyctl --home "$HOME/.mealy" update` performs a no-mutation check by default. The bundled,
+release-digest-bound bootstrap downloads the selected stable release, verifies its exact hosted
+GitHub Actions provenance from the tag, verifies the complete outer checksum inventory, and reads
+the target manifest from the attested archive. The resulting `mealy.update-plan.v1` identifies the
+current and target versions and state schemas.
+
+An owner-local archive update may be applied with `--approve` only when the target is strictly
+newer and uses the exact active state schema. Drain and stop `mealy.service` first; the stable
+manager independently refuses a busy home, re-verifies the download, swaps atomic release slots,
+and preserves the previous matching slot for rollback. A target with a different state schema is
+deliberately refused by this convenience path and must use the staged migration procedure in the
+[release guide](RELEASE.md). Debian, RPM, and Arch installations always retain native package
+ownership; the plan reports the exact `apt`, `dnf`, or `pacman` handoff and never writes `/usr`.
+
+`repair`, `rollback`, and `uninstall` also plan without mutation unless `--approve` is present.
+Repair can reconstruct a missing or modified stable archive manager only from the checksum-verified
+active metadata copy; it cannot repair around a changed binary or manifest. Rollback delegates only
+when both complete archive slots verify, and the stable manager independently refuses a backward
+state-schema transition. Uninstall removes managed program files only and always preserves the
+complete Mealy home. Drain and stop the owner service before rollback or uninstall. Native packages
+return the exact `apt`, `dnf`, or `pacman` repair/uninstall command so `/usr` remains under the
+distribution package database.
+
+Generate completion without starting the daemon or reading private state:
+
+```sh
+# Bash
+mealyctl completion bash >"$HOME/.local/share/bash-completion/completions/mealyctl"
+
+# Zsh
+mealyctl completion zsh >"$HOME/.local/share/zsh/site-functions/_mealyctl"
+
+# Fish
+mealyctl completion fish >"$HOME/.config/fish/completions/mealyctl.fish"
+```
 
 ## Onboarding routes
 

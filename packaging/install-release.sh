@@ -5,7 +5,7 @@ umask 077
 
 usage() {
   cat >&2 <<'USAGE'
-usage: install-mealy-release.sh [--version TAG|latest]
+usage: install-mealy-release.sh [--version TAG|latest] [--check]
        [--repository OWNER/REPO] [--prefix DIR] [--home DIR]
 
 Downloads one stable, attested Mealy release for this Linux architecture,
@@ -13,10 +13,13 @@ verifies its release-workflow provenance and complete checksum inventory, and
 installs it through the release's own owner-local manager. No Rust toolchain or
 root access or GitHub account is required. GitHub CLI performs offline-bundle
 verification; curl reads only the public release metadata and exact assets.
+--check performs the same download, provenance, checksum, and target-manifest
+verification but emits bounded JSON without installing anything.
 USAGE
 }
 
 version=latest
+check=false
 repository=Amekn/project_mealy
 prefix=${HOME:+$HOME/.local}
 home=${MEALY_HOME:-${HOME:+$HOME/.mealy}}
@@ -25,6 +28,10 @@ while [[ $# -gt 0 ]]; do
     --version)
       version=${2-}
       shift 2
+      ;;
+    --check)
+      check=true
+      shift
       ;;
     --repository)
       repository=${2-}
@@ -77,7 +84,7 @@ case $(uname -m) in
 esac
 
 for command in awk basename chmod curl find getconf gh grep jq mktemp readlink rm sha256sum sort stat \
-  uname wc; do
+  tar uname wc; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required release-bootstrap command is unavailable: $command" >&2
     exit 69
@@ -215,6 +222,42 @@ if [[ $(wc -l <"$verification_manifest") -ne 3 ]] \
   || ! (cd "$temporary" && sha256sum --check --strict "${verification_manifest##*/}" >/dev/null); then
   echo "downloaded release asset checksum verification failed" >&2
   exit 65
+fi
+
+manifest_member="mealy-v${release_version}-${target}/BUILD-MANIFEST.json"
+if [[ $(tar -tzf "$temporary/$archive" | grep -Fxc "$manifest_member") -ne 1 ]]; then
+  echo "attested release archive has no unique build manifest" >&2
+  exit 65
+fi
+tar -xOzf "$temporary/$archive" "$manifest_member" >"$temporary/BUILD-MANIFEST.json"
+if [[ $(stat -c '%s' "$temporary/BUILD-MANIFEST.json") -gt 65536 ]] \
+  || ! jq -e --arg version "$release_version" --arg target "$target" '
+      .schemaVersion == "mealy.release.v2"
+      and .version == $version
+      and .target == $target
+      and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.sourceDateEpoch | type == "number" and . >= 1 and floor == .)
+      and (.stateSchemaVersion | type == "number" and . >= 1 and . <= 9999 and floor == .)
+      and .sbom == "SBOM.cdx.json"
+      and .licenses == "THIRD-PARTY-LICENSES.html"
+    ' "$temporary/BUILD-MANIFEST.json" >/dev/null; then
+  echo "attested release build manifest is invalid" >&2
+  exit 65
+fi
+if [[ $check == true ]]; then
+  jq -cn --arg version "$release_version" --arg target "$target" \
+    --arg commit "$(jq -er '.commit' "$temporary/BUILD-MANIFEST.json")" \
+    --argjson state_schema_version \
+      "$(jq -er '.stateSchemaVersion' "$temporary/BUILD-MANIFEST.json")" \
+    '{
+      schemaVersion: "mealy.update-check.v1",
+      version: $version,
+      target: $target,
+      commit: $commit,
+      stateSchemaVersion: $state_schema_version,
+      verified: true
+    }'
+  exit 0
 fi
 
 chmod 0755 "$temporary/$manager"

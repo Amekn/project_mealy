@@ -1,9 +1,11 @@
 //! Local administrative and scripting client for Mealy.
 
 mod dashboard;
+mod lifecycle;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory as _, Parser, Subcommand, ValueEnum};
+use clap_complete::{Shell, generate};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::StreamExt;
 use mealy_application::{
@@ -61,6 +63,7 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{BufRead, Read, Write},
     net::IpAddr,
@@ -144,6 +147,56 @@ struct Arguments {
     /// Operation to execute.
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Parser)]
+#[command(version, about = "Mealy local client and administration CLI")]
+struct LifecycleArguments {
+    /// Private Mealy state directory containing `connection.json`.
+    #[arg(long, env = "MEALY_HOME", default_value = ".mealy")]
+    home: PathBuf,
+    /// Installed-program lifecycle operation to execute.
+    #[command(subcommand)]
+    command: LifecycleCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum LifecycleCommand {
+    /// Inspect install provenance, release integrity, rollback availability, and update ownership.
+    InstallStatus,
+    /// Verify a stable release target and optionally apply a schema-compatible archive update.
+    Update {
+        /// Stable release tag such as v1.2.3, or the latest stable release.
+        #[arg(long, default_value = "latest")]
+        version: String,
+        /// Apply the verified plan; omission performs a no-mutation check.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Verify and optionally restore bounded installation-management evidence.
+    Repair {
+        /// Apply the verified repair plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Verify and optionally exchange same-schema owner-local release slots.
+    Rollback {
+        /// Apply the verified rollback plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Verify and optionally remove program files while preserving the durable home.
+    Uninstall {
+        /// Apply the verified uninstall plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Generate a native completion script for one supported shell.
+    Completion {
+        /// Shell whose completion syntax should be generated.
+        #[arg(value_enum)]
+        shell: CompletionShellArgument,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -434,6 +487,26 @@ enum SetupProviderArgument {
     Openrouter,
     /// Credentialless literal-loopback Responses-compatible endpoint.
     Local,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CompletionShellArgument {
+    /// Bourne Again Shell.
+    Bash,
+    /// Z shell.
+    Zsh,
+    /// Friendly Interactive Shell.
+    Fish,
+}
+
+impl From<CompletionShellArgument> for Shell {
+    fn from(value: CompletionShellArgument) -> Self {
+        match value {
+            CompletionShellArgument::Bash => Self::Bash,
+            CompletionShellArgument::Zsh => Self::Zsh,
+            CompletionShellArgument::Fish => Self::Fish,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -2013,9 +2086,146 @@ fn main() -> ExitCode {
     }
 }
 
+fn combined_cli_command() -> clap::Command {
+    <LifecycleCommand as clap::Subcommand>::augment_subcommands(Arguments::command())
+}
+
+fn lifecycle_invocation(arguments: &[OsString]) -> bool {
+    let mut index = 1;
+    while let Some(argument) = arguments.get(index) {
+        if argument == "--home" {
+            index += 2;
+            continue;
+        }
+        if argument
+            .to_str()
+            .is_some_and(|value| value.starts_with("--home="))
+        {
+            index += 1;
+            continue;
+        }
+        if argument
+            .to_str()
+            .is_some_and(|value| value.starts_with('-'))
+        {
+            return false;
+        }
+        return argument.to_str().is_some_and(|value| {
+            matches!(
+                value,
+                "install-status" | "update" | "repair" | "rollback" | "uninstall" | "completion"
+            )
+        });
+    }
+    false
+}
+
+fn parse_operational_arguments(arguments: Vec<OsString>) -> Arguments {
+    let mut matches = combined_cli_command().get_matches_from(arguments);
+    <Arguments as clap::FromArgMatches>::from_arg_matches_mut(&mut matches)
+        .unwrap_or_else(|error| error.exit())
+}
+
+fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
+    match arguments.command {
+        LifecycleCommand::InstallStatus => print_json(lifecycle::inspect_current_installation()?),
+        LifecycleCommand::Update { version, approve } => {
+            let plan = lifecycle::plan_update(&arguments.home, &version)?;
+            if !approve || !plan.update_available {
+                return print_json(plan);
+            }
+            if !plan.state_schema_compatible {
+                return Err(CliError::UpdateSchemaChange {
+                    current: plan.installation.state_schema_version.unwrap_or_default(),
+                    target: plan.candidate.state_schema_version,
+                });
+            }
+            if !plan.apply_supported {
+                print_json(&plan)?;
+                return Err(CliError::NativePackageUpdate);
+            }
+            eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+            lifecycle::apply_archive_update(&arguments.home, &plan).map_err(CliError::from)
+        }
+        LifecycleCommand::Repair { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Repair,
+            approve,
+        ),
+        LifecycleCommand::Rollback { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Rollback,
+            approve,
+        ),
+        LifecycleCommand::Uninstall { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Uninstall,
+            approve,
+        ),
+        LifecycleCommand::Completion { shell } => {
+            let mut output = Vec::new();
+            generate(
+                Shell::from(shell),
+                &mut combined_cli_command(),
+                "mealyctl",
+                &mut output,
+            );
+            if output.len() > 4 * 1024 * 1024 {
+                return Err(CliError::Protocol(
+                    "generated completion script exceeds its output bound".to_owned(),
+                ));
+            }
+            std::io::stdout().write_all(&output)?;
+            Ok(())
+        }
+    }
+}
+
+fn run_maintenance(
+    home: &Path,
+    operation: lifecycle::MaintenanceOperation,
+    approve: bool,
+) -> Result<(), CliError> {
+    let plan = lifecycle::plan_maintenance(operation)?;
+    if !approve || !plan.action_required {
+        return print_json(plan);
+    }
+    if !plan.apply_supported {
+        print_json(&plan)?;
+        return Err(if plan.native_command.is_some() {
+            CliError::NativeMaintenance
+        } else {
+            CliError::MaintenanceUnavailable
+        });
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    match operation {
+        lifecycle::MaintenanceOperation::Repair => {
+            lifecycle::repair_archive_manager(&plan.installation)?;
+            print_json(lifecycle::inspect_current_installation()?)
+        }
+        lifecycle::MaintenanceOperation::Rollback => lifecycle::run_archive_manager(
+            &plan.installation,
+            home,
+            lifecycle::ArchiveManagerAction::Rollback,
+        )
+        .map_err(CliError::from),
+        lifecycle::MaintenanceOperation::Uninstall => lifecycle::run_archive_manager(
+            &plan.installation,
+            home,
+            lifecycle::ArchiveManagerAction::Uninstall,
+        )
+        .map_err(CliError::from),
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), CliError> {
-    let arguments = Arguments::parse();
+    let raw_arguments: Vec<OsString> = std::env::args_os().collect();
+    if lifecycle_invocation(&raw_arguments) {
+        return run_lifecycle(LifecycleArguments::parse_from(raw_arguments));
+    }
+    let arguments = parse_operational_arguments(raw_arguments);
     if let Command::Onboard(options) = &arguments.command {
         return run_onboard(&arguments.home, options).await;
     }
@@ -13008,6 +13218,32 @@ enum CliError {
     /// JSON encoding or decoding failed.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// Install provenance or lifecycle inspection failed.
+    #[error(transparent)]
+    Lifecycle(#[from] lifecycle::LifecycleError),
+    /// A one-command update would cross the durable-state schema and needs migration recovery.
+    #[error(
+        "automatic update refused the state-schema change from {current} to {target}; use the documented staged migration release procedure"
+    )]
+    UpdateSchemaChange {
+        /// Active state schema.
+        current: u64,
+        /// Candidate state schema.
+        target: u64,
+    },
+    /// Native package ownership requires the displayed package-manager command.
+    #[error(
+        "this installation is package-manager-owned; run the nativeUpdateCommand from the verified plan"
+    )]
+    NativePackageUpdate,
+    /// Native package ownership requires the displayed package-manager handoff.
+    #[error(
+        "this installation is package-manager-owned; run the nativeCommand from the verified plan"
+    )]
+    NativeMaintenance,
+    /// Current evidence cannot authorize the requested installation mutation.
+    #[error("the requested installation maintenance action is unavailable from verified evidence")]
+    MaintenanceUnavailable,
     /// HTTP client failed before a structured response.
     #[error(transparent)]
     Http(#[from] reqwest::Error),
@@ -13198,13 +13434,14 @@ mod tests {
     use super::{
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
-        EffectCommand, ExtensionCommand, MAXIMUM_DAEMON_RESPONSE_BYTES,
-        MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand, ResumableChatTask,
-        SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, SetupProviderArgument, SkillCommand,
-        TelegramPairChat, TelegramPairMessage, TelegramPairUpdate, TelegramPairUser,
-        configure_workspace_grant, decode, generate_discord_pair_challenge,
-        generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
-        load_connection, normalize_openrouter_display_name, observe_discord_pair_messages,
+        EffectCommand, ExtensionCommand, LifecycleArguments, LifecycleCommand,
+        MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
+        ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand,
+        SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
+        TelegramPairUpdate, TelegramPairUser, configure_workspace_grant, decode,
+        generate_discord_pair_challenge, generate_telegram_pair_challenge, initialize_setup_home,
+        inspect_mcp_executable, lifecycle_invocation, load_connection,
+        normalize_openrouter_display_name, observe_discord_pair_messages,
         observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
         openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
         resolve_setup, setup_provider_config, telegram_pair_api_url,
@@ -13227,7 +13464,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     #[cfg(target_os = "linux")]
     use std::path::Path;
-    use std::{collections::BTreeMap, io::Cursor};
+    use std::{collections::BTreeMap, ffi::OsString, io::Cursor, path::PathBuf};
 
     fn connection(base_url: &str) -> LocalConnectionInfo {
         LocalConnectionInfo {
@@ -13613,6 +13850,34 @@ mod tests {
         let bounded = Arguments::try_parse_from(["mealyctl", "usage", "--days", "7"])
             .expect("bounded usage history command");
         assert!(matches!(bounded.command, Command::Usage { days: 7 }));
+    }
+
+    #[test]
+    fn lifecycle_parser_is_selected_without_growing_the_operational_command_graph() {
+        let direct = vec![OsString::from("mealyctl"), OsString::from("install-status")];
+        let home_prefixed = vec![
+            OsString::from("mealyctl"),
+            OsString::from("--home"),
+            OsString::from("/srv/mealy"),
+            OsString::from("update"),
+            OsString::from("--version"),
+            OsString::from("v1.2.3"),
+        ];
+        let operational = vec![OsString::from("mealyctl"), OsString::from("status")];
+        assert!(lifecycle_invocation(&direct));
+        assert!(lifecycle_invocation(&home_prefixed));
+        assert!(!lifecycle_invocation(&operational));
+
+        let parsed = LifecycleArguments::try_parse_from(home_prefixed)
+            .expect("separate lifecycle command graph");
+        assert_eq!(parsed.home, PathBuf::from("/srv/mealy"));
+        assert!(matches!(
+            parsed.command,
+            LifecycleCommand::Update {
+                version,
+                approve: false
+            } if version == "v1.2.3"
+        ));
     }
 
     #[test]

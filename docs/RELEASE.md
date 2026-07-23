@@ -380,20 +380,34 @@ and release workflow. Keep the active home on a persistent local filesystem outs
 
 ## Upgrade an existing installation
 
-Never replace a running daemon. First inspect pending approvals and unknown effects, take a
-verified backup, then drain:
+Never replace a running daemon. First inspect the installation, pending approvals, and unknown
+effects, take a verified backup, and obtain a no-mutation, fully attested update plan:
 
 ```sh
+mealyctl install-status
+mealyctl --home "$HOME/.mealy" update
 mealyctl --home "$HOME/.mealy" status
 mealyctl --home "$HOME/.mealy" backup "pre-upgrade-$VERSION"
 mealyctl --home "$HOME/.mealy" restore-verify "pre-upgrade-$VERSION"
 mealyctl --home "$HOME/.mealy" drain
+systemctl --user stop mealy.service
 ```
 
-Download, verify, and install the new release as above. For a native system-package installation,
-the distribution package manager replaces the root-owned program files but never restarts the
-owner service; for an archive installation, the stable manager replaces its verified slots.
-Reinstall the user service definition so
+For an owner-local archive whose plan says `updateAvailable`, `stateSchemaCompatible`, and
+`applySupported` are all true, apply the exact pinned target:
+
+```sh
+mealyctl --home "$HOME/.mealy" update --approve
+```
+
+The client pins `latest` to the exact verified candidate before the second download; the bootstrap
+and stable manager independently verify hosted-workflow provenance, the outer inventory, the
+archive, and complete active slots. This convenience update refuses state-schema changes. Use the
+manual verified release and migration path below when `stateSchemaCompatible` is false.
+
+For a native system-package installation, run the plan's exact `nativeUpdateCommand`. The
+distribution package manager replaces the root-owned program files but never restarts the owner
+service. For either ownership model, reinstall the user service definition so
 its reviewed canonical executable path and rollback copy are current, then start and validate:
 
 ```sh
@@ -421,8 +435,8 @@ For a binary regression where both releases support the same state schema, drain
 swap the complete active/previous slots through the installed manager:
 
 ```sh
-"$HOME/.local/share/mealy-manager.sh" rollback \
-  --prefix "$HOME/.local" --home "$HOME/.mealy"
+mealyctl --home "$HOME/.mealy" rollback
+mealyctl --home "$HOME/.mealy" rollback --approve
 ```
 
 The operation verifies both slots, holds the daemon and installer locks, swaps both binaries and
@@ -473,11 +487,11 @@ delete or edit the transaction directory by hand.
 
 ## Uninstall program files without deleting state
 
-Drain Mealy and disable/remove its user service first. Then run the installed manager:
+Drain Mealy and disable/remove its user service first. Inspect the plan, then explicitly apply it:
 
 ```sh
-"$HOME/.local/share/mealy-manager.sh" uninstall \
-  --prefix "$HOME/.local" --home "$HOME/.mealy"
+mealyctl --home "$HOME/.mealy" uninstall
+mealyctl --home "$HOME/.mealy" uninstall --approve
 ```
 
 Uninstall verifies the managed active and previous slots plus the stable manager, refuses a live
@@ -486,10 +500,15 @@ package-owned metadata/documents. It never deletes `$HOME/.mealy`, provider/Tele
 SQLite, artifacts, backups, or exports. Retain and verify a complete backup before any separate
 deliberate state deletion.
 
-For a Debian installation, use `sudo apt remove mealy` instead. The package owns only `/usr`
-program/metadata paths and has no maintainer scripts, so removal cannot delete `$HOME/.mealy`; the
-native package smoke proves this. The user-created systemd unit is not package-owned, so disable and
-remove it before uninstalling.
+For Debian, RPM, and Arch installations, the plan returns the exact native removal command instead
+of mutating `/usr`. Each package owns only root program/metadata paths and has no maintainer
+scripts, so removal cannot delete `$HOME/.mealy`; the native package smokes prove this. The
+user-created systemd unit is not package-owned, so disable and remove it before uninstalling.
+
+If `install-status` reports that only the owner-local stable manager is missing or modified,
+`mealyctl repair` previews the bounded action and `mealyctl repair --approve` reconstructs it from
+the complete checksum-verified active metadata copy. Any binary, manifest, bootstrap, SBOM,
+license, or documentation mismatch remains a hard failure requiring a verified reinstall.
 
 ## Maintainer release checklist
 

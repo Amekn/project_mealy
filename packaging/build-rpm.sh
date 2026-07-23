@@ -111,6 +111,7 @@ chmod 0755 \
   %{buildroot}/usr/lib/mealy/release/bin/mealyd \
   %{buildroot}/usr/lib/mealy/release/bin/mealyctl \
   %{buildroot}/usr/lib/mealy/release/install.sh \
+  %{buildroot}/usr/lib/mealy/release/install-release.sh \
   %{buildroot}/usr/lib/mealy/release/fetch-browser-runtime.sh
 install -d -m 0755 \
   %{buildroot}/usr/bin \

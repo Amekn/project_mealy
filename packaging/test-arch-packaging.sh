@@ -98,6 +98,7 @@ cmp "$temporary/extracted/usr/bin/mealyctl" "$release_root/bin/mealyctl"
 [[ $(readlink "$temporary/extracted/usr/bin/mealyd") == ../lib/mealy/release/bin/mealyd ]]
 [[ $(readlink "$temporary/extracted/usr/bin/mealyctl") == ../lib/mealy/release/bin/mealyctl ]]
 [[ $(stat -Lc '%a' "$temporary/extracted/usr/bin/mealyd") == 755 ]]
+[[ $(stat -c '%a' "$release_root/install-release.sh") == 755 ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/QUICKSTART.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/GETTING_STARTED.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]

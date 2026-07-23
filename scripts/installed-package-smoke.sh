@@ -86,6 +86,35 @@ schema_version=$(jq -er '.stateSchemaVersion' "$manifest")
 [[ $("$mealyd" --version) == "mealyd $version" ]]
 [[ $("$mealyctl" --version) == "mealyctl $version" ]]
 [[ $("$mealyd" --print-supported-schema-version) == "$schema_version" ]]
+install_status=$("$mealyctl" install-status)
+jq -e --arg version "$version" --argjson schema "$schema_version" '
+  .schemaVersion == "mealy.install-status.v1"
+  and .installationKind == "managed-archive"
+  and .integrity == "verified"
+  and .currentVersion == $version
+  and .stateSchemaVersion == $schema
+  and .updateMode == "attested-archive"
+  and .rollbackAvailable == false
+  and .issues == []
+' <<<"$install_status" >/dev/null
+"$mealyctl" completion bash >"$temporary/mealyctl.bash"
+"$mealyctl" completion zsh >"$temporary/_mealyctl"
+"$mealyctl" completion fish >"$temporary/mealyctl.fish"
+[[ -s $temporary/mealyctl.bash && -s $temporary/_mealyctl && -s $temporary/mealyctl.fish ]]
+
+printf 'modified manager\n' >"$prefix/share/mealy-manager.sh"
+repair_plan=$("$mealyctl" repair)
+jq -e '
+  .schemaVersion == "mealy.maintenance-plan.v1"
+  and .operation == "repair"
+  and .actionRequired == true
+  and .applySupported == true
+  and .preservesHome == true
+  and .installation.integrity == "failed"
+' <<<"$repair_plan" >/dev/null
+"$mealyctl" repair --approve >"$temporary/repaired-status.json"
+jq -e '.integrity == "verified" and .issues == []' \
+  "$temporary/repaired-status.json" >/dev/null
 
 mkdir -p "$home"
 chmod 0700 "$home"
@@ -258,7 +287,7 @@ fi
 wait "$daemon_pid"
 daemon_pid=
 
-"$prefix/share/mealy-manager.sh" uninstall --prefix "$prefix" --home "$home" >/dev/null
+"$mealyctl" --home "$home" uninstall --approve >/dev/null
 [[ ! -e $prefix/bin/mealyd && ! -e $prefix/bin/mealyctl ]]
 [[ -f $home/mealy.sqlite3 ]]
 

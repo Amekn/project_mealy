@@ -8,12 +8,22 @@ Scope: installation, first useful run, provider/authentication setup, daily user
 experience, updates and recovery, documentation maintenance, CI, and release
 publication
 
-Implementation note: the post-v0.1.1 branch now contains the first P1 slice
-recommended below: `mealyctl onboard`, a short `GETTING_STARTED.md`, strict
-free-OpenRouter selection, integrated custom/local/subscription/API routes,
-service start/health/doctor composition, and process-level route tests. It
-remains next-release source until installed-package and supported-distribution
-acceptance qualify it.
+Implementation note: post-v0.1.1 source now contains the P1 slice recommended
+below: `mealyctl onboard`, a short `GETTING_STARTED.md`, strict free-OpenRouter
+selection, integrated custom/local/subscription/API routes,
+service start/health/doctor composition, and installed-package process tests.
+The next P2 slice adds complete install-provenance/integrity status,
+attested no-mutation update checks, same-schema archive apply, bounded stable
+manager repair, archive rollback/uninstall delegation, native
+APT/DNF/Pacman handoffs, and Bash/Zsh/Fish completion.
+
+This is not a retroactive change to the matrix observed before implementation.
+It also does not yet equal the best competitor updater: automated pre-update
+backup, drain/stop/restart, post-update health verification, rollback on failed
+health, service-definition removal, signed distribution repositories, and a
+published qualifying tag remain open. All newer work remains next-release
+source until installed-package and supported-distribution acceptance qualify
+it.
 
 ## Executive result
 

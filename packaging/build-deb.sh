@@ -169,6 +169,7 @@ expected_files=(
   bin/mealyd
   bin/mealyctl
   install.sh
+  install-release.sh
   fetch-browser-runtime.sh
   BUILD-MANIFEST.json
   SBOM.cdx.json
@@ -187,7 +188,8 @@ expected_payload=$(printf '%s\n' "${expected_files[@]}" | sort)
 if [[ $actual_inventory != "$expected_inventory" || $payload_inventory != "$expected_payload" ]] \
   || ! (cd "$package" && sha256sum --check --strict PAYLOAD-SHA256SUMS >/dev/null) \
   || [[ ! -x $package/bin/mealyd || ! -x $package/bin/mealyctl \
-    || ! -x $package/install.sh || ! -x $package/fetch-browser-runtime.sh ]]; then
+    || ! -x $package/install.sh || ! -x $package/install-release.sh \
+    || ! -x $package/fetch-browser-runtime.sh ]]; then
   echo "release payload is incomplete or failed integrity verification" >&2
   exit 65
 fi
@@ -244,7 +246,8 @@ install -d -m 0755 "$release_root" "$data_root/usr/bin" "$documentation" "$manua
 cp -a "$package/." "$release_root/"
 find "$release_root" -type f -exec chmod 0644 {} +
 chmod 0755 "$release_root/bin/mealyd" "$release_root/bin/mealyctl" \
-  "$release_root/install.sh" "$release_root/fetch-browser-runtime.sh"
+  "$release_root/install.sh" "$release_root/install-release.sh" \
+  "$release_root/fetch-browser-runtime.sh"
 ln -s ../lib/mealy/release/bin/mealyd "$data_root/usr/bin/mealyd"
 ln -s ../lib/mealy/release/bin/mealyctl "$data_root/usr/bin/mealyctl"
 printf '%s\n' \

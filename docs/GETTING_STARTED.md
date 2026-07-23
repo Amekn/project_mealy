@@ -104,6 +104,7 @@ manager and lingering policy provide that behavior.
 Recheck the installation at any time:
 
 ```sh
+mealyctl install-status
 mealyctl --home "$HOME/.mealy" doctor
 mealyctl --home "$HOME/.mealy" status
 ```
@@ -112,6 +113,24 @@ Stop before changing provider or other stopped-home configuration:
 
 ```sh
 mealyctl --home "$HOME/.mealy" drain
+```
+
+Check for an attested stable update without changing anything:
+
+```sh
+mealyctl --home "$HOME/.mealy" update
+```
+
+The plan identifies an owner-local archive or the native Debian, RPM, or Arch package manager. A
+same-schema archive update requires a stopped service and explicit `--approve`; schema changes use
+the staged migration procedure, and native packages use the exact command in `nativeUpdateCommand`.
+`repair`, `rollback`, and `uninstall` follow the same plan-first/approve-second pattern and never
+delete the Mealy home.
+
+Optional shell completion is generated locally:
+
+```sh
+mealyctl completion bash >"$HOME/.local/share/bash-completion/completions/mealyctl"
 ```
 
 Continue with the comprehensive [quickstart](QUICKSTART.md) for workspace tools, web/browser,

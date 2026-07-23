@@ -140,6 +140,26 @@ cmp /usr/bin/mealyctl "$release/bin/mealyctl"
 [[ $(/usr/bin/mealyd --version) == "mealyd $version" ]]
 [[ $(/usr/bin/mealyctl --version) == "mealyctl $version" ]]
 [[ $(/usr/bin/mealyd --print-supported-schema-version) == "$schema_version" ]]
+install_status=$(/usr/bin/mealyctl install-status)
+jq -e --arg version "$version" --argjson schema "$schema_version" '
+  .schemaVersion == "mealy.install-status.v1"
+  and .installationKind == "debian-package"
+  and .integrity == "verified"
+  and .currentVersion == $version
+  and .stateSchemaVersion == $schema
+  and .updateMode == "apt"
+  and .rollbackAvailable == false
+  and (.nativeUpdateCommand | contains("apt"))
+  and .issues == []
+' <<<"$install_status" >/dev/null
+uninstall_plan=$(/usr/bin/mealyctl uninstall)
+jq -e '
+  .operation == "uninstall"
+  and .actionRequired == true
+  and .applySupported == false
+  and .preservesHome == true
+  and (.nativeCommand | contains("apt remove mealy"))
+' <<<"$uninstall_plan" >/dev/null
 
 mkdir -p "$home"
 chmod 0700 "$home"

@@ -65,6 +65,13 @@ install/upgrade/rollback behavior. Treat a build as published only when its exac
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.
 
+Published installs expose the same plan-first maintenance UX across supported Linux families:
+`mealyctl install-status` verifies the complete release payload, `mealyctl update` verifies an
+attested target without mutation, and `repair`, `rollback`, or `uninstall` require explicit
+approval. Owner-local archives retain atomic release slots; Debian, RPM, and Arch operations return
+the exact native package-manager handoff and never write around the distribution database. Bash,
+Zsh, and Fish completion is generated with `mealyctl completion SHELL`.
+
 Local integrations can use the authenticated versioned HTTP/JSON and SSE surface documented in
 the [API reference](docs/API.md). Contributors and release operators should follow the
 [development-to-production runbook](docs/CI_CD.md), which defines the required protected checks,

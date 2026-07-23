@@ -125,7 +125,8 @@ if ! (cd "$package" && sha256sum --check --strict PAYLOAD-SHA256SUMS >/dev/null)
   exit 65
 fi
 if [[ ! -x $package/bin/mealyd || ! -x $package/bin/mealyctl \
-  || ! -x $package/install.sh || ! -x $package/fetch-browser-runtime.sh ]]; then
+  || ! -x $package/install.sh || ! -x $package/install-release.sh \
+  || ! -x $package/fetch-browser-runtime.sh ]]; then
   echo "release payload executables are absent or not executable" >&2
   exit 65
 fi

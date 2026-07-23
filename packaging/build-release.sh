@@ -175,6 +175,8 @@ mkdir -p "$staging/$package_name/bin" "$staging/$package_name/docs"
 install -m 0755 "$binary_dir/mealyd" "$staging/$package_name/bin/mealyd"
 install -m 0755 "$binary_dir/mealyctl" "$staging/$package_name/bin/mealyctl"
 install -m 0755 "$repository_root/packaging/install.sh" "$staging/$package_name/install.sh"
+install -m 0755 "$repository_root/packaging/install-release.sh" \
+  "$staging/$package_name/install-release.sh"
 install -m 0755 "$repository_root/scripts/fetch-browser-runtime.sh" \
   "$staging/$package_name/fetch-browser-runtime.sh"
 install -m 0644 "$repository_root/LICENSE" "$staging/$package_name/LICENSE"
@@ -200,6 +202,7 @@ printf '{"schemaVersion":"mealy.release.v2","version":"%s","target":"%s","commit
     bin/mealyd \
     bin/mealyctl \
     install.sh \
+    install-release.sh \
     fetch-browser-runtime.sh \
     BUILD-MANIFEST.json \
     SBOM.cdx.json \

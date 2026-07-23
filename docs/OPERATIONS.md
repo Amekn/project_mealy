@@ -811,6 +811,31 @@ nonzero `claimedScheduleRuns` that persist beyond a lease interval and any incre
 `failedScheduleRuns`; inspect exact reasons with `schedule runs`. Safe mode deliberately starts no
 schedule driver.
 
+## Installed-program lifecycle
+
+Inspect the program separately from daemon health:
+
+```sh
+mealyctl install-status
+mealyctl --home "$HOME/.mealy" update
+mealyctl repair
+mealyctl --home "$HOME/.mealy" rollback
+mealyctl --home "$HOME/.mealy" uninstall
+```
+
+These commands emit versioned plans and do not mutate by default. Archive status hashes every file
+in the release inventory and separately verifies the stable manager against the active or complete
+previous slot. `update` downloads and verifies an exact stable release plus its hosted-workflow
+attestation before comparing versions and state schemas. Only a strictly newer, same-schema
+owner-local target can use `update --approve`; drain and stop `mealy.service` first. Native installs
+return an `apt`, `dnf`, or `pacman` handoff and retain root package ownership.
+
+`repair --approve` is intentionally limited to replacing the stable archive manager from its
+verified active metadata copy. `rollback --approve` delegates only with two complete slots and
+still refuses a lower state schema. `uninstall --approve` removes archive program files while
+preserving the entire home; native uninstall uses the plan's package-manager command. Preserve a
+verified backup and remove the exact generated user service separately before uninstalling.
+
 ## Migrations, downgrade, and corrupt storage
 
 Before any supported forward migration, startup read-only inspects the old schema and publishes an

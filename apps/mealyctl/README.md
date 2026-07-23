@@ -47,6 +47,13 @@ move/removal, or empty-directory removal, high-risk `/run` turns whose approval 
 and renders exact normalized argv, inline governed-memory remember/search/correct/lifecycle
 commands, a stopped-daemon data-only skill lifecycle, and configuration rollback.
 
+Installed-program lifecycle is separately provenance aware. `install-status` verifies the complete
+published payload and distinguishes managed archives from Debian, RPM, Arch, development, and
+unknown layouts. `update`, `repair`, `rollback`, and `uninstall` emit no-mutation plans by default
+and require explicit approval for an owner-local mutation; native packages always hand control back
+to their package database. The bundled attested bootstrap lets `update` compare the exact target
+state schema before a same-schema archive swap, and Bash/Zsh/Fish completion is generated offline.
+
 `chat --session-id SESSION_ID` also reconstructs local watchers for the retained active task and
 pending durable inputs; leaving the REPL never cancels accepted daemon work. `session list` returns
 up to 100 recently updated sessions for the exact authenticated binding without crossing into a

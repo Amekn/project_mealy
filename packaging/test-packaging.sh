@@ -354,6 +354,23 @@ grep -Eq "attestation verify .*install-mealy-release.sh .*--bundle .*ATTESTATION
 # provenance rather than accepting an arbitrary repository attestation.
 [[ $(grep -Ec "attestation verify .*${archive} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
   "$temporary/bootstrap-gh.log") -eq 2 ]]
+MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
+MEALY_TEST_TARGET="$target" \
+MEALY_TEST_GH_LOG="$temporary/bootstrap-gh-check.log" \
+PATH="$bootstrap_fake_bin:$PATH" \
+  "$repository_root/packaging/install-release.sh" \
+    --check --version v0.1.0 --repository Amekn/project_mealy \
+    --prefix "$temporary/bootstrap-check-prefix" \
+    --home "$temporary/bootstrap-check-home" >"$temporary/bootstrap-check.json"
+jq -e --arg target "$target" '
+  .schemaVersion == "mealy.update-check.v1"
+  and .version == "0.1.0"
+  and .target == $target
+  and (.commit | test("^[0-9a-f]{40}$"))
+  and .stateSchemaVersion == 13
+  and .verified == true
+' "$temporary/bootstrap-check.json" >/dev/null
+[[ ! -e $temporary/bootstrap-check-prefix && ! -e $temporary/bootstrap-check-home ]]
 if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_TARGET="$target" \
   MEALY_TEST_GH_LOG="$temporary/bootstrap-gh-denied.log" \
@@ -417,6 +434,7 @@ printf 'preserve durable state\n' >"$temporary/home/state.keep"
 [[ -f $temporary/prefix/share/mealy/SECURITY.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/THREAT_MODEL.md ]]
 [[ -x $temporary/prefix/share/mealy/manage-install.sh ]]
+[[ -x $temporary/prefix/share/mealy/manage-release.sh ]]
 [[ -x $temporary/prefix/share/mealy/fetch-browser-runtime.sh ]]
 [[ -x $temporary/prefix/share/mealy-manager.sh ]]
 
