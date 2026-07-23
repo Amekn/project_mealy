@@ -411,6 +411,52 @@ if [[ $state != inactive ]]; then
   exit 70
 fi
 
+removal_plan=$(
+  "$mealyctl" --home "$home" service remove --destination "$unit"
+)
+jq -e \
+  --arg home "$home" \
+  --arg unit "$unit" \
+  --arg daemon "$mealyd" '
+    .schemaVersion == "mealy.service-removal.v1"
+    and .home == $home
+    and .serviceDefinition == $unit
+    and .daemonPath == $daemon
+    and .installed == true
+    and .definitionVerified == true
+    and .loaded == true
+    and .active == false
+    and .actionRequired == true
+    and .applySupported == true
+    and .preservesHome == true
+    and .removed == false
+  ' <<<"$removal_plan" >/dev/null
+removal=$(
+  "$mealyctl" --home "$home" service remove --destination "$unit" --approve
+)
+jq -e \
+  --arg home "$home" \
+  --arg unit "$unit" \
+  --arg daemon "$mealyd" '
+    .home == $home
+    and .serviceDefinition == $unit
+    and .daemonPath == $daemon
+    and .installed == false
+    and .loaded == false
+    and .active == false
+    and .actionRequired == false
+    and .applySupported == true
+    and .preservesHome == true
+    and .removed == true
+  ' <<<"$removal" >/dev/null
+linked=false
+service_pid=
+[[ ! -e $unit && -d $home ]]
+if systemctl_user cat mealy.service >/dev/null 2>&1; then
+  echo "approved service removal left mealy.service discoverable" >&2
+  exit 70
+fi
+
 jq -n \
   --arg session_id "$session_id" \
   --arg task_id "$task_id" \

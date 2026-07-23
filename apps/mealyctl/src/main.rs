@@ -531,6 +531,15 @@ enum ServiceCommand {
         #[arg(long)]
         destination: Option<PathBuf>,
     },
+    /// Plan or remove only the exact generated owner-level service definition.
+    Remove {
+        /// Exact custom service-definition path; loaded/default definition when omitted.
+        #[arg(long)]
+        destination: Option<PathBuf>,
+        /// Stop, disable, and remove the verified service definition.
+        #[arg(long)]
+        approve: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -2936,13 +2945,47 @@ fn run_maintenance(
             lifecycle::ArchiveManagerAction::Rollback,
         )
         .map_err(CliError::from),
-        lifecycle::MaintenanceOperation::Uninstall => lifecycle::run_archive_manager(
-            &plan.installation,
-            home,
-            lifecycle::ArchiveManagerAction::Uninstall,
-        )
-        .map_err(CliError::from),
+        lifecycle::MaintenanceOperation::Uninstall => {
+            remove_verified_owner_service_if_present(home)?;
+            lifecycle::run_archive_manager(
+                &plan.installation,
+                home,
+                lifecycle::ArchiveManagerAction::Uninstall,
+            )
+            .map_err(CliError::from)
+        }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn remove_verified_owner_service_if_present(home: &Path) -> Result<(), CliError> {
+    let default = linux_default_service_destination()?;
+    let default_present = match fs::symlink_metadata(&default) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(CliError::Io(error)),
+    };
+    let loaded = match loaded_owner_service_fragment() {
+        Ok(value) => value,
+        Err(_) if !default_present => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !default_present && loaded.is_none() {
+        return Ok(());
+    }
+    let plan = plan_service_removal(home, loaded.as_deref())?;
+    if !plan.action_required || !plan.apply_supported {
+        return Err(CliError::InvalidService(
+            "installed owner service could not be verified for safe uninstall".to_owned(),
+        ));
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    apply_service_removal(&plan)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn remove_verified_owner_service_if_present(_home: &Path) -> Result<(), CliError> {
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -7672,14 +7715,9 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
         });
     }
 
-    let service = install_service_definition(
-        &home,
-        &ServiceCommand::Install {
-            daemon_path: None,
-            destination: None,
-        },
-    )
-    .map_err(|error| CliError::OnboardService(format!("service installation failed: {error}")))?;
+    let service = install_service_definition(&home, None, None).map_err(|error| {
+        CliError::OnboardService(format!("service installation failed: {error}"))
+    })?;
     activate_owner_service()
         .map_err(|error| CliError::OnboardService(format!("service activation failed: {error}")))?;
     let doctor = wait_for_onboard_readiness(&home).await.map_err(|error| {
@@ -8769,6 +8807,25 @@ struct ServiceInstallationResponse {
     read_write_paths: Vec<String>,
     rollback_copy: Option<String>,
     activation_command: String,
+}
+
+#[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+#[serde(rename_all = "camelCase")]
+struct ServiceRemovalPlan {
+    schema_version: &'static str,
+    platform: String,
+    home: PathBuf,
+    service_definition: PathBuf,
+    daemon_path: Option<PathBuf>,
+    installed: bool,
+    definition_verified: bool,
+    loaded: bool,
+    active: bool,
+    action_required: bool,
+    apply_supported: bool,
+    preserves_home: bool,
+    removed: bool,
 }
 
 #[derive(Serialize)]
@@ -13238,19 +13295,29 @@ fn read_channel_credential_environment(name: &str) -> Result<Zeroizing<String>, 
 }
 
 fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(), CliError> {
-    print_json(install_service_definition(home, command)?)
+    match command {
+        ServiceCommand::Install {
+            daemon_path,
+            destination,
+        } => print_json(install_service_definition(
+            home,
+            daemon_path.as_deref(),
+            destination.as_deref(),
+        )?),
+        ServiceCommand::Remove {
+            destination,
+            approve,
+        } => run_service_removal(home, destination.as_deref(), *approve),
+    }
 }
 
 fn install_service_definition(
     home: &Path,
-    command: &ServiceCommand,
+    daemon_path: Option<&Path>,
+    destination: Option<&Path>,
 ) -> Result<ServiceInstallationResponse, CliError> {
-    let ServiceCommand::Install {
-        daemon_path,
-        destination,
-    } = command;
     let daemon = daemon_path
-        .clone()
+        .map(Path::to_owned)
         .map_or_else(default_daemon_path, Ok)?
         .canonicalize()
         .map_err(CliError::Io)?;
@@ -13262,10 +13329,7 @@ fn install_service_definition(
     let read_write_paths = service_read_write_paths(&home)?;
     let (platform, default_destination, body, activation) =
         service_definition(&daemon, &home, &read_write_paths)?;
-    let destination = destination.as_ref().map_or_else(
-        || Ok(default_destination),
-        |path| absolute_service_path(path),
-    )?;
+    let destination = destination.map_or_else(|| Ok(default_destination), absolute_service_path)?;
     let activation_command = activation(&destination)?;
     let parent = destination.parent().ok_or_else(|| {
         CliError::InvalidService("service definition has no parent directory".to_owned())
@@ -13285,6 +13349,185 @@ fn install_service_definition(
         rollback_copy: rollback.map(|path| path.display().to_string()),
         activation_command,
     })
+}
+
+fn run_service_removal(
+    home: &Path,
+    destination: Option<&Path>,
+    approve: bool,
+) -> Result<(), CliError> {
+    let plan = plan_service_removal(home, destination)?;
+    if !approve || !plan.action_required {
+        return print_json(plan);
+    }
+    if !plan.apply_supported {
+        print_json(&plan)?;
+        return Err(CliError::MaintenanceUnavailable);
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    apply_service_removal(&plan)?;
+    let mut result = plan_service_removal(home, Some(&plan.service_definition))?;
+    result.daemon_path.clone_from(&plan.daemon_path);
+    result.removed = true;
+    print_json(result)
+}
+
+#[cfg(target_os = "linux")]
+fn plan_service_removal(
+    home: &Path,
+    destination: Option<&Path>,
+) -> Result<ServiceRemovalPlan, CliError> {
+    let home = absolute_service_path(home)?.canonicalize()?;
+    validate_linux_service_home(&home)?;
+    let loaded_fragment = loaded_owner_service_fragment()?;
+    let destination = destination.map_or_else(
+        || {
+            loaded_fragment
+                .clone()
+                .map_or_else(linux_default_service_destination, Ok)
+        },
+        absolute_service_path,
+    )?;
+    validate_linux_service_destination_name(&destination)?;
+    let active = owner_service_active_or_absent()?;
+    let (installed, daemon_path) = match fs::symlink_metadata(&destination) {
+        Ok(metadata) => {
+            let daemon = if !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && destination
+                    .canonicalize()
+                    .is_ok_and(|path| path == destination)
+            {
+                lifecycle::read_bounded_regular_file(&destination, 64 * 1024)
+                    .ok()
+                    .and_then(|bytes| generated_linux_service_daemon(&bytes, &home))
+            } else {
+                None
+            };
+            (true, daemon)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (false, None),
+        Err(error) => return Err(CliError::Io(error)),
+    };
+    let definition_verified = daemon_path.is_some();
+    let loaded_matches = loaded_fragment
+        .as_ref()
+        .is_none_or(|fragment| fragment == &destination);
+    let action_required = installed || loaded_fragment.is_some();
+    let apply_supported = !action_required
+        || (installed
+            && definition_verified
+            && loaded_matches
+            && !(active && loaded_fragment.is_none()));
+    Ok(ServiceRemovalPlan {
+        schema_version: "mealy.service-removal.v1",
+        platform: "linux-systemd-user".to_owned(),
+        home,
+        service_definition: destination,
+        daemon_path,
+        installed,
+        definition_verified,
+        loaded: loaded_fragment.is_some(),
+        active,
+        action_required,
+        apply_supported,
+        preserves_home: true,
+        removed: false,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn plan_service_removal(
+    _home: &Path,
+    _destination: Option<&Path>,
+) -> Result<ServiceRemovalPlan, CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production service removal is supported only on Linux".to_owned(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
+    let loaded = loaded_owner_service_fragment()?;
+    if loaded
+        .as_ref()
+        .is_some_and(|path| path != &plan.service_definition)
+        || (loaded.is_none() && owner_service_active_or_absent()?)
+    {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service does not match the reviewed definition".to_owned(),
+        ));
+    }
+    if loaded.is_some() {
+        run_systemctl(&["--user", "disable", "--now", "mealy.service"], true)?;
+    }
+    if owner_service_active_or_absent()? {
+        return Err(CliError::InvalidService(
+            "mealy.service remained active after disable".to_owned(),
+        ));
+    }
+    let (_home, _instance_lock) = lock_stopped_home(&plan.home)?;
+    let current = plan_service_removal(&plan.home, Some(&plan.service_definition))?;
+    if !current.installed || !current.definition_verified || !current.apply_supported {
+        return Err(CliError::InvalidService(
+            "service definition changed after the reviewed removal plan".to_owned(),
+        ));
+    }
+    fs::remove_file(&plan.service_definition)?;
+    sync_service_directory(plan.service_definition.parent().ok_or_else(|| {
+        CliError::InvalidService("service definition has no parent directory".to_owned())
+    })?)?;
+    run_systemctl(&["--user", "daemon-reload"], true)?;
+    run_systemctl(&["--user", "reset-failed", "mealy.service"], false)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_service_removal(_plan: &ServiceRemovalPlan) -> Result<(), CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production service removal is supported only on Linux".to_owned(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn loaded_owner_service_fragment() -> Result<Option<PathBuf>, CliError> {
+    let output = run_systemctl_output(&[
+        "--user",
+        "show",
+        "--property=FragmentPath",
+        "--value",
+        "mealy.service",
+    ])?;
+    let value = std::str::from_utf8(&output)
+        .map_err(|_| CliError::UpdateTransactionInconsistent)?
+        .trim_end_matches('\n');
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.contains('\n') || value.chars().any(char::is_control) {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment path is invalid".to_owned(),
+        ));
+    }
+    absolute_service_path(Path::new(value)).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn owner_service_active_or_absent() -> Result<bool, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let status = ProcessCommand::new(systemctl)
+        .args(["--user", "is-active", "--quiet", "mealy.service"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(3 | 4) => Ok(false),
+        _ => Err(CliError::InvalidService(
+            "could not inspect mealy.service activity".to_owned(),
+        )),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -13336,28 +13579,10 @@ fn service_definition(
     home: &Path,
     read_write_paths: &[PathBuf],
 ) -> Result<(String, PathBuf, String, ActivationCommand), CliError> {
-    let daemon_text = daemon.display().to_string();
-    let home_text = home.display().to_string();
-    validate_service_text(&daemon_text)?;
-    validate_service_text(&home_text)?;
     #[cfg(target_os = "linux")]
     {
-        if read_write_paths.is_empty() || !read_write_paths.iter().any(|path| path == home) {
-            return Err(CliError::InvalidService(
-                "service write paths must include the exact Mealy home".to_owned(),
-            ));
-        }
         let destination = linux_default_service_destination()?;
-        let body = format!(
-            "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
-             [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
-             UMask=0077\nNoNewPrivileges=true\n\
-             RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
-             SystemCallArchitectures=native\n\
-             MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
-            systemd_quote(&daemon_text),
-            systemd_quote(&home_text),
-        );
+        let body = linux_service_body(daemon, home, read_write_paths)?;
         Ok((
             "linux-systemd-user".to_owned(),
             destination,
@@ -13367,12 +13592,93 @@ fn service_definition(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (daemon_text, home_text, read_write_paths);
+        let _ = (daemon, home, read_write_paths);
         Err(CliError::UnsupportedPlatform(
             "production service installation is supported only on Linux; archived preview adapters do not provide a supported worker sandbox"
                 .to_owned(),
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_service_body(
+    daemon: &Path,
+    home: &Path,
+    read_write_paths: &[PathBuf],
+) -> Result<String, CliError> {
+    let daemon_text = daemon.display().to_string();
+    let home_text = home.display().to_string();
+    validate_service_text(&daemon_text)?;
+    validate_service_text(&home_text)?;
+    if read_write_paths.is_empty() || !read_write_paths.iter().any(|path| path == home) {
+        return Err(CliError::InvalidService(
+            "service write paths must include the exact Mealy home".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
+         [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
+         UMask=0077\nNoNewPrivileges=true\n\
+         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
+         SystemCallArchitectures=native\n\
+         MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(&daemon_text),
+        systemd_quote(&home_text),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn generated_linux_service_daemon(body: &[u8], home: &Path) -> Option<PathBuf> {
+    let body = std::str::from_utf8(body).ok()?;
+    let mut commands = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("ExecStart="));
+    let command = commands.next()?;
+    if commands.next().is_some() {
+        return None;
+    }
+    let home_suffix = format!(" --home {}", systemd_quote(&home.display().to_string()));
+    let daemon_argument = command.strip_suffix(&home_suffix)?;
+    let daemon_text = decode_systemd_quoted_argument(daemon_argument)?;
+    let daemon = PathBuf::from(daemon_text);
+    if !daemon.is_absolute()
+        || !daemon.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return None;
+    }
+    let expected = linux_service_body(&daemon, home, &[home.to_owned()]).ok()?;
+    (expected == body).then_some(daemon)
+}
+
+#[cfg(target_os = "linux")]
+fn decode_systemd_quoted_argument(value: &str) -> Option<String> {
+    let value = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut decoded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next()? {
+                '\\' => decoded.push('\\'),
+                '"' => decoded.push('"'),
+                _ => return None,
+            },
+            '%' => {
+                if characters.next()? != '%' {
+                    return None;
+                }
+                decoded.push('%');
+            }
+            '"' => return None,
+            character if character.is_control() => return None,
+            character => decoded.push(character),
+        }
+    }
+    (!decoded.is_empty()).then_some(decoded)
 }
 
 fn service_read_write_paths(home: &Path) -> Result<Vec<PathBuf>, CliError> {
@@ -13614,11 +13920,7 @@ fn sync_service_directory(_path: &Path) -> Result<(), CliError> {
 
 #[cfg(target_os = "linux")]
 fn linux_activation_command(path: &Path) -> Result<String, CliError> {
-    if path.file_name().and_then(|name| name.to_str()) != Some("mealy.service") {
-        return Err(CliError::InvalidService(
-            "a Linux service destination must be named mealy.service".to_owned(),
-        ));
-    }
+    validate_linux_service_destination_name(path)?;
     let enable = "systemctl --user daemon-reload && systemctl --user enable --now mealy.service";
     if path == linux_default_service_destination()? {
         Ok(enable.to_owned())
@@ -13628,6 +13930,16 @@ fn linux_activation_command(path: &Path) -> Result<String, CliError> {
             setup_shell_argument(&path.display().to_string())
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_service_destination_name(path: &Path) -> Result<(), CliError> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("mealy.service") {
+        return Err(CliError::InvalidService(
+            "a Linux service destination must be named mealy.service".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn authorized(
@@ -14181,7 +14493,7 @@ mod tests {
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
         EffectCommand, ExtensionCommand, LifecycleArguments, LifecycleCommand,
         MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
-        ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand,
+        ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, ServiceCommand,
         SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
         TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute, configure_workspace_grant,
         decode, generate_discord_pair_challenge, generate_telegram_pair_challenge,
@@ -14196,7 +14508,8 @@ mod tests {
     };
     #[cfg(target_os = "linux")]
     use super::{
-        linux_activation_command, service_definition, service_read_write_paths, systemd_quote,
+        decode_systemd_quoted_argument, generated_linux_service_daemon, linux_activation_command,
+        linux_service_body, service_definition, service_read_write_paths, systemd_quote,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
@@ -14863,6 +15176,28 @@ mod tests {
             systemd_quote(r#"/srv/owner workspace/100%/quote\"/back\slash"#),
             r#""/srv/owner workspace/100%%/quote\\\"/back\\slash""#
         );
+        let home = Path::new("/srv/owner workspace/mealy-home");
+        let daemon = Path::new(r#"/srv/owner workspace/100%/quote"/back\slash/mealyd"#);
+        let body = linux_service_body(daemon, home, &[home.to_owned()])
+            .expect("generated service definition");
+        assert_eq!(
+            generated_linux_service_daemon(body.as_bytes(), home).as_deref(),
+            Some(daemon)
+        );
+        assert!(
+            generated_linux_service_daemon(
+                body.replacen("Restart=on-failure", "Restart=always", 1)
+                    .as_bytes(),
+                home
+            )
+            .is_none()
+        );
+        assert!(
+            generated_linux_service_daemon(body.as_bytes(), Path::new("/srv/another-home"))
+                .is_none()
+        );
+        assert!(decode_systemd_quoted_argument(r#""bad\q""#).is_none());
+        assert!(decode_systemd_quoted_argument(r#""single%specifier""#).is_none());
     }
 
     #[test]
@@ -15951,6 +16286,44 @@ mod tests {
             parsed.command,
             Command::Config {
                 command: ConfigCommand::Rollback { approve: true, .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn service_removal_is_plan_first_and_requires_explicit_approval() {
+        let plan = Arguments::try_parse_from([
+            "mealyctl",
+            "--home",
+            "/tmp/mealy",
+            "service",
+            "remove",
+            "--destination",
+            "/tmp/mealy.service",
+        ])
+        .expect("service removal plan");
+        assert!(matches!(
+            plan.command,
+            Command::Service {
+                command: ServiceCommand::Remove { approve: false, .. }
+            }
+        ));
+
+        let apply = Arguments::try_parse_from([
+            "mealyctl",
+            "--home",
+            "/tmp/mealy",
+            "service",
+            "remove",
+            "--destination",
+            "/tmp/mealy.service",
+            "--approve",
+        ])
+        .expect("approved service removal");
+        assert!(matches!(
+            apply.command,
+            Command::Service {
+                command: ServiceCommand::Remove { approve: true, .. }
             }
         ));
     }

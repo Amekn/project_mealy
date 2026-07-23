@@ -276,6 +276,8 @@ pub(crate) struct MaintenancePlan {
     pub(crate) requires_stopped_daemon: bool,
     /// Durable user state is never deleted by these program-file operations.
     pub(crate) preserves_home: bool,
+    /// Owner-local uninstall also removes a discoverable exact generated owner service.
+    pub(crate) removes_verified_owner_service: bool,
     /// Native package-manager handoff when native ownership applies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) native_command: Option<String>,
@@ -464,6 +466,7 @@ pub(crate) fn plan_maintenance(
         apply_supported,
         requires_stopped_daemon,
         preserves_home: true,
+        removes_verified_owner_service: operation == MaintenanceOperation::Uninstall && archive,
         native_command,
     })
 }

@@ -110,6 +110,7 @@ jq -e '
   and .actionRequired == true
   and .applySupported == true
   and .preservesHome == true
+  and .removesVerifiedOwnerService == false
   and .installation.integrity == "failed"
 ' <<<"$repair_plan" >/dev/null
 "$mealyctl" repair --approve >"$temporary/repaired-status.json"
@@ -287,6 +288,17 @@ fi
 wait "$daemon_pid"
 daemon_pid=
 
+uninstall_plan=$("$mealyctl" --home "$home" uninstall)
+jq -e '
+  .schemaVersion == "mealy.maintenance-plan.v1"
+  and .operation == "uninstall"
+  and .actionRequired == true
+  and .applySupported == true
+  and .requiresStoppedDaemon == true
+  and .preservesHome == true
+  and .removesVerifiedOwnerService == true
+  and .installation.installationKind == "managed-archive"
+' <<<"$uninstall_plan" >/dev/null
 "$mealyctl" --home "$home" uninstall --approve >/dev/null
 [[ ! -e $prefix/bin/mealyd && ! -e $prefix/bin/mealyctl ]]
 [[ -f $home/mealy.sqlite3 ]]

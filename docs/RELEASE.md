@@ -501,23 +501,27 @@ delete or edit the transaction directory by hand.
 
 ## Uninstall program files without deleting state
 
-Drain Mealy and disable/remove its user service first. Inspect the plan, then explicitly apply it:
+Retain and verify a backup. Inspect the plan, then explicitly apply it:
 
 ```sh
 mealyctl --home "$HOME/.mealy" uninstall
 mealyctl --home "$HOME/.mealy" uninstall --approve
 ```
 
-Uninstall verifies the managed active and previous slots plus the stable manager, refuses a live
-home or modified binary, and removes only the two binaries, rollback copies, stable manager, and
-package-owned metadata/documents. It never deletes `$HOME/.mealy`, provider/Telegram/Discord credentials,
-SQLite, artifacts, backups, or exports. Retain and verify a complete backup before any separate
-deliberate state deletion.
+Uninstall verifies the managed active and previous slots plus the stable manager. If an exact
+generated owner service is loaded or present at the default destination, approved owner-local
+uninstall first disables and stops it, proves the home lock is free, re-verifies and removes its
+definition, and reloads the user manager. A mismatched unit fails closed. An installed but unlinked
+custom destination remains an explicit `service remove --destination ...` step. Uninstall then
+removes only the two binaries, rollback copies, stable manager, and package-owned
+metadata/documents. It never deletes `$HOME/.mealy`, provider/Telegram/Discord credentials, SQLite,
+artifacts, backups, or exports.
 
 For Debian, RPM, and Arch installations, the plan returns the exact native removal command instead
 of mutating `/usr`. Each package owns only root program/metadata paths and has no maintainer
 scripts, so removal cannot delete `$HOME/.mealy`; the native package smokes prove this. The
-user-created systemd unit is not package-owned, so disable and remove it before uninstalling.
+user-created systemd unit is not package-owned, so run `mealyctl --home "$HOME/.mealy" service
+remove` and repeat it with `--approve` before the printed native package command.
 
 If `install-status` reports that only the owner-local stable manager is missing or modified,
 `mealyctl repair` previews the bounded action and `mealyctl repair --approve` reconstructs it from

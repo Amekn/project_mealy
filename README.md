@@ -73,7 +73,9 @@ the exact native package-manager handoff and never write around the distribution
 Approved same-schema archive updates run through a separate restartable user-service helper that
 backs up, drains, restarts, verifies health and `doctor`, and rolls back failed qualification;
 `update-status` remains available after a terminal disconnect. Bash, Zsh, and Fish completion is
-generated with `mealyctl completion SHELL`.
+generated with `mealyctl completion SHELL`. `service remove` safely plans and removes only the exact
+generated owner unit, and approved owner-local uninstall composes that cleanup while preserving the
+complete home.
 
 Local integrations can use the authenticated versioned HTTP/JSON and SSE surface documented in
 the [API reference](docs/API.md). Contributors and release operators should follow the

@@ -23,9 +23,10 @@ automatic same-schema slot rollback.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:
-restart/failure-injection acceptance for that update transaction,
-service-definition removal, signed distribution repositories, and a published
-qualifying tag remain open. All newer work remains next-release source until
+installed two-release failure-injection acceptance for that update transaction,
+signed distribution repositories, and a published qualifying tag remain open.
+Exact generated-service removal is now plan-first and composed into owner-local
+uninstall. All newer work remains next-release source until
 installed-package and supported-distribution acceptance qualify it.
 
 ## Executive result
@@ -589,8 +590,8 @@ fixture endpoints and fake service-manager isolation.
   restart, health verification, and automatic package rollback;
 - `mealyctl repair` as a safe composition of diagnostics and explicitly scoped
   fixes;
-- `mealyctl uninstall --dry-run`, with independent keep/remove choices for
-  state, config, immutable artifacts, and service definitions; and
+- plan-first archive uninstall that always preserves durable state and removes
+  only an independently verified generated service definition; and
 - generated Bash, Zsh, and Fish completion.
 
 ### P2 — broader Linux distribution ergonomics

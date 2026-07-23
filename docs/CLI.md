@@ -52,7 +52,7 @@ public command cannot be added or removed without updating this reference.
 | `restore-activate` | Activate one exact verified encrypted backup while stopped. |
 | `garbage-collect` | Erase only eligible unreferenced artifact files. |
 | `export` | Publish an immutable owner-scoped evidence bundle. |
-| `service` | Render and install an owner-level systemd user unit on supported Linux hosts. |
+| `service` | Render/install or plan/remove an owner-level systemd user unit on Linux. |
 | `config` | Inspect or change governed stopped-home configuration. |
 
 Most non-interactive commands emit one bounded JSON value on standard output and diagnostics on
@@ -162,3 +162,11 @@ liveness, control-plane readiness, and an available sandbox. `--configure-only` 
 after provider activation and reports the exact service-install command as the next step.
 `--skip-connectivity-test` requires that configure-only mode, preventing a staged provider from
 being reported as a verified running onboarding result.
+
+`mealyctl --home "$HOME/.mealy" service remove` emits a no-mutation
+`mealy.service-removal.v1` plan for the loaded or default unit. `--approve` is accepted only when
+the exact generated definition still binds its recorded daemon and this home; it disables and
+stops the unit, proves the home lock is free, re-verifies the bytes, removes the definition, and
+reloads the user manager without deleting the home. An approved owner-local archive `uninstall`
+composes this exact cleanup before removing program files. Native package handoffs leave it as an
+explicit owner step.
