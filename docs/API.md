@@ -212,6 +212,12 @@ this summary. Authentication and replay checks occur before JSON parsing.
 | `POST` | `/v1/admin/artifact-gc` | `RunGarbageCollectionRequest` | `GarbageCollectionResponse` |
 | `POST` | `/v1/admin/exports` | `CreateExportRequest` | `ExportResponse` |
 
+`AdminStatusResponse` includes the effective provider/model and route health plus the effective
+context limit, maximum output limit, provider-owned input-token overhead, and configured
+input/output microunit prices. These secret-free capability fields let first-party clients explain
+the active model boundary without reopening private configuration or guessing from a provider
+catalog.
+
 During safe mode or graceful drain, non-GET commands fail with retryable `503` except the bounded
 maintenance commands for drain, backup, backup verification, and export.
 

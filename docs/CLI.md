@@ -79,6 +79,22 @@ require exact explicit approval. Commands against a running daemon authenticate 
 owner-only `connection.json`. Safe mode and drain intentionally reject ordinary mutations; consult
 the command's JSON error and retryability contract instead of bypassing those states.
 
+## Interactive chat status
+
+`mealyctl --home "$HOME/.mealy" chat` prints a concise status block before the first prompt.
+`/status` refreshes the same authenticated projection without leaving the conversation. It shows
+the effective provider and model, process-lifetime health, locality/residency, context and maximum
+response tokens, conservative provider-owned input overhead, exact configured input/output prices,
+admission/safe-mode state, queue pressure, and every primary/fallback route's concurrency and
+current-minute pressure.
+
+Prices and settled task cost remain provider-neutral integer microunits; Mealy does not infer an
+invoice or silently label an owner-configured currency. After every terminal task, chat prints the
+recorded input/output tokens, cost microunits, model calls, tool calls, and retries. These values
+come from durable task evidence and are not estimates of the model's remaining context window.
+Provider switching still uses the stopped-daemon configuration transaction so an in-flight chat
+cannot split across unreviewed configuration.
+
 ## Installation status and completion
 
 `mealyctl install-status` is offline and emits `mealy.install-status.v1`. A published installation

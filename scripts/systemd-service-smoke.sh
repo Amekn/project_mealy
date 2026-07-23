@@ -219,7 +219,12 @@ jq -e \
     and (.nextCommand | contains(" chat"))
   ' <<<"$onboard" >/dev/null
 grep -Fq 'Mealy chat session ' "$onboard_output"
+grep -Fq 'provider> openai.subscription | model fixture-model | health ' "$onboard_output"
+grep -Fq 'limits> context 32768 tokens (' "$onboard_output"
 grep -Fq 'mealy> MEALYONBOARDINGOK' "$onboard_output"
+grep -Fq \
+  'usage> 10 input + 5 output token(s) | 0 configured-cost microunit(s) | 1 model call(s) | 0 tool call(s) | 0 retries' \
+  "$onboard_output"
 "$mealyctl" --home "$home" health >/dev/null
 search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
 onboarding_task_id=$(jq -er '

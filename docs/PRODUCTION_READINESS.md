@@ -120,6 +120,12 @@ streams are terminals; `--chat` and `--no-chat` make the boundary explicit for s
 machine-readable use. The real systemd acceptance drives the subscription probe, service
 installation, health, `doctor`, chat creation, first visible model response, durable search, and
 clean chat exit as one installed-binary journey.
+The next daily-use slice keeps authoritative provider operations visible inside that chat:
+startup and `/status` render provider/model identity, live health, locality/residency,
+context/output limits, provider overhead, configured prices, queue state, and route pressure.
+Every terminal task prints exact durable token, cost-microunit, model/tool-call, and retry
+accounting. The pseudo-terminal process proof refreshes status while the client remains
+interactive; provider switching retains the stopped-daemon review and restart boundary.
 
 The same post-v0.1.1 source now adds an install-provenance layer and plan-first `install-status`,
 `update`, `update-status`, `repair`, `rollback`, `uninstall`, and shell-completion surfaces. The update check uses

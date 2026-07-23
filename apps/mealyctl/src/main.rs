@@ -52,8 +52,8 @@ use mealy_protocol::{
     RevokeWebhookChannelRequest, RunGarbageCollectionRequest, ScheduleLifecycleRequest,
     ScheduleOverlapPolicyCommand, ScheduleResponse, ScheduleRunsResponse, SchedulesResponse,
     SessionSearchResponse, SessionStatusResponse, SessionsResponse, SetMemoryPinRequest,
-    StageExtensionManifestRequest, SubmitInputRequest, TaskCancellationReceipt, TaskControlReceipt,
-    TaskReplayResponse, TaskResponse, TaskStatus, TelegramChannelResponse,
+    StageExtensionManifestRequest, SubmitInputRequest, TaskBudgetUsage, TaskCancellationReceipt,
+    TaskControlReceipt, TaskReplayResponse, TaskResponse, TaskStatus, TelegramChannelResponse,
     TelegramChannelsResponse, TimelineEvent, TimelinePageResponse, VerifyBackupRequest,
     WebhookChannelResponse, WebhookChannelsResponse,
 };
@@ -3289,6 +3289,7 @@ enum ChatLine {
     History(String),
     Help,
     Session,
+    Status,
     Exit,
     Empty,
 }
@@ -3417,6 +3418,9 @@ fn parse_chat_line(line: &str) -> ChatLine {
     }
     if line == "/session" {
         return ChatLine::Session;
+    }
+    if line == "/status" {
+        return ChatLine::Status;
     }
     if let Some(path) = line.strip_prefix("/attach ") {
         let path = path.trim();
@@ -3621,7 +3625,8 @@ async fn run_chat(
     connection: &LocalConnectionInfo,
     existing_session_id: Option<&str>,
 ) -> Result<(), CliError> {
-    let mut memory_workspace = default_chat_memory_workspace(client, connection).await?;
+    let provider_status = fetch_chat_status(client, connection).await?;
+    let mut memory_workspace = default_chat_memory_workspace(&provider_status);
     let (session_id, resume_status) = if let Some(session_id) = existing_session_id {
         let response = authorized(
             client.get(format!(
@@ -3657,8 +3662,9 @@ async fn run_chat(
         "Governed memory namespace {}",
         terminal_safe_single_line(&memory_workspace)
     );
+    render_chat_status(&provider_status);
     println!(
-        "Type /help for concurrent delivery and approval controls, /session to print the durable session ID, or /quit."
+        "Type /help for controls, /status for live model and provider limits, /session for the durable session ID, or /quit."
     );
     let (input_sender, mut input_receiver) =
         tokio::sync::mpsc::channel(CHAT_INPUT_CHANNEL_CAPACITY);
@@ -3809,6 +3815,13 @@ async fn run_chat(
                     ChatLine::Send { .. } | ChatLine::LocalAttachment { .. } | ChatLine::Empty => {}
                     ChatLine::Help => print_chat_help(),
                     ChatLine::Session => println!("{}", terminal_safe_single_line(&session_id)),
+                    ChatLine::Status => match fetch_current_chat_status(client, home).await {
+                        Ok(status) => render_chat_status(&status),
+                        Err(error) => eprintln!(
+                            "chat status is unavailable: {}; retry /status or run `mealyctl doctor`",
+                            terminal_safe_single_line(&error.to_string())
+                        ),
+                    },
                     ChatLine::Exit => {
                         stop_chat_watchers(&mut watchers).await;
                         return Ok(());
@@ -3832,18 +3845,35 @@ async fn run_chat(
     }
 }
 
-async fn default_chat_memory_workspace(
+async fn fetch_chat_status(
     client: &Client,
     connection: &LocalConnectionInfo,
-) -> Result<String, CliError> {
+) -> Result<AdminStatusResponse, CliError> {
     let response = authorized(
         client.get(format!("{}/v1/admin/status", connection.base_url)),
         connection,
     )
     .send()
     .await?;
-    let status = decode::<AdminStatusResponse>(response).await?;
-    Ok(if status
+    decode::<AdminStatusResponse>(response).await
+}
+
+async fn fetch_current_chat_status(
+    client: &Client,
+    home: &Path,
+) -> Result<AdminStatusResponse, CliError> {
+    let connection = load_connection(home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::Protocol(format!(
+            "connection descriptor uses unsupported API version {:?}",
+            connection.api_version
+        )));
+    }
+    fetch_chat_status(client, &connection).await
+}
+
+fn default_chat_memory_workspace(status: &AdminStatusResponse) -> String {
+    if status
         .enabled_read_tools
         .iter()
         .any(|tool| tool.starts_with("workspace."))
@@ -3852,7 +3882,7 @@ async fn default_chat_memory_workspace(
     } else {
         CHAT_MEMORY_NO_WORKSPACE
     }
-    .to_owned())
+    .to_owned()
 }
 
 #[allow(clippy::too_many_lines)]
@@ -4053,7 +4083,8 @@ fn print_chat_help() {
          APPROVAL_ID SUBJECT_DIGEST resolve an exact rendered subject; /act TEXT selects the \
          create-new-file tool; /edit TEXT selects digest-preconditioned atomic replacement; \
          /manage TEXT selects directory creation, exact file move/removal, or empty-directory \
-         removal; /run TEXT selects configured direct-process authority; /session; \
+         removal; /run TEXT selects configured direct-process authority; /status prints live \
+         provider/model/limit/price/pressure state; /session prints the durable session ID; \
          /quit"
     );
     println!(
@@ -4069,6 +4100,56 @@ fn print_chat_help() {
          expire only removes active retrieval. Advanced category/sensitivity control remains in \
          the top-level `memory` commands."
     );
+}
+
+fn render_chat_status(status: &AdminStatusResponse) {
+    println!(
+        "provider> {} | model {} | health {} | {} ({})",
+        terminal_safe_single_line(&status.provider_id),
+        terminal_safe_single_line(&status.provider_model_id),
+        terminal_safe_single_line(&status.provider_health),
+        if status.provider_local {
+            "local"
+        } else {
+            "remote"
+        },
+        terminal_safe_single_line(&status.provider_residency)
+    );
+    println!(
+        "limits> context {} tokens ({} provider overhead) | max response {} tokens",
+        status.provider_context_tokens,
+        status.provider_input_token_overhead,
+        status.provider_maximum_output_tokens
+    );
+    println!(
+        "pricing> input {} | output {} configured-cost microunits per million tokens",
+        status.provider_input_microunits_per_million_tokens,
+        status.provider_output_microunits_per_million_tokens
+    );
+    println!(
+        "runtime> admission {} | safe mode {} | {} pending input(s) | {} nonterminal run(s)",
+        if status.admission_open {
+            "open"
+        } else {
+            "closed"
+        },
+        if status.safe_mode { "on" } else { "off" },
+        status.pending_inputs,
+        status.nonterminal_runs
+    );
+    for (index, endpoint) in status.provider_endpoints.iter().enumerate() {
+        println!(
+            "route {}> {} / {} | {} | {}/{} in flight | {}/{} this UTC minute",
+            index + 1,
+            terminal_safe_single_line(&endpoint.provider_id),
+            terminal_safe_single_line(&endpoint.model_id),
+            terminal_safe_single_line(&endpoint.health),
+            endpoint.in_flight_requests,
+            endpoint.maximum_concurrent_requests,
+            endpoint.requests_in_current_minute,
+            endpoint.requests_per_minute
+        );
+    }
 }
 
 fn start_chat_input_reader(sender: tokio::sync::mpsc::Sender<ChatInput>) -> Result<(), CliError> {
@@ -4890,7 +4971,21 @@ fn render_finished_chat_task(task: &TaskResponse) -> Result<(), CliError> {
             ));
         }
     }
+    println!("{}", chat_usage_line(task.usage));
     Ok(())
+}
+
+fn chat_usage_line(usage: TaskBudgetUsage) -> String {
+    format!(
+        "usage> {} input + {} output token(s) | {} configured-cost microunit(s) | {} model call(s) | {} tool call(s) | {} retr{}",
+        usage.used_input_tokens,
+        usage.used_output_tokens,
+        usage.used_cost_microunits,
+        usage.used_model_calls,
+        usage.used_tool_calls,
+        usage.used_retries,
+        if usage.used_retries == 1 { "y" } else { "ies" },
+    )
 }
 
 fn terminal_safe_text(value: &str) -> String {
@@ -14654,7 +14749,7 @@ mod tests {
         OnboardChatMode, OnboardOptions, ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
         ScheduleCommand, ServiceCommand, SetupProviderArgument, SkillCommand, TelegramPairChat,
         TelegramPairMessage, TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute,
-        configure_workspace_grant, decode, generate_discord_pair_challenge,
+        chat_usage_line, configure_workspace_grant, decode, generate_discord_pair_challenge,
         generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
         lifecycle_invocation, load_connection, normalize_openrouter_display_name,
         observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
@@ -14675,7 +14770,8 @@ mod tests {
     use clap::Parser;
     use mealy_application::{AgentLoopLimits, ProviderConfig};
     use mealy_protocol::{
-        API_VERSION, DeliveryMode, LocalConnectionInfo, TimelineCursor, TimelineEvent,
+        API_VERSION, DeliveryMode, LocalConnectionInfo, TaskBudgetUsage, TimelineCursor,
+        TimelineEvent,
     };
     use serde_json::json;
     #[cfg(unix)]
@@ -15792,6 +15888,7 @@ mod tests {
             parse_chat_line("/history amber orbit"),
             ChatLine::History("amber orbit".to_owned())
         );
+        assert_eq!(parse_chat_line("/status"), ChatLine::Status);
         assert_eq!(
             parse_chat_line("/act create a report"),
             ChatLine::Send {
@@ -15814,6 +15911,22 @@ mod tests {
             }
         );
         assert_eq!(parse_chat_line("/quit"), ChatLine::Exit);
+    }
+
+    #[test]
+    fn chat_usage_line_reports_exact_terminal_accounting() {
+        assert_eq!(
+            chat_usage_line(TaskBudgetUsage {
+                used_model_calls: 2,
+                used_tool_calls: 1,
+                used_retries: 1,
+                used_input_tokens: 12_345,
+                used_output_tokens: 67,
+                used_cost_microunits: 89,
+                ..TaskBudgetUsage::default()
+            }),
+            "usage> 12345 input + 67 output token(s) | 89 configured-cost microunit(s) | 2 model call(s) | 1 tool call(s) | 1 retry"
+        );
     }
 
     #[test]

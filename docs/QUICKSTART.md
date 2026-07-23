@@ -895,6 +895,19 @@ explicitly instructed to route credentials, identity numbers, health, financial,
 private content to the advanced categorized review workflow. The model never autonomously
 activates memories; every activation remains an explicit authenticated owner action.
 
+Inside `mealyctl chat`, use `/status` to refresh the live provider/model, health, locality,
+context/output limits, configured prices, and primary/fallback request pressure. The same concise
+status appears at chat startup. Every terminal turn also prints durable recorded input/output
+tokens, provider-neutral cost microunits, model/tool calls, and retries. These are exact local
+accounting facts, not an inferred bill or an estimate of unused context:
+
+```text
+/status
+```
+
+Switching providers remains a stopped-daemon `config provider` transaction so an active
+conversation cannot silently cross an unreviewed model, credential, price, or residency boundary.
+
 Use `mealyctl chat` or the lower-level session commands shown above. A real-provider turn makes one
 bounded request, commits the normalized response and usage, runs deterministic integrity
 validation, and supports recorded-only replay without another network call. Definite transient

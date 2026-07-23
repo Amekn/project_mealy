@@ -401,7 +401,8 @@ inhibition, and require a custom unit's activation command to link its exact saf
 GitHub-hosted runner or disposable container's user manager,
 first drives full subscription-backed `onboard` through provider probing, default service
 installation/start, authenticated health/doctor, the composed chat handoff, and one visible plus
-searchable successful durable model turn before leaving chat cleanly. It removes that exact
+searchable successful durable model turn with the expected provider/model status, context boundary,
+and exact terminal token/cost/call accounting before leaving chat cleanly. It removes that exact
 default unit and home before the existing independent service proof.
 That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
@@ -509,9 +510,10 @@ rejection of malformed or oversized envelopes. The public validation and Phase 2
 then cross restart and zero-live-call replay using the same storage path.
 
 `apps/mealyctl/tests/chat_pty.rs` runs the actual chat binary on a Linux pseudo-terminal against a
-control endpoint that deliberately holds admission open. It proves a second prompt is available
-while that request remains in flight and `/quit` promptly aborts only local tracking. This guards
-the concurrent REPL behavior at a real terminal boundary instead of only testing its parser.
+control endpoint that deliberately holds admission open. It proves the startup and refreshed
+`/status` views use the authenticated provider/model and token limits, a subsequent prompt is
+available while admission remains in flight, and `/quit` promptly aborts only local tracking. This
+guards the concurrent REPL behavior at a real terminal boundary instead of only testing its parser.
 
 Replay reports evidence as incomplete when an excluded artifact-backed context item cannot be
 byte-for-byte reconstructed inside the SQLite-only verifier. The artifact adapter still verifies

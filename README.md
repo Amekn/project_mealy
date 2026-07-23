@@ -61,9 +61,11 @@ target/release/mealyctl --home "$HOME/.mealy" doctor
 target/release/mealyctl --home "$HOME/.mealy" chat
 ```
 
-At the `you>` prompt, plain text queues a turn and `/help` lists steering, approvals, memory,
-governed tools, and `/attach PATH`. See the [quickstart](docs/QUICKSTART.md) for detailed provider
-setup and capabilities,
+At the `you>` prompt, plain text queues a turn, `/status` shows the live provider/model, health,
+context/output limits, configured prices, and request pressure, and `/help` lists steering,
+approvals, memory, governed tools, and `/attach PATH`. Each terminal turn reports its exact
+recorded input/output tokens, provider-neutral cost microunits, model/tool calls, and retries. See
+the [quickstart](docs/QUICKSTART.md) for detailed provider setup and capabilities,
 the [CLI reference](docs/CLI.md) for the complete public command map, or the
 [release guide](docs/RELEASE.md) for attested archive and native-package
 install/upgrade/rollback behavior. Treat a build as published only when its exact tag workflow has

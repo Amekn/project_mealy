@@ -630,6 +630,13 @@ diverges from the documented family contract.
 - a searchable documentation site generated from the checked Markdown; and
 - screenshots or terminal recordings validated against the release.
 
+Post-benchmark implementation status: the first daily-use slice now places authenticated provider
+health in chat and adds startup plus refreshable `/status` views for model, locality, context/output
+limits, provider overhead, configured prices, queue state, and per-route pressure. Terminal turns
+also show exact durable tokens, provider-neutral cost microunits, model/tool calls, and retries.
+Provider switching deliberately remains a stopped-daemon transaction until a guided flow can
+preserve the existing review, restart, health, and rollback boundary.
+
 ## Definition of competitor-grade onboarding
 
 The onboarding goal is complete only when an ordinary supported-Linux user can:

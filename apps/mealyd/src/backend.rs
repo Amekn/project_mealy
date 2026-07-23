@@ -487,6 +487,15 @@ impl ApiBackend for RuntimeBackend {
             provider_health: self.provider.health_status().to_owned(),
             provider_id: provider.provider_id,
             provider_model_id: provider.model_id,
+            provider_context_tokens: provider.context_tokens,
+            provider_maximum_output_tokens: provider.maximum_output_tokens,
+            provider_input_token_overhead: provider.input_token_overhead,
+            provider_input_microunits_per_million_tokens: provider
+                .pricing
+                .input_microunits_per_million_tokens,
+            provider_output_microunits_per_million_tokens: provider
+                .pricing
+                .output_microunits_per_million_tokens,
             provider_residency: provider.residency,
             provider_local: provider.local,
             provider_endpoints,

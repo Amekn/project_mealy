@@ -65,6 +65,7 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
         1,
         Duration::from_secs(5),
     );
+    assert_chat_status_is_visible_and_refreshable(&mut terminal, &mut rendered);
 
     let attach_command = format!("/attach {}\n", attachment.display());
     terminal
@@ -95,7 +96,7 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
         &mut terminal,
         &mut rendered,
         b"you> ",
-        2,
+        3,
         Duration::from_secs(1),
     );
     assert!(!state.completed.load(Ordering::SeqCst));
@@ -114,6 +115,42 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
     );
     assert!(!state.completed.load(Ordering::SeqCst));
     server.abort();
+}
+
+fn assert_chat_status_is_visible_and_refreshable(terminal: &mut File, rendered: &mut Vec<u8>) {
+    wait_for_occurrences(
+        terminal,
+        rendered,
+        b"provider> fixture | model fixture | health healthy | local (local)",
+        1,
+        Duration::from_secs(1),
+    );
+    wait_for_occurrences(
+        terminal,
+        rendered,
+        b"limits> context 32768 tokens (2048 provider overhead) | max response 4096 tokens",
+        1,
+        Duration::from_secs(1),
+    );
+    wait_for_occurrences(
+        terminal,
+        rendered,
+        b"route 1> fixture / fixture | healthy | 0/2 in flight | 3/60 this UTC minute",
+        1,
+        Duration::from_secs(1),
+    );
+    terminal
+        .write_all(b"/status\n")
+        .and_then(|()| terminal.flush())
+        .expect("request live chat status");
+    wait_for_occurrences(
+        terminal,
+        rendered,
+        b"provider> fixture | model fixture | health healthy | local (local)",
+        2,
+        Duration::from_secs(2),
+    );
+    wait_for_occurrences(terminal, rendered, b"you> ", 2, Duration::from_secs(1));
 }
 
 async fn spawn_control_plane(state: AdmissionState) -> (String, JoinHandle<()>) {
@@ -156,9 +193,30 @@ async fn admin_status() -> Json<serde_json::Value> {
         "providerHealth": "healthy",
         "providerId": "fixture",
         "providerModelId": "fixture",
+        "providerContextTokens": 32768,
+        "providerMaximumOutputTokens": 4096,
+        "providerInputTokenOverhead": 2048,
+        "providerInputMicrounitsPerMillionTokens": 0,
+        "providerOutputMicrounitsPerMillionTokens": 0,
         "providerResidency": "local",
         "providerLocal": true,
-        "providerEndpoints": [],
+        "providerEndpoints": [{
+            "protocol": "openai_responses",
+            "providerId": "fixture",
+            "modelId": "fixture",
+            "residency": "local",
+            "local": true,
+            "streaming": true,
+            "health": "healthy",
+            "estimatedLatencyMs": 10,
+            "invocationCount": 4,
+            "inFlightRequests": 0,
+            "maximumConcurrentRequests": 2,
+            "requestsInCurrentMinute": 3,
+            "requestsPerMinute": 60,
+            "lastSuccessAtMs": 1_800_000_000_000_i64,
+            "lastFailureAtMs": null
+        }],
         "enabledReadTools": [],
         "enabledActionTools": [],
         "extensionHostHealth": "healthy",

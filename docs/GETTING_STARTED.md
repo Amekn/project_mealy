@@ -110,9 +110,11 @@ To return later, start or resume the durable interactive client directly:
 mealyctl --home "$HOME/.mealy" chat
 ```
 
-`/help` lists session controls, approvals, memory, attachments, and
-governed action modes. The owner service survives logout/reboot when the host's systemd user
-manager and lingering policy provide that behavior.
+`/status` shows the live provider/model, health, locality, context/output limits, exact configured
+prices, and current request pressure. Every terminal turn prints its recorded input/output tokens,
+provider-neutral cost microunits, model/tool calls, and retries. `/help` lists session controls,
+approvals, memory, attachments, and governed action modes. The owner service survives logout/reboot
+when the host's systemd user manager and lingering policy provide that behavior.
 
 Recheck the installation at any time:
 
