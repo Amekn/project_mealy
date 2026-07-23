@@ -136,7 +136,8 @@ docker run --rm \
   --volume "$assets:/assets" \
   "$arch_image" bash -lc '
     set -euo pipefail
-    useradd --create-home --uid 1000 builder
+    trap "chown -R \"$HOST_UID:$HOST_GID\" /assets 2>/dev/null || true" EXIT
+    useradd --create-home --uid 2000 builder
     chown builder /assets
     install -d -o builder -g builder /tmp/mealy-arch
     cat >/tmp/mealy-arch/PKGBUILD <<EOF
@@ -159,7 +160,6 @@ EOF
     runuser -u builder -- env PKGDEST=/assets \
       makepkg --cleanbuild --force --nodeps --noconfirm \
       --dir /tmp/mealy-arch >/dev/null
-    chown "$HOST_UID:$HOST_GID" /assets/*.pkg.tar.zst
   '
 
 expected_assets=$(
