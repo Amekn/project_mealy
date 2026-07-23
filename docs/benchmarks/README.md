@@ -36,15 +36,20 @@ scripts/run-soak.sh --release \
 ```
 
 The checked [release soak](release-soak.json) is the clean packaged-binary durability observation.
-It ran for 86,407.054 seconds, completed 19,248 turns across eight sessions, survived 48 hard
-restarts, retained 1,129 exact duplicate admissions, recovered 53 interrupted-provider turns and
-one retried read-tool turn, and resumed one undispatched model turn plus two undispatched read-tool
-turns. It finished with SQLite integrity `ok`, complete recorded-only replay, clean drain, and zero
-residual work. It binds clean schema-16 revision `ee1377d`, exact external `mealyd` SHA-256
-`7a3ac557354533a086e0078407e97ce6a82aeb91a51fb228dcb2a930de589635`, and a retained disk-backed
-Btrfs home. Peak RSS was 299,772 KiB; p95/p99 latency was 8.395/10.292 seconds while the database
-grew to 1,693,822,976 bytes, or 87,999 bytes per completed turn. These are observed durability
+It ran for 86,409.247 seconds, completed 19,248 turns across eight sessions, survived 48 hard
+restarts, retained 1,129 exact duplicate admissions, recovered 51 interrupted-provider turns, and
+resumed two undispatched model turns plus two undispatched read-tool turns. It finished with SQLite
+integrity `ok`, complete recorded-only replay, clean drain, and zero residual work. It binds clean
+schema-16 revision `9b3653f`, exact external `mealyd` SHA-256
+`7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc`, and a retained disk-backed
+Btrfs home. Peak RSS was 296,460 KiB; p95/p99 latency was 8.372/10.292 seconds while the database
+grew to 1,693,863,936 bytes, or 88,002 bytes per completed turn. These are observed durability
 measurements, not portable resource or latency guarantees.
+The unedited report SHA-256 is
+`6b02f4cdfb059e6e1c5685fcde39b7a91aee748266b3276a7700dc14ed241c50`. After clean drain, the
+stopped retained database independently returned `ok` from a full SQLite `integrity_check`, and a
+fresh authenticated download of the manifest-pinned draft asset was byte-identical to the retained
+daemon before the evidence change was committed.
 
 The report remains byte-for-byte identical to the harness output and names a clean commit that is
 an ancestor of the report-bearing and release commits, so the current release gate needs no

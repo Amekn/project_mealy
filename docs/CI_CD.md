@@ -187,11 +187,17 @@ gh release create "$staging_tag" "$staging/$asset_name" --draft --verify-tag \
 rm -rf -- "$staging"
 ```
 
-Derive the checked manifest from GitHub's current release and asset metadata; never type its ID,
-size, or digest from memory:
+Derive the checked manifest from GitHub's current authenticated release-list and asset metadata;
+never type its ID, size, or digest from memory. Drafts do not have a stable public tag URL, so
+select exactly one matching draft from the owner-visible list rather than using the public
+release-by-tag endpoint:
 
 ```sh
-release=$(gh api "repos/$repository/releases/tags/$staging_tag")
+releases=$(gh api --method GET "repos/$repository/releases" -F per_page=100)
+release=$(jq -cer --arg tag "$staging_tag" '
+  [.[] | select(.tag_name == $tag)]
+  | if length == 1 then .[0] else error("release identity") end
+  ' <<<"$releases")
 release_id=$(jq -er '.id' <<<"$release")
 asset=$(jq -er --arg name "$asset_name" \
   '[.assets[] | select(.name == $name)] | if length == 1 then .[0] else error("asset identity") end' \
