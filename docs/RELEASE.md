@@ -340,6 +340,7 @@ scripts/installed-package-smoke.sh \
   "dist/mealy-v${VERSION#v}-${TARGET}.tar.gz" dist/SHA256SUMS dist/install-mealy.sh
 scripts/installed-deb-smoke.sh "dist/mealy_${DEB_VERSION}_${DEB_ARCH}.deb"
 scripts/systemd-service-smoke.sh target/release/mealyd target/release/mealyctl
+scripts/installed-update-rollback-smoke.sh target/release/mealyd target/release/mealyctl
 ```
 
 Run the systemd proof in a disposable container with its own user manager when possible. Every
@@ -348,6 +349,14 @@ sets `MEALY_SYSTEMD_SMOKE_ALLOW_HOST=true`; the GitHub-hosted workflow sets that
 on its reviewed steps. It permits temporary unit linking, manager reload, enablement, and removal in
 the current user's manager. Even with opt-in, the proof refuses a manager carrying more than 1,024
 failed units before requesting reload. It is a test-maintainer command, not an installation step.
+
+The installed update proof uses the same disposable user manager. It creates a real current
+managed archive and a checksum-valid synthetic next patch whose daemon never becomes ready and
+whose client deliberately cannot report installation state. The preserved current helper must
+verify both slots without executing candidate code, automatically restore the prior package, pass
+health and `doctor`, retain the pre-update task and backup, and leave a durable `rolled-back`
+transaction. It tests post-activation recovery; remote release acquisition and GitHub provenance
+remain separate mandatory trust gates.
 
 The archive script first proves the exact release installer matches its unique checksum entry, then uses
 only that installer and the installed package binaries. It verifies the installed CLI generates a

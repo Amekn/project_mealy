@@ -121,9 +121,13 @@ delegate to the locked manager. The archive, Debian, RPM, and Arch installed-run
 assert the detected owner and handoff. This closes the lifecycle discovery and safe delegation
 slice. A later stacked slice now composes same-schema archive apply into a separately supervised,
 durably phased transaction with immutable pre-update backup, drain/stop/start, target
-version/commit plus health/`doctor` qualification, and automatic verified-slot rollback. Its
-restart/failure-injection and installed-package acceptance must still pass before it is qualified.
-Service removal, signed repository delivery, and tag-qualified public acceptance remain open.
+version/commit plus health/`doctor` qualification, and automatic verified-slot rollback.
+`scripts/installed-update-rollback-smoke.sh` supplies the missing clean installed failure
+injection: a checksum-valid but unready newer daemon and unusable newer client are activated under
+the real systemd user unit; the immutable old helper independently verifies both package slots,
+restores the previous release, retires itself, and must recover health, `doctor`, the pre-update
+backup, and a durable task. Protected CI and native tag jobs make this qualification mandatory.
+Signed repository delivery and tag-qualified public acceptance remain open.
 
 The release-quality row's clean soak remains valid historical schema-16 evidence for exact
 version-0.1.0 revision `9b3653f` and daemon SHA-256

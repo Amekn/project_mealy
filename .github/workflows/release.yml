@@ -258,6 +258,12 @@ jobs:
         env:
           MEALY_SYSTEMD_SMOKE_ALLOW_HOST: 'true'
         run: scripts/systemd-service-smoke.sh target/release/mealyd target/release/mealyctl
+      - name: Verify exact release can recover a failed installed update
+        env:
+          MEALY_UPDATE_ROLLBACK_SMOKE_ALLOW_HOST: 'true'
+        run: >-
+          scripts/installed-update-rollback-smoke.sh
+          target/release/mealyd target/release/mealyctl
       - name: Prepare bounded SBOM input
         shell: bash
         run: |

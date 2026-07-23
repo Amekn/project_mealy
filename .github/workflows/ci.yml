@@ -108,6 +108,7 @@ jobs:
             scripts/fetch-zizmor.sh
             scripts/generate-third-party-licenses.sh
             scripts/installed-package-smoke.sh
+            scripts/installed-update-rollback-smoke.sh
             scripts/installed-arch-smoke.sh
             scripts/installed-deb-smoke.sh
             scripts/installed-rpm-smoke.sh
@@ -303,6 +304,15 @@ jobs:
           test "$guard_status" -eq 73
           grep -Fq 'refusing to mutate a non-isolated systemd user manager' <<<"$guard_output"
           scripts/systemd-service-smoke.sh target/debug/mealyd target/debug/mealyctl
+      - name: Verify installed update failure restores the prior release
+        env:
+          MEALY_UPDATE_ROLLBACK_SMOKE_ALLOW_HOST: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/build-release-binaries.sh
+          scripts/installed-update-rollback-smoke.sh \
+            target/release/mealyd target/release/mealyctl
 
   linux-browser-conformance:
     name: Linux rendered-browser conformance

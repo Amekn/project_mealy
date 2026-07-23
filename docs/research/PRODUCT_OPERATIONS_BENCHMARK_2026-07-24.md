@@ -23,11 +23,14 @@ automatic same-schema slot rollback.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:
-installed two-release failure-injection acceptance for that update transaction,
-signed distribution repositories, and a published qualifying tag remain open.
+signed distribution repositories and a published qualifying tag remain open.
 Exact generated-service removal is now plan-first and composed into owner-local
-uninstall. All newer work remains next-release source until
-installed-package and supported-distribution acceptance qualify it.
+uninstall. Installed two-release failure injection now activates a checksum-valid
+but deliberately unready newer package under the real owner service, proves the
+preserved old helper verifies candidate bytes without executing its broken
+client, and requires automatic rollback plus health, `doctor`, backup, and
+durable-task preservation. All newer work remains next-release source until
+protected installed-package and supported-distribution acceptance qualify it.
 
 ## Executive result
 

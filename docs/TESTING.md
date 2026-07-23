@@ -412,6 +412,18 @@ variable and requires the guard to exit 73 with its exact refusal before running
 An opted-in manager with more than 1,024 failed units is also refused before link or reload; the
 script never clears unrelated diagnostic state on the operator's behalf.
 
+`scripts/installed-update-rollback-smoke.sh` follows that clean user-manager proof with two real
+managed archive slots. It packages and installs the already-built release binaries, creates a
+durable successful turn and verified pre-update backup, then activates a checksum-valid synthetic
+next patch whose daemon remains active but never becomes ready and whose client cannot service any
+command. The private old helper must inspect manifests and every payload digest itself without
+executing that candidate client, time out candidate qualification, stop it, exchange the verified
+slots through the stable manager, restart and qualify the old service, and retire its helper copy.
+The process gate requires a `rolled-back` durable transaction, exact old version/commit, green
+health and `doctor`, searchable pre-update task, restorable backup, preserved home, and explicit
+service cleanup. Remote GitHub acquisition/provenance is intentionally outside this failure
+fixture and remains covered by the update trust tests and tag publication workflow.
+
 Release binaries must be built through `scripts/build-release-binaries.sh`; `--auditable` is the
 tag-workflow mode. The helper rejects inherited Rust flags, remaps account, Cargo, repository, and
 relative source paths to stable virtual identities, then scans both executables for the exact host

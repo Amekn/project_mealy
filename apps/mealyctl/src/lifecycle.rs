@@ -374,7 +374,12 @@ pub(crate) fn inspect_current_installation() -> Result<InstallationStatus, Lifec
     Ok(inspect_executable(&executable))
 }
 
-/// Inspect the binary currently active in a managed prefix through its own compiled identity.
+/// Inspect the active managed prefix using this already-qualified process.
+///
+/// Recovery must not execute the candidate client: the candidate may be precisely the component
+/// that failed after activation. This path verifies the manifest and every payload digest
+/// directly while the ordinary current-installation path additionally binds the manifest version
+/// to the running client's compiled version.
 pub(crate) fn inspect_managed_prefix(prefix: &Path) -> Result<InstallationStatus, LifecycleError> {
     let prefix = canonical_real_directory(prefix)?;
     let executable = prefix.join("bin/mealyctl");
@@ -386,20 +391,14 @@ pub(crate) fn inspect_managed_prefix(prefix: &Path) -> Result<InstallationStatus
     {
         return Err(LifecycleError::InvalidInstalledStatus);
     }
-    let output = Command::new(&executable)
-        .arg("install-status")
-        .env_clear()
-        .env("PATH", lifecycle_path())
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|_| LifecycleError::InvalidInstalledStatus)?;
-    if !output.status.success() || output.stdout.len() > MAXIMUM_UPDATE_CHECK_BYTES {
+    if executable
+        .canonicalize()
+        .map_err(LifecycleError::UpdateTransactionIo)?
+        != executable
+    {
         return Err(LifecycleError::InvalidInstalledStatus);
     }
-    let status: InstallationStatus = serde_json::from_slice(&output.stdout)
-        .map_err(|_| LifecycleError::InvalidInstalledStatus)?;
+    let status = inspect_archive_executable(&executable, &prefix, None);
     if status.schema_version != STATUS_SCHEMA_VERSION
         || status.installation_kind != InstallationKind::ManagedArchive
         || status.integrity != IntegrityStatus::Verified
@@ -917,7 +916,12 @@ pub(crate) fn rollback_update_transaction(
     if !installation.rollback_available {
         return Err(LifecycleError::ManagerActionUnavailable("rollback"));
     }
-    run_archive_manager(&installation, &record.home, ArchiveManagerAction::Rollback)?;
+    run_archive_manager_inner(
+        &installation,
+        &record.home,
+        ArchiveManagerAction::Rollback,
+        true,
+    )?;
     if active_transaction_slot(record)? != ActiveTransactionSlot::Previous {
         return Err(LifecycleError::InvalidInstalledStatus);
     }
@@ -1113,40 +1117,7 @@ fn inspect_executable(executable: &Path) -> InstallationStatus {
     if let Some(prefix) = archive_prefix(executable) {
         let release_root = prefix.join("share/mealy");
         if release_root.exists() || prefix.join("share/mealy-manager.sh").exists() {
-            let mut active = inspect_slot(SlotLayout::Archive {
-                prefix,
-                metadata: &release_root,
-                suffix: "",
-            });
-            let previous_root = prefix.join("share/mealy.previous");
-            let previous = inspect_slot(SlotLayout::Archive {
-                prefix,
-                metadata: &previous_root,
-                suffix: ".previous",
-            });
-            let rollback_available = previous.manifest.is_some() && previous.issues.is_empty();
-            let stable_manager = prefix.join("share/mealy-manager.sh");
-            let stable_digest = digest_regular_file(&stable_manager).ok();
-            let active_manager_digest = expected_slot_digest(&release_root, "install.sh");
-            let previous_manager_digest = rollback_available
-                .then(|| expected_slot_digest(&previous_root, "install.sh"))
-                .flatten();
-            if stable_digest.is_none()
-                || (stable_digest != active_manager_digest
-                    && stable_digest != previous_manager_digest)
-            {
-                active.issues.push(STABLE_MANAGER_ISSUE.to_owned());
-            }
-            return published_status(
-                executable,
-                InstallationKind::ManagedArchive,
-                UpdateMode::AttestedArchive,
-                Some(prefix.to_owned()),
-                release_root,
-                active,
-                rollback_available,
-                None,
-            );
+            return inspect_archive_executable(executable, prefix, Some(compiled_version.as_str()));
         }
     }
 
@@ -1162,6 +1133,7 @@ fn inspect_executable(executable: &Path) -> InstallationStatus {
             inspect_slot(SlotLayout::Native { root: native_root }),
             false,
             command,
+            Some(compiled_version.as_str()),
         );
     }
 
@@ -1189,6 +1161,48 @@ fn inspect_executable(executable: &Path) -> InstallationStatus {
         native_update_command: None,
         issues: Vec::new(),
     }
+}
+
+fn inspect_archive_executable(
+    executable: &Path,
+    prefix: &Path,
+    running_version: Option<&str>,
+) -> InstallationStatus {
+    let release_root = prefix.join("share/mealy");
+    let mut active = inspect_slot(SlotLayout::Archive {
+        prefix,
+        metadata: &release_root,
+        suffix: "",
+    });
+    let previous_root = prefix.join("share/mealy.previous");
+    let previous = inspect_slot(SlotLayout::Archive {
+        prefix,
+        metadata: &previous_root,
+        suffix: ".previous",
+    });
+    let rollback_available = previous.manifest.is_some() && previous.issues.is_empty();
+    let stable_manager = prefix.join("share/mealy-manager.sh");
+    let stable_digest = digest_regular_file(&stable_manager).ok();
+    let active_manager_digest = expected_slot_digest(&release_root, "install.sh");
+    let previous_manager_digest = rollback_available
+        .then(|| expected_slot_digest(&previous_root, "install.sh"))
+        .flatten();
+    if stable_digest.is_none()
+        || (stable_digest != active_manager_digest && stable_digest != previous_manager_digest)
+    {
+        active.issues.push(STABLE_MANAGER_ISSUE.to_owned());
+    }
+    published_status(
+        executable,
+        InstallationKind::ManagedArchive,
+        UpdateMode::AttestedArchive,
+        Some(prefix.to_owned()),
+        release_root,
+        active,
+        rollback_available,
+        None,
+        running_version,
+    )
 }
 
 /// Restore only the stable archive manager from the complete verified active slot.
@@ -1257,6 +1271,15 @@ pub(crate) fn run_archive_manager(
     home: &Path,
     action: ArchiveManagerAction,
 ) -> Result<(), LifecycleError> {
+    run_archive_manager_inner(installation, home, action, false)
+}
+
+fn run_archive_manager_inner(
+    installation: &InstallationStatus,
+    home: &Path,
+    action: ArchiveManagerAction,
+    machine_readable_parent: bool,
+) -> Result<(), LifecycleError> {
     if installation.installation_kind != InstallationKind::ManagedArchive
         || installation.integrity != IntegrityStatus::Verified
         || (matches!(action, ArchiveManagerAction::Rollback) && !installation.rollback_available)
@@ -1281,8 +1304,12 @@ pub(crate) fn run_archive_manager(
         .env("PATH", lifecycle_path())
         .env("LC_ALL", "C")
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    if machine_readable_parent {
+        command.stdout(Stdio::null());
+    } else {
+        command.stdout(Stdio::inherit());
+    }
     if let Some(value) = home_environment {
         command.env("HOME", value);
     }
@@ -1309,11 +1336,12 @@ fn published_status(
     mut slot: SlotInspection,
     rollback_available: bool,
     native_update_command: Option<String>,
+    running_version: Option<&str>,
 ) -> InstallationStatus {
     if slot
         .manifest
         .as_ref()
-        .is_some_and(|manifest| manifest.version != env!("CARGO_PKG_VERSION"))
+        .is_some_and(|manifest| running_version.is_some_and(|version| manifest.version != version))
     {
         slot.issues
             .push("active release manifest version does not match the running mealyctl".to_owned());
@@ -1861,6 +1889,60 @@ mod tests {
         assert_eq!(status.integrity, IntegrityStatus::Verified);
         assert_eq!(status.update_mode, UpdateMode::AttestedArchive);
         assert!(status.issues.is_empty());
+    }
+
+    #[test]
+    fn old_helper_inspects_new_slot_without_executing_candidate_client() {
+        let (_temporary, executable) = fixture();
+        let prefix = executable
+            .parent()
+            .and_then(Path::parent)
+            .expect("managed prefix");
+        let metadata = prefix.join("share/mealy");
+        let manifest_path = metadata.join("BUILD-MANIFEST.json");
+        let manifest = format!(
+            "{{\"schemaVersion\":\"mealy.release.v2\",\"version\":\"0.2.0\",\"target\":\"linux-x86_64-gnu\",\"commit\":\"{}\",\"sourceDateEpoch\":1,\"stateSchemaVersion\":15,\"sbom\":\"SBOM.cdx.json\",\"licenses\":\"THIRD-PARTY-LICENSES.html\"}}\n",
+            "b".repeat(40)
+        );
+        fs::write(&manifest_path, manifest.as_bytes()).expect("newer manifest");
+        let checksum_path = metadata.join("PAYLOAD-SHA256SUMS");
+        let checksums = fs::read_to_string(&checksum_path).expect("checksum inventory");
+        let replacement = format!(
+            "{}  BUILD-MANIFEST.json",
+            lowercase_hex(&Sha256::digest(manifest.as_bytes()))
+        );
+        let checksums = checksums
+            .lines()
+            .map(|line| {
+                if line.ends_with("  BUILD-MANIFEST.json") {
+                    replacement.as_str()
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(checksum_path, checksums).expect("updated checksum inventory");
+
+        let running_identity = inspect_executable(&executable);
+        assert_eq!(running_identity.integrity, IntegrityStatus::Failed);
+        assert!(running_identity.issues.iter().any(|issue| {
+            issue.contains("active release manifest version does not match the running mealyctl")
+        }));
+
+        let recovered = inspect_managed_prefix(prefix).expect("old-helper prefix inspection");
+        assert_eq!(recovered.integrity, IntegrityStatus::Verified);
+        assert_eq!(recovered.current_version, "0.2.0");
+        let expected_commit = "b".repeat(40);
+        assert_eq!(
+            recovered.current_commit.as_deref(),
+            Some(expected_commit.as_str())
+        );
+        assert!(
+            recovered.issues.is_empty(),
+            "candidate bytes are verified directly without invoking the non-executable fixture"
+        );
     }
 
     #[test]
