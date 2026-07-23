@@ -218,7 +218,9 @@ if [[ ! -f $default_unit ]] \
   echo "onboarding did not install the expected default owner unit" >&2
   exit 70
 fi
-systemctl_user reset-failed mealy.service >/dev/null
+# The bounded drain above already proved the service inactive. `disable --now`
+# may garbage-collect that clean unit immediately, so there is no failed state
+# to reset and a named reset would incorrectly fail with "unit not loaded".
 rm -- "$default_unit"
 default_unit_created=false
 systemctl_user daemon-reload
