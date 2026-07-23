@@ -32,6 +32,10 @@ Make sure `$HOME/.local/bin` is on `PATH`, then check the installed client:
 mealyctl --version
 ```
 
+Mealy uses the private durable `$HOME/.mealy` directory by default. That location does not change
+when you run commands from a different working directory. Set `MEALY_HOME` or pass `--home` only
+when you intentionally need another owner-private location.
+
 ## 2. Choose how Mealy reaches a model
 
 `mealyctl onboard` offers these routes:
@@ -59,7 +63,7 @@ For the recommended no-paid-credit route:
 
 ```sh
 export OPENROUTER_API_KEY='replace-with-your-key'
-mealyctl --home "$HOME/.mealy" onboard --route openrouter-free
+mealyctl onboard --route openrouter-free
 unset OPENROUTER_API_KEY
 ```
 
@@ -72,7 +76,7 @@ For an authenticated custom endpoint:
 
 ```sh
 export CUSTOM_API_KEY='replace-with-your-endpoint-key'
-mealyctl --home "$HOME/.mealy" onboard \
+mealyctl onboard \
   --route custom \
   --base-url 'https://your-endpoint.example/v1' \
   --credential-env CUSTOM_API_KEY
@@ -85,7 +89,7 @@ private remote endpoint. Never put the credential value itself on the command li
 For a credentialless loopback server:
 
 ```sh
-mealyctl --home "$HOME/.mealy" onboard \
+mealyctl onboard \
   --route local \
   --base-url 'http://127.0.0.1:11434/v1'
 ```
@@ -94,7 +98,7 @@ For a subscription, first complete sign-in in the official client, then choose
 `chatgpt-subscription` or `claude-subscription`:
 
 ```sh
-mealyctl --home "$HOME/.mealy" onboard --route chatgpt-subscription
+mealyctl onboard --route chatgpt-subscription
 ```
 
 Onboarding refuses to replace an existing `config.json`. Diagnose an existing running home with
@@ -115,13 +119,13 @@ To return later, continue the most recently updated conversation for this exact 
 owner/channel binding:
 
 ```sh
-mealyctl --home "$HOME/.mealy" chat --continue
+mealyctl chat --continue
 ```
 
 Use plain `chat` when you intentionally want a separate new conversation:
 
 ```sh
-mealyctl --home "$HOME/.mealy" chat
+mealyctl chat
 ```
 
 `--continue` (or `-c`) reopens the latest session and rediscovers its active and queued durable
@@ -138,20 +142,20 @@ Recheck the installation at any time:
 
 ```sh
 mealyctl install-status
-mealyctl --home "$HOME/.mealy" doctor
-mealyctl --home "$HOME/.mealy" status
+mealyctl doctor
+mealyctl status
 ```
 
 Stop before changing provider or other stopped-home configuration:
 
 ```sh
-mealyctl --home "$HOME/.mealy" drain
+mealyctl drain
 ```
 
 Check for an attested stable update without changing anything:
 
 ```sh
-mealyctl --home "$HOME/.mealy" update
+mealyctl update
 ```
 
 The plan identifies an owner-local archive or the native Debian, RPM, or Arch package manager. An

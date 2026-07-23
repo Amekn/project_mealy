@@ -142,7 +142,7 @@ const CHAT_LOCAL_ATTACHMENT_PROMPT: &str =
 #[command(version, about = "Mealy local client and administration CLI")]
 struct Arguments {
     /// Private Mealy state directory containing `connection.json`.
-    #[arg(long, env = "MEALY_HOME", default_value = ".mealy")]
+    #[arg(long, env = "MEALY_HOME", default_value = "~/.mealy")]
     home: PathBuf,
     /// Operation to execute.
     #[command(subcommand)]
@@ -153,7 +153,7 @@ struct Arguments {
 #[command(version, about = "Mealy local client and administration CLI")]
 struct LifecycleArguments {
     /// Private Mealy state directory containing `connection.json`.
-    #[arg(long, env = "MEALY_HOME", default_value = ".mealy")]
+    #[arg(long, env = "MEALY_HOME", default_value = "~/.mealy")]
     home: PathBuf,
     /// Installed-program lifecycle operation to execute.
     #[command(subcommand)]
@@ -2119,6 +2119,33 @@ fn combined_cli_command() -> clap::Command {
     <LifecycleCommand as clap::Subcommand>::augment_subcommands(Arguments::command())
 }
 
+fn stable_default_mealy_home(user_home: Option<OsString>) -> Option<PathBuf> {
+    user_home
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".mealy"))
+}
+
+fn cli_home_override_supplied(arguments: &[OsString]) -> bool {
+    std::env::var_os("MEALY_HOME").is_some()
+        || arguments.iter().skip(1).any(|argument| {
+            argument == "--home"
+                || argument
+                    .to_str()
+                    .is_some_and(|value| value.starts_with("--home="))
+        })
+}
+
+fn resolve_cli_home(parsed: PathBuf, override_supplied: bool) -> Result<PathBuf, CliError> {
+    if override_supplied {
+        return (!parsed.as_os_str().is_empty())
+            .then_some(parsed)
+            .ok_or(CliError::InvalidHome);
+    }
+    stable_default_mealy_home(std::env::var_os("HOME")).ok_or(CliError::DefaultHomeUnavailable)
+}
+
 fn lifecycle_invocation(arguments: &[OsString]) -> bool {
     let mut index = 1;
     while let Some(argument) = arguments.get(index) {
@@ -3003,10 +3030,14 @@ fn remove_verified_owner_service_if_present(_home: &Path) -> Result<(), CliError
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), CliError> {
     let raw_arguments: Vec<OsString> = std::env::args_os().collect();
+    let home_override_supplied = cli_home_override_supplied(&raw_arguments);
     if lifecycle_invocation(&raw_arguments) {
-        return run_lifecycle(LifecycleArguments::parse_from(raw_arguments)).await;
+        let mut arguments = LifecycleArguments::parse_from(raw_arguments);
+        arguments.home = resolve_cli_home(arguments.home, home_override_supplied)?;
+        return run_lifecycle(arguments).await;
     }
-    let arguments = parse_operational_arguments(raw_arguments);
+    let mut arguments = parse_operational_arguments(raw_arguments);
+    arguments.home = resolve_cli_home(arguments.home, home_override_supplied)?;
     if let Command::Onboard(options) = &arguments.command {
         return run_onboard(&arguments.home, options).await;
     }
@@ -14576,6 +14607,16 @@ fn escape_terminal_json(value: &str) -> String {
 /// Command-line client failure.
 #[derive(Debug, Error)]
 enum CliError {
+    /// No safe stable per-user default could be derived from the process environment.
+    #[error(
+        "could not determine the default Mealy home; set an absolute HOME, MEALY_HOME, or --home"
+    )]
+    DefaultHomeUnavailable,
+    /// An explicit Mealy home was empty.
+    #[error(
+        "Mealy home must not be empty; set MEALY_HOME or --home to a private durable directory"
+    )]
+    InvalidHome,
     /// Connection descriptor could not be read.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -14833,9 +14874,9 @@ mod tests {
         observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
         onboard_chat_mode, openrouter_price_is_zero, openrouter_price_microunits_per_million,
         parse_chat_line, prepare_local_text_attachment, resolve_setup, setup_provider_config,
-        should_open_onboard_chat, telegram_pair_api_url, update_recovery_route,
-        validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
-        validate_discord_pair_base_url, validate_provider_probe_envelope,
+        should_open_onboard_chat, stable_default_mealy_home, telegram_pair_api_url,
+        update_recovery_route, validate_anthropic_probe_envelope, validate_anthropic_probe_stream,
+        validate_connection, validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
     };
     #[cfg(target_os = "linux")]
@@ -15304,6 +15345,20 @@ mod tests {
         let bounded = Arguments::try_parse_from(["mealyctl", "usage", "--days", "7"])
             .expect("bounded usage history command");
         assert!(matches!(bounded.command, Command::Usage { days: 7 }));
+    }
+
+    #[test]
+    fn default_home_is_stable_absolute_and_owner_scoped() {
+        assert_eq!(
+            stable_default_mealy_home(Some(OsString::from("/home/mealy-owner"))),
+            Some(PathBuf::from("/home/mealy-owner/.mealy"))
+        );
+        assert_eq!(stable_default_mealy_home(None), None);
+        assert_eq!(stable_default_mealy_home(Some(OsString::new())), None);
+        assert_eq!(
+            stable_default_mealy_home(Some(OsString::from("relative-owner-home"))),
+            None
+        );
     }
 
     #[test]

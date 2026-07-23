@@ -55,18 +55,20 @@ scripts/build-release-binaries.sh
 ```
 
 For a real model on a supported Linux host, run
-`target/release/mealyctl --home "$HOME/.mealy" onboard`. The guided path supports strictly free
-OpenRouter models, authenticated custom OpenAI-compatible endpoints, credentialless loopback
-models, owner-local ChatGPT/Claude subscriptions through their official clients, and advanced
-OpenAI/Anthropic API routes. It probes the route, starts the owner service, and verifies `doctor`
-before opening the first chat on an interactive terminal. Use `--no-chat` for a passive or
-machine-readable handoff. See [getting started](docs/GETTING_STARTED.md) for the short path.
+`target/release/mealyctl onboard`. The client uses the stable private
+`$HOME/.mealy` directory by default, so later commands work from any directory. The guided path
+supports strictly free OpenRouter models, authenticated custom OpenAI-compatible endpoints,
+credentialless loopback models, owner-local ChatGPT/Claude subscriptions through their official
+clients, and advanced OpenAI/Anthropic API routes. It probes the route, starts the owner service,
+and verifies `doctor` before opening the first chat on an interactive terminal. Use `--no-chat`
+for a passive or machine-readable handoff. See [getting started](docs/GETTING_STARTED.md) for the
+short path.
 
 After successful onboarding:
 
 ```sh
-target/release/mealyctl --home "$HOME/.mealy" doctor
-target/release/mealyctl --home "$HOME/.mealy" chat
+target/release/mealyctl doctor
+target/release/mealyctl chat
 ```
 
 At the `you>` prompt, plain text queues a turn, `/status` shows the live provider/model, health,

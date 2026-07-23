@@ -87,9 +87,9 @@ family:
 
 ```sh
 mealyctl --version
-mealyctl --home "$HOME/.mealy" onboard
-mealyctl --home "$HOME/.mealy" doctor
-mealyctl --home "$HOME/.mealy" chat
+mealyctl onboard
+mealyctl doctor
+mealyctl chat
 ```
 
 ## Independent first-trust verification

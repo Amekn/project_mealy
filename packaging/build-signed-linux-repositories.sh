@@ -506,7 +506,7 @@ sudo pacman -Syu mealy</code></pre>
   a credentialless loopback server, ChatGPT or Claude subscription clients, and advanced direct
   APIs. It live-probes the selected route before starting the owner service.</p>
   <pre><code>mealyctl --version
-mealyctl --home "$HOME/.mealy" onboard</code></pre>
+mealyctl onboard</code></pre>
   <p>On a fresh interactive terminal, successful onboarding opens the first durable chat after
   service health and <code>doctor</code> pass.</p>
 </section>
@@ -516,16 +516,16 @@ mealyctl --home "$HOME/.mealy" onboard</code></pre>
   <div class="grid">
     <article class="card">
       <h3>Continue the latest chat</h3>
-      <pre><code>mealyctl --home "$HOME/.mealy" chat --continue</code></pre>
+      <pre><code>mealyctl chat --continue</code></pre>
     </article>
     <article class="card">
       <h3>Check the installation</h3>
       <pre><code>mealyctl install-status
-mealyctl --home "$HOME/.mealy" doctor</code></pre>
+mealyctl doctor</code></pre>
     </article>
     <article class="card">
       <h3>Review an update</h3>
-      <pre><code>mealyctl --home "$HOME/.mealy" update</code></pre>
+      <pre><code>mealyctl update</code></pre>
       <p>The verified plan prints the exact APT, DNF, or Pacman command; the client does not mutate
       a package-manager-owned installation behind its back.</p>
     </article>

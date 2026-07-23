@@ -46,12 +46,12 @@ supervisor requires a separate security review.
 After installation, this is the authoritative host decision:
 
 ```sh
-mealyctl --home "$HOME/.mealy" onboard
-mealyctl --home "$HOME/.mealy" doctor
+mealyctl onboard
+mealyctl doctor
 ```
 
 Do not enable tools if `doctor` reports that `observe` or `workspace_write` is not `enforceable`.
-Stop the daemon with `mealyctl --home "$HOME/.mealy" drain` before changing stopped-home
+Stop the daemon with `mealyctl drain` before changing stopped-home
 configuration.
 
 ## Derivative distributions

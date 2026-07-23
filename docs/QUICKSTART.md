@@ -210,7 +210,7 @@ Ensure `$HOME/.local/bin` is on `PATH`, or use the absolute paths below.
 The shortest supported-Linux path is:
 
 ```sh
-mealyctl --home "$HOME/.mealy" onboard
+mealyctl onboard
 ```
 
 It offers strictly free OpenRouter, authenticated custom, credentialless loopback, ChatGPT

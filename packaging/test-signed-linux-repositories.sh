@@ -225,9 +225,9 @@ for expected in \
   'sudo dnf install mealy' \
   'file:///repository/repository-signing-key.asc' \
   'sudo pacman -Syu mealy' \
-  'mealyctl --home "$HOME/.mealy" onboard' \
-  'mealyctl --home "$HOME/.mealy" chat --continue' \
-  'mealyctl --home "$HOME/.mealy" update' \
+  'mealyctl onboard' \
+  'mealyctl chat --continue' \
+  'mealyctl update' \
   'href="REPOSITORY-MANIFEST.json"' \
   'href="REPOSITORY-MANIFEST.json.asc"' \
   'href="repository-signing-key.asc"' \

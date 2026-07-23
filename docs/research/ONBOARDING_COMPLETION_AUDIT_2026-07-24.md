@@ -15,7 +15,7 @@ therefore remains distinct from “publicly complete.”
 | # | Ordinary-user outcome | Authoritative evidence | Current conclusion |
 | --- | --- | --- | --- |
 | 1 | Obtain an attested package without Rust | `packaging/install-release.sh` verifies exact release-workflow Sigstore bundles and complete checksums; native packages and `packaging/build-signed-linux-repositories.sh` cover APT, DNF, and Pacman; package/repository clean-install tests cover every qualified family. | **Source-ready, public-release gated.** No source checkout can substitute for the first qualifying published tag and public repository acceptance. |
-| 2 | Run one guided command | `mealyctl onboard` composes provider selection, reviewed activation, service installation/start, health, `doctor`, and chat; the verified interactive bootstrap hands off to that installed command. | **Source-ready and process-tested.** |
+| 2 | Run one guided command | `mealyctl onboard` composes provider selection, reviewed activation, service installation/start, health, `doctor`, and chat; the verified interactive bootstrap hands off to that installed command. The implicit private home is the stable `$HOME/.mealy`, not a directory-relative `.mealy`, and a process proof reuses it after changing working directories. | **Source-ready and process-tested.** |
 | 3 | Choose free, subscription, local, custom, or advanced API routes without researching accounting | The `OnboardRouteArgument` command surface and provider-configuration process tests cover strict free OpenRouter, authenticated custom Responses, credentialless loopback, official Codex/Claude subscription clients, OpenAI API, and Anthropic API. Catalog routes derive limits/prices; advanced routes require explicit conservative values. | **Source-ready and fixture-tested.** OpenRouter free remains subject to exact live acceptance for publication. |
 | 4 | See a bounded live route probe pass | Onboarding calls the existing byte-, event-, identity-, timeout-, and model-bounded provider probes before activation. Provider process tests cover each protocol and redaction; the private custom endpoint has separate live acceptance. | **Source-ready.** The release still requires reviewed free-OpenRouter live evidence. |
 | 5 | Have the owner service installed and running | `scripts/systemd-service-smoke.sh` starts from a clean home, uses the real generated enabled systemd user unit, requires health plus sandbox-conformant `doctor`, and executes a governed mutation. Protected Linux CI prepares a clean user manager with lingering enabled. | **Source-ready and installed-service tested.** |
@@ -38,6 +38,9 @@ The composed path also has direct negative evidence:
 - service-start or bounded readiness failure preserves the configured home and reports the
   completed boundary;
 - `--configure-only` makes an intentionally unstarted home explicit; and
+- implicit state resolves to one absolute owner home across working directories, while absent or
+  invalid `HOME` fails with an actionable override instead of creating state in the current
+  directory;
 - owner-service removal stops the still-reviewed loaded unit before disabling its links, avoiding
   the linked-unit `disable --now` ordering failure in systemd 257 while retaining systemd 255
   behavior; and

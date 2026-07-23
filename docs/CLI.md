@@ -4,12 +4,15 @@
 stopped-home configuration boundaries. The global form is:
 
 ```sh
-mealyctl --home "$HOME/.mealy" COMMAND [OPTIONS]
+mealyctl COMMAND [OPTIONS]
 ```
 
-`--home` may also come from `MEALY_HOME`. Keep it on owner-private durable storage. Do not place
-the local bearer token or a provider credential directly on a command line; provider setup imports
-the named environment variable into Mealy's private broker and stores only its opaque reference.
+The default home is the stable private `$HOME/.mealy` directory, independent of the current
+working directory. `--home` or `MEALY_HOME` overrides it for intentional alternative layouts; an
+implicit home is rejected when `HOME` is absent, empty, or relative. Keep the selected location on
+owner-private durable storage. Do not place the local bearer token or a provider credential
+directly on a command line; provider setup imports the named environment variable into Mealy's
+private broker and stores only its opaque reference.
 
 Run `mealyctl --help` for the current public surface and `mealyctl COMMAND --help` for the exact
 arguments of one command. Protected CI compares that real help output with the table below, so a
@@ -86,7 +89,7 @@ the command's JSON error and retryability contract instead of bypassing those st
 
 ## Interactive chat status
 
-`mealyctl --home "$HOME/.mealy" chat` prints a concise status block before the first prompt.
+`mealyctl chat` prints a concise status block before the first prompt.
 `/status` refreshes the same authenticated projection without leaving the conversation. It shows
 the effective provider and model, process-lifetime health, locality/residency, context and maximum
 response tokens, conservative provider-owned input overhead, exact configured input/output prices,
@@ -109,7 +112,7 @@ bounded no-follow regular file and matched its release digest. It distinguishes 
 slots from Debian, RPM, and Arch package ownership. Source builds and unknown layouts never acquire
 a mutating update backend.
 
-`mealyctl --home "$HOME/.mealy" update` performs a no-mutation check by default. The bundled,
+`mealyctl update` performs a no-mutation check by default. The bundled,
 release-digest-bound bootstrap downloads the selected stable release, verifies its exact hosted
 GitHub Actions provenance from the tag, verifies the complete outer checksum inventory, and reads
 the target manifest from the attested archive. The resulting `mealy.update-plan.v1` identifies the
@@ -128,7 +131,7 @@ qualification automatically restores and verifies the prior same-schema slot. Te
 disconnect does not cancel the helper; inspect its durable phase with:
 
 ```sh
-mealyctl --home "$HOME/.mealy" update-status TRANSACTION_UUID
+mealyctl update-status TRANSACTION_UUID
 ```
 
 `aborted` means verification failed before program mutation and the prior service still qualified;
@@ -164,7 +167,7 @@ mealyctl completion fish >"$HOME/.config/fish/completions/mealyctl.fish"
 
 ## Onboarding routes
 
-`mealyctl --home "$HOME/.mealy" onboard` is the ordinary clean-install path. It prompts for one of
+`mealyctl onboard` is the ordinary clean-install path. It prompts for one of
 seven explicit routes: `openrouter-free`, `custom`, `local`, `chatgpt-subscription`,
 `claude-subscription`, `openai-api`, or `anthropic-api`.
 

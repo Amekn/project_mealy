@@ -98,7 +98,10 @@ setup initializes the shared default, performs a real bounded streaming probe, b
 keeps secret bytes out of stdout/stderr/config, retains rollback history, and prints exact
 daemon/doctor/chat handoff commands. Composition-level onboarding scenarios prove a clean
 `--configure-only` transaction, reject a second run without `--reconfigure` while preserving exact
-configuration bytes, discover a live OpenRouter account catalog, exclude paid/incomplete models,
+configuration bytes, and prove the implicit `$HOME/.mealy` remains the exact same state after a
+working-directory change while `--home` and `MEALY_HOME` overrides remain exact (including an
+explicit home without `HOME`). They also discover a live OpenRouter account catalog, exclude
+paid/incomplete models,
 derive exact zero prices and limits for an eligible `:free` model, perform its bounded streaming
 probe, and keep the credential out of all output/config. Both official subscription-client
 fixtures are also exercised through `onboard`, including executable digest pinning and API-key

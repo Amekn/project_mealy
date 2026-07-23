@@ -685,6 +685,102 @@ fn onboarding_configures_a_clean_home_and_refuses_silent_replacement() {
 }
 
 #[test]
+fn implicit_home_survives_working_directory_changes_and_honors_overrides() {
+    let owner = tempfile::tempdir().expect("temporary owner home");
+    let first_directory = tempfile::tempdir().expect("first working directory");
+    let second_directory = tempfile::tempdir().expect("second working directory");
+    let arguments = [
+        "onboard",
+        "--route",
+        "local",
+        "--model",
+        "stable-home-model",
+        "--context-tokens",
+        "32768",
+        "--skip-connectivity-test",
+        "--configure-only",
+        "--approve",
+    ];
+    let configured = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(first_directory.path())
+        .env("HOME", owner.path())
+        .env_remove("MEALY_HOME")
+        .args(arguments)
+        .output()
+        .expect("configure implicit owner home");
+    assert!(
+        configured.status.success(),
+        "implicit-home onboarding failed: {}",
+        String::from_utf8_lossy(&configured.stderr)
+    );
+
+    let expected_home = owner.path().join(".mealy");
+    assert!(expected_home.join("config.json").is_file());
+    assert!(!first_directory.path().join(".mealy").exists());
+    assert!(!second_directory.path().join(".mealy").exists());
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env("HOME", owner.path())
+        .env_remove("MEALY_HOME")
+        .args(["config", "provider-list"])
+        .output()
+        .expect("read implicit owner home from another directory");
+    assert!(
+        listed.status.success(),
+        "cross-directory provider read failed: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let response: Value = serde_json::from_slice(&listed.stdout).expect("provider-list response");
+    assert_eq!(response["primary"]["model"], "stable-home-model");
+
+    let explicit_home = owner.path().join("alternate");
+    let explicit = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env_remove("HOME")
+        .env_remove("MEALY_HOME")
+        .arg("--home")
+        .arg(&explicit_home)
+        .args(arguments)
+        .output()
+        .expect("configure explicit home without HOME");
+    assert!(
+        explicit.status.success(),
+        "explicit-home onboarding failed: {}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    assert!(explicit_home.join("config.json").is_file());
+
+    let environment_home = owner.path().join("environment-override");
+    let environment = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env("HOME", owner.path())
+        .env("MEALY_HOME", &environment_home)
+        .args(arguments)
+        .output()
+        .expect("configure MEALY_HOME override");
+    assert!(
+        environment.status.success(),
+        "MEALY_HOME onboarding failed: {}",
+        String::from_utf8_lossy(&environment.stderr)
+    );
+    assert!(environment_home.join("config.json").is_file());
+
+    let missing_default = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env_remove("HOME")
+        .env_remove("MEALY_HOME")
+        .args(["config", "provider-list"])
+        .output()
+        .expect("reject missing default home");
+    assert!(!missing_default.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_default.stderr)
+            .contains("could not determine the default Mealy home")
+    );
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn onboarding_openrouter_free_route_discovers_and_probes_only_exact_free_metadata() {
     let home = tempfile::tempdir().expect("clean OpenRouter onboarding home");
