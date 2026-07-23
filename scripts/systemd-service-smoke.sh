@@ -218,10 +218,10 @@ if [[ ! -f $default_unit ]] \
   echo "onboarding did not install the expected default owner unit" >&2
   exit 70
 fi
+systemctl_user reset-failed mealy.service >/dev/null
 rm -- "$default_unit"
 default_unit_created=false
 systemctl_user daemon-reload
-systemctl_user reset-failed mealy.service >/dev/null
 rm -rf -- "$home"
 mkdir -m 0700 -- "$home"
 
