@@ -175,11 +175,19 @@ fingerprint=$(gpg --batch --with-colons --list-secret-keys |
   awk -F: '$1 == "sec" {want = 1; next}
     want && $1 == "fpr" {print toupper($10); exit}')
 gpg --quick-add-key "$fingerprint" ed25519 sign 1y
-gpg --armor --export-secret-subkeys "$fingerprint" | base64 -w0
+printf '%s' "$fingerprint" |
+  gh variable set MEALY_REPOSITORY_GPG_FINGERPRINT \
+    --repo Amekn/mealy --env linux-repository-signing
+gpg --armor --export-secret-subkeys "$fingerprint" | base64 -w0 |
+  gh secret set MEALY_REPOSITORY_GPG_PRIVATE_KEY_BASE64 \
+    --repo Amekn/mealy --env linux-repository-signing
 ```
 
 Use a real project-controlled address in the production UID. Do not commit the output, paste it
-into a workflow input, or store the offline primary secret on GitHub. The build imports the
+into a workflow input, or store the offline primary secret on GitHub. Back up the complete offline
+key home and its generated revocation certificate separately before disconnecting that ceremony
+host. The two piped `gh` commands upload the encrypted environment values without printing the
+secret-subkey export. The build imports the
 short-lived signing material into an ephemeral keyring, requires the configured primary
 fingerprint and a usable signing key, removes the exported secret before any third-party action,
 and publishes only the minimal public certificate. RPM dependencies are prepared before the key is
