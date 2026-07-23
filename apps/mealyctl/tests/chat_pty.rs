@@ -11,7 +11,8 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use mealy_protocol::{
     API_VERSION, CreateSessionResponse, DeliveryMode, InputAdmissionResponse, LocalConnectionInfo,
-    SubmitInputRequest, TimelineCursor,
+    SessionStatusResponse, SessionSummaryResponse, SessionsResponse, SubmitInputRequest,
+    TimelineCursor, TimelinePageResponse,
 };
 use rustix::{
     fs::{Mode, OFlags, fcntl_getfl, fcntl_setfl, open},
@@ -25,7 +26,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -39,6 +40,8 @@ struct AdmissionState {
     started: Arc<AtomicBool>,
     completed: Arc<AtomicBool>,
     submitted_content: Arc<Mutex<Option<String>>>,
+    latest_session_available: Arc<AtomicBool>,
+    created_sessions: Arc<AtomicUsize>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -117,6 +120,72 @@ async fn chat_attaches_bounded_text_and_returns_a_prompt_before_admission_finish
     server.abort();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_continue_resumes_the_latest_session_without_creating_another() {
+    let state = AdmissionState::default();
+    state.latest_session_available.store(true, Ordering::SeqCst);
+    let (base_url, server) = spawn_control_plane(state.clone()).await;
+    let home = tempfile::tempdir().expect("temporary Mealy home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
+    write_connection(home.path(), &base_url);
+    let (mut terminal, mut child) = spawn_chat_with_arguments(home.path(), &["--continue"]);
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        format!("Mealy chat session {SESSION_ID}").as_bytes(),
+        1,
+        Duration::from_secs(5),
+    );
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"you> ",
+        1,
+        Duration::from_secs(1),
+    );
+    assert_eq!(state.created_sessions.load(Ordering::SeqCst), 0);
+
+    terminal
+        .write_all(b"/quit\n")
+        .and_then(|()| terminal.flush())
+        .expect("write quit command");
+    let status = wait_for_child(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "continued chat failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_continue_explains_how_to_start_when_no_session_exists() {
+    let state = AdmissionState::default();
+    let (base_url, server) = spawn_control_plane(state).await;
+    let home = tempfile::tempdir().expect("temporary Mealy home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
+    write_connection(home.path(), &base_url);
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(["chat", "--continue"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("run no-history continuation");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("rerun this command without `--continue` to start one"),
+        "unexpected no-history diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.abort();
+}
+
 fn assert_chat_status_is_visible_and_refreshable(terminal: &mut File, rendered: &mut Vec<u8>) {
     wait_for_occurrences(
         terminal,
@@ -160,7 +229,9 @@ async fn spawn_control_plane(state: AdmissionState) -> (String, JoinHandle<()>) 
     let address = listener.local_addr().expect("control-plane address");
     let app = Router::new()
         .route("/v1/admin/status", get(admin_status))
-        .route("/v1/sessions", post(create_session))
+        .route("/v1/sessions", get(list_sessions).post(create_session))
+        .route("/v1/sessions/{session_id}/status", get(session_status))
+        .route("/v1/sessions/{session_id}/timeline", get(session_timeline))
         .route("/v1/sessions/{session_id}/inputs", post(block_admission))
         .with_state(state);
     let server = tokio::spawn(async move {
@@ -239,10 +310,52 @@ async fn admin_status() -> Json<serde_json::Value> {
     }))
 }
 
-async fn create_session() -> Json<CreateSessionResponse> {
+async fn list_sessions(State(state): State<AdmissionState>) -> Json<SessionsResponse> {
+    let sessions = state
+        .latest_session_available
+        .load(Ordering::SeqCst)
+        .then(|| SessionSummaryResponse {
+            session_id: SESSION_ID.to_owned(),
+            status: "active".to_owned(),
+            revision: 1,
+            pending_inputs: 0,
+            active_turn_id: None,
+            created_at_ms: 1_800_000_000_000,
+            updated_at_ms: 1_800_000_000_001,
+        })
+        .into_iter()
+        .collect();
+    Json(SessionsResponse {
+        api_version: API_VERSION.to_owned(),
+        sessions,
+    })
+}
+
+async fn create_session(State(state): State<AdmissionState>) -> Json<CreateSessionResponse> {
+    state.created_sessions.fetch_add(1, Ordering::SeqCst);
     Json(CreateSessionResponse {
         api_version: API_VERSION.to_owned(),
         session_id: SESSION_ID.to_owned(),
+    })
+}
+
+async fn session_status() -> Json<SessionStatusResponse> {
+    Json(SessionStatusResponse {
+        api_version: API_VERSION.to_owned(),
+        session_id: SESSION_ID.to_owned(),
+        revision: 1,
+        pending_inputs: 0,
+        active_turn_id: None,
+        latest_cursor: TimelineCursor(0),
+    })
+}
+
+async fn session_timeline() -> Json<TimelinePageResponse> {
+    Json(TimelinePageResponse {
+        api_version: API_VERSION.to_owned(),
+        events: Vec::new(),
+        high_watermark: TimelineCursor(0),
+        has_more: false,
     })
 }
 
@@ -290,6 +403,10 @@ fn write_connection(home: &std::path::Path, base_url: &str) {
 }
 
 fn spawn_chat(home: &std::path::Path) -> (File, Child) {
+    spawn_chat_with_arguments(home, &[])
+}
+
+fn spawn_chat_with_arguments(home: &std::path::Path, arguments: &[&str]) -> (File, Child) {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("open PTY master");
     grantpt(&master).expect("grant PTY slave");
@@ -310,6 +427,7 @@ fn spawn_chat(home: &std::path::Path) -> (File, Child) {
         .arg("--home")
         .arg(home)
         .arg("chat")
+        .args(arguments)
         .stdin(stdin)
         .stdout(stdout)
         .stderr(stderr)

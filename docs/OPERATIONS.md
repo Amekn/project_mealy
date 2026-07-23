@@ -329,10 +329,15 @@ non-blocking: copy the rendered exact subject into `/approve APPROVAL_ID SUBJECT
 `/deny APPROVAL_ID SUBJECT_DIGEST`. Exiting the client aborts only its local watchers and never
 withdraws an already committed input.
 
-`session list --limit N` (1 through 100) discovers the most recently updated sessions belonging to
-the exact authenticated principal and channel binding, including pending-input and active-turn
-state. Use its ID with `chat --session-id`. Cross-channel sessions are deliberately not merged;
-inspect Telegram bindings through their channel administration view.
+`chat --continue` (or `chat -c`) resumes the most recently updated session belonging to the exact
+authenticated principal and channel binding. It reuses the ordinary bounded history scan before
+accepting input, and it fails with a direct new-chat instruction instead of creating a session when
+no prior local conversation exists.
+
+`session list --limit N` (1 through 100) discovers older sessions for that same binding, including
+pending-input and active-turn state. Use a selected ID with `chat --session-id`. Cross-channel
+sessions are deliberately not merged; inspect Telegram bindings through their channel
+administration view.
 
 ## Backup and restore verification
 

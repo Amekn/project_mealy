@@ -104,11 +104,22 @@ service health and `doctor` pass. Type a prompt at `you>`. Use `--no-chat` when 
 to stop and print the exact next command, or `--chat` to force the chat handoff for a deliberately
 scripted terminal session.
 
-To return later, start or resume the durable interactive client directly:
+To return later, continue the most recently updated conversation for this exact local
+owner/channel binding:
+
+```sh
+mealyctl --home "$HOME/.mealy" chat --continue
+```
+
+Use plain `chat` when you intentionally want a separate new conversation:
 
 ```sh
 mealyctl --home "$HOME/.mealy" chat
 ```
+
+`--continue` (or `-c`) reopens the latest session and rediscovers its active and queued durable
+work. It never silently creates a new session; when no prior conversation exists, the client tells
+you to start one with plain `chat`.
 
 `/status` shows the live provider/model, health, locality, context/output limits, exact configured
 prices, and current request pressure. Every terminal turn prints its recorded input/output tokens,

@@ -226,6 +226,27 @@ grep -Fq \
   'usage> 10 input + 5 output token(s) | 0 configured-cost microunit(s) | 1 model call(s) | 0 tool call(s) | 0 retries' \
   "$onboard_output"
 "$mealyctl" --home "$home" health >/dev/null
+onboarding_session_id=$(awk '
+  $1 == "Mealy" && $2 == "chat" && $3 == "session" {print $4; exit}
+' "$onboard_output")
+if [[ -z $onboarding_session_id ]]; then
+  echo "onboarding did not print its durable session identity" >&2
+  exit 70
+fi
+sessions_before_continue=$("$mealyctl" --home "$home" session list --limit 100)
+continued_output="$unit_directory/continued.stdout"
+printf '/quit\n' \
+  | "$mealyctl" --home "$home" chat --continue >"$continued_output"
+grep -Fqx "Mealy chat session $onboarding_session_id" "$continued_output"
+sessions_after_continue=$("$mealyctl" --home "$home" session list --limit 100)
+jq -e --arg session_id "$onboarding_session_id" '
+  (.sessions | length) == 1
+  and .sessions[0].sessionId == $session_id
+' <<<"$sessions_before_continue" >/dev/null
+jq -e --arg session_id "$onboarding_session_id" '
+  (.sessions | length) == 1
+  and .sessions[0].sessionId == $session_id
+' <<<"$sessions_after_continue" >/dev/null
 search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
 onboarding_task_id=$(jq -er '
   [.hits[] | select(

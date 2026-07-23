@@ -219,8 +219,11 @@ enum Command {
     /// Start or resume a friendly line-oriented durable chat session.
     Chat {
         /// Existing session to resume; a new session is created when omitted.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "continue_latest")]
         session_id: Option<String>,
+        /// Resume the most recently updated session for this exact owner/channel binding.
+        #[arg(short = 'c', long = "continue", conflicts_with = "session_id")]
+        continue_latest: bool,
     },
     /// Session creation, submission, timeline, and status operations.
     Session {
@@ -3073,8 +3076,18 @@ async fn run() -> Result<(), CliError> {
             unreachable!("offline onboarding returned before ordinary API initialization")
         }
         Command::Setup(_) => unreachable!("offline setup returned before API initialization"),
-        Command::Chat { session_id } => {
-            run_chat(&client, &arguments.home, &connection, session_id.as_deref()).await?;
+        Command::Chat {
+            session_id,
+            continue_latest,
+        } => {
+            let selection = if continue_latest {
+                ChatSessionSelection::Latest
+            } else if let Some(session_id) = session_id {
+                ChatSessionSelection::Exact(session_id)
+            } else {
+                ChatSessionSelection::New
+            };
+            run_chat(&client, &arguments.home, &connection, selection).await?;
         }
         Command::Session { command } => {
             run_session(&client, &arguments.home, &connection, command).await?;
@@ -3329,6 +3342,13 @@ enum ChatInput {
     Line(String),
     EndOfFile,
     Failed(String),
+}
+
+#[derive(Debug)]
+enum ChatSessionSelection {
+    New,
+    Exact(String),
+    Latest,
 }
 
 #[derive(Debug)]
@@ -3623,36 +3643,51 @@ async fn run_chat(
     client: &Client,
     home: &Path,
     connection: &LocalConnectionInfo,
-    existing_session_id: Option<&str>,
+    selection: ChatSessionSelection,
 ) -> Result<(), CliError> {
     let provider_status = fetch_chat_status(client, connection).await?;
     let mut memory_workspace = default_chat_memory_workspace(&provider_status);
-    let (session_id, resume_status) = if let Some(session_id) = existing_session_id {
-        let response = authorized(
-            client.get(format!(
-                "{}/v1/sessions/{session_id}/status",
-                connection.base_url
-            )),
-            connection,
-        )
-        .send()
-        .await?;
-        let status = decode::<SessionStatusResponse>(response).await?;
-        (status.session_id.clone(), Some(status))
-    } else {
-        let response = authorized(
-            client.post(format!("{}/v1/sessions", connection.base_url)),
-            connection,
-        )
-        .json(&CreateSessionRequest {
-            api_version: API_VERSION.to_owned(),
-        })
-        .send()
-        .await?;
-        (
-            decode::<CreateSessionResponse>(response).await?.session_id,
-            None,
-        )
+    let (session_id, resume_status) = match selection {
+        ChatSessionSelection::Exact(session_id) => {
+            let status = fetch_chat_session_status(client, connection, &session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::Latest => {
+            let response = authorized(
+                client.get(format!("{}/v1/sessions?limit=1", connection.base_url)),
+                connection,
+            )
+            .send()
+            .await?;
+            let sessions = decode::<SessionsResponse>(response).await?;
+            if sessions.sessions.len() > 1 {
+                return Err(CliError::Protocol(
+                    "latest-session query exceeded its one-session response bound".to_owned(),
+                ));
+            }
+            let latest = sessions
+                .sessions
+                .into_iter()
+                .next()
+                .ok_or(CliError::NoRecentSession)?;
+            let status = fetch_chat_session_status(client, connection, &latest.session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::New => {
+            let response = authorized(
+                client.post(format!("{}/v1/sessions", connection.base_url)),
+                connection,
+            )
+            .json(&CreateSessionRequest {
+                api_version: API_VERSION.to_owned(),
+            })
+            .send()
+            .await?;
+            (
+                decode::<CreateSessionResponse>(response).await?.session_id,
+                None,
+            )
+        }
     };
     println!(
         "Mealy chat session {}",
@@ -3856,6 +3891,29 @@ async fn fetch_chat_status(
     .send()
     .await?;
     decode::<AdminStatusResponse>(response).await
+}
+
+async fn fetch_chat_session_status(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    session_id: &str,
+) -> Result<SessionStatusResponse, CliError> {
+    let response = authorized(
+        client.get(format!(
+            "{}/v1/sessions/{session_id}/status",
+            connection.base_url
+        )),
+        connection,
+    )
+    .send()
+    .await?;
+    let status = decode::<SessionStatusResponse>(response).await?;
+    if status.session_id != session_id {
+        return Err(CliError::Protocol(
+            "session-status response did not match the requested session".to_owned(),
+        ));
+    }
+    Ok(status)
 }
 
 async fn fetch_current_chat_status(
@@ -7889,7 +7947,7 @@ async fn open_first_onboard_chat(home: &Path) -> Result<(), CliError> {
         )));
     }
     let client = control_plane_client()?;
-    run_chat(&client, home, &connection, None).await
+    run_chat(&client, home, &connection, ChatSessionSelection::New).await
 }
 
 const fn onboard_chat_mode(options: &OnboardOptions) -> OnboardChatMode {
@@ -14570,6 +14628,11 @@ enum CliError {
     /// Local protocol/stream validation failed.
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// Latest-session continuation was requested before this binding created a session.
+    #[error(
+        "no prior local session exists for this owner/channel binding; rerun this command without `--continue` to start one"
+    )]
+    NoRecentSession,
     /// OS randomness was unavailable.
     #[error("operating-system randomness is unavailable")]
     RandomUnavailable,
@@ -15818,7 +15881,8 @@ mod tests {
         assert!(matches!(
             arguments.command,
             Command::Chat {
-                session_id: Some(ref session_id)
+                session_id: Some(ref session_id),
+                continue_latest: false,
             } if session_id == "durable-session"
         ));
         assert_eq!(
@@ -15926,6 +15990,31 @@ mod tests {
                 ..TaskBudgetUsage::default()
             }),
             "usage> 12345 input + 67 output token(s) | 89 configured-cost microunit(s) | 2 model call(s) | 1 tool call(s) | 1 retry"
+        );
+    }
+
+    #[test]
+    fn chat_continue_selects_latest_and_conflicts_with_an_exact_session() {
+        for option in ["--continue", "-c"] {
+            let continued = Arguments::try_parse_from(["mealyctl", "chat", option])
+                .expect("continue latest chat command");
+            assert!(matches!(
+                continued.command,
+                Command::Chat {
+                    session_id: None,
+                    continue_latest: true,
+                }
+            ));
+        }
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "chat",
+                "--continue",
+                "--session-id",
+                "durable-session",
+            ])
+            .is_err()
         );
     }
 

@@ -417,10 +417,19 @@ without blocking the prompt while a task is running:
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" chat
 ```
 
-The REPL prints its session ID. Resume it later with `chat --session-id SESSION_ID`; the client
-scans up to 100,000 retained events, rediscovers the exact active turn and durable pending inbox
-entries, and resumes their local watchers before accepting more input. Plain text and `/queue TEXT`
-use normal FIFO delivery, `/steer TEXT` attaches at the next safe boundary, and
+The REPL prints its session ID. Return to the most recently updated local conversation without
+copying that ID:
+
+```sh
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" chat --continue
+```
+
+`--continue` (short form `-c`) fails with a direct new-chat instruction when this exact
+owner/channel binding has no prior session; it never creates one by surprise. Use
+`chat --session-id SESSION_ID` when you want a specific older session. Either resume path scans up
+to 100,000 retained events, rediscovers the exact active turn and durable pending inbox entries,
+and resumes their local watchers before accepting more input. Plain text and `/queue TEXT` use
+normal FIFO delivery, `/steer TEXT` attaches at the next safe boundary, and
 `/interrupt TEXT` records cancellation before durably queueing the replacement. These commands
 remain available while earlier provider or tool work is in flight. `/act TEXT` explicitly selects
 configured medium-risk create-file authority for that one task; `/edit TEXT` selects
@@ -466,7 +475,9 @@ Find recent sessions owned by this exact local channel binding, newest updated f
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" session list --limit 20
 ```
 
-Copy a returned `sessionId` into `chat --session-id SESSION_ID` to resume its active/pending work.
+The ordinary return path is `chat --continue`. Copy a returned `sessionId` into
+`chat --session-id SESSION_ID` only to select a specific older conversation and resume its
+active/pending work.
 Telegram-owned sessions remain discoverable through `channel telegram-list`; exact channel-binding
 isolation prevents a general local session query from silently crossing transport identities.
 

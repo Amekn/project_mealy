@@ -55,6 +55,11 @@ public command cannot be added or removed without updating this reference.
 | `service` | Render/install or plan/remove an owner-level systemd user unit on Linux. |
 | `config` | Inspect or change governed stopped-home configuration. |
 
+For everyday conversation, plain `chat` creates a new durable session, `chat --continue` (or
+`chat -c`) resumes the most recently updated session for the exact local binding, and
+`chat --session-id SESSION_ID` selects a specific older session. `--continue` never silently
+creates a session when there is no history.
+
 Most non-interactive commands emit one bounded JSON value on standard output and diagnostics on
 standard error. Scripts should validate `apiVersion`, named fields, and the process exit status;
 they must not infer success from human-readable text. `chat`, `dashboard`, setup approval prompts,

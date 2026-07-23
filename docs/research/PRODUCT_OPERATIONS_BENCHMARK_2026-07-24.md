@@ -634,6 +634,10 @@ Post-benchmark implementation status: the first daily-use slice now places authe
 health in chat and adds startup plus refreshable `/status` views for model, locality, context/output
 limits, provider overhead, configured prices, queue state, and per-route pressure. Terminal turns
 also show exact durable tokens, provider-neutral cost microunits, model/tool calls, and retries.
+The next slice adds the competitor-familiar `chat --continue`/`-c` path: it selects the newest
+exact-binding session, performs the existing bounded durable-work rediscovery, and never creates a
+duplicate when no history exists. A specific-session picker, branching, and transcript export
+remain later polish rather than being conflated with this safe latest-session shortcut.
 Provider switching deliberately remains a stopped-daemon transaction until a guided flow can
 preserve the existing review, restart, health, and rollback boundary.
 
