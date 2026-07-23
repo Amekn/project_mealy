@@ -96,7 +96,13 @@ onboarding. Clean-home setup scenarios drive the interactive provider/model/limi
 exact `APPROVE` phrase, verify denial creates no provider state, and prove a fully flagged remote
 setup initializes the shared default, performs a real bounded streaming probe, brokers the key,
 keeps secret bytes out of stdout/stderr/config, retains rollback history, and prints exact
-daemon/doctor/chat handoff commands. The suite also proves atomic credential brokering and protocol-specific activation probes, plus
+daemon/doctor/chat handoff commands. Composition-level onboarding scenarios prove a clean
+`--configure-only` transaction, reject a second run without `--reconfigure` while preserving exact
+configuration bytes, discover a live OpenRouter account catalog, exclude paid/incomplete models,
+derive exact zero prices and limits for an eligible `:free` model, perform its bounded streaming
+probe, and keep the credential out of all output/config. Both official subscription-client
+fixtures are also exercised through `onboard`, including executable digest pinning and API-key
+environment exclusion. The suite also proves atomic credential brokering and protocol-specific activation probes, plus
 read-only live OpenAI/Anthropic model discovery with exact authentication headers, filtering,
 Anthropic cursor pagination, token-limit normalization, and local record/response bounds. Its
 probe validators require the terminal protocol discriminator, bounded safe identity, and exact
@@ -385,7 +391,10 @@ same tests reject a volatile service home, assert a private umask and forced-dra
 inhibition, and require a custom unit's activation command to link its exact safe path.
 `scripts/systemd-service-smoke.sh` then starts the generated unit in the explicitly opted-in
 GitHub-hosted runner or disposable container's user manager,
-requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
+first drives full subscription-backed `onboard` through provider probing, default service
+installation/start, authenticated health/doctor, and one searchable successful durable model
+turn. It removes that exact default unit and home before the existing independent service proof.
+That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
 It rejects both an outer Bubblewrap wrapper (which Ubuntu's reviewed profile makes incompatible
 with nested per-tool namespaces) and systemd-user namespace directives that hardened Ubuntu cannot

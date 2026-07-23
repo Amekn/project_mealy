@@ -42,6 +42,7 @@ release_documents=(
   CI_CD.md
   CLI.md
   DOMAIN_MODEL.md
+  GETTING_STARTED.md
   IMPLEMENTATION_PLAN.md
   LINUX_SUPPORT.md
   OPERATIONS.md
@@ -83,6 +84,7 @@ release_documents=(
   decisions/0009-sqlite-writer-and-snapshot-readers.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
 )
 
@@ -304,9 +306,9 @@ printf '%s\n' \
   '.B mealyctl' \
   '[\fB--home\fR \fIPATH\fR] \fICOMMAND\fR [\fIARGS\fR]' \
   '.SH DESCRIPTION' \
-  'Authenticates to mealyd for setup, chat, approvals, governed tools, status, backup, recovery, service generation, and administration.' \
+  'Authenticates to mealyd for onboarding, setup, chat, approvals, governed tools, status, backup, recovery, service generation, and administration.' \
   '.SH COMMON COMMANDS' \
-  '.BR setup , " doctor" , " chat" , " dashboard" , " status" , " backup" , " drain" , " service"' \
+  '.BR onboard , " setup" , " doctor" , " chat" , " dashboard" , " status" , " backup" , " drain" , " service"' \
   '.SH FILES' \
   '.I ~/.mealy' \
   'is the default owner-private state directory.' \
@@ -335,7 +337,7 @@ printf '%s\n' \
   'Description: local-first durable personal agent runtime' \
   ' Mealy runs a single-owner local daemon with durable sessions, recovery,' \
   ' governed tools, approvals, memory, channels, scheduling, and replay.' \
-  ' The companion client provides setup, chat, operations, and administration.' \
+  ' The companion client provides onboarding, setup, chat, operations, and administration.' \
   >"$control_root/control"
 while IFS= read -r relative; do
   (cd "$data_root" && md5sum "$relative")

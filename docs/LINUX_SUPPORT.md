@@ -46,8 +46,7 @@ supervisor requires a separate security review.
 After installation, this is the authoritative host decision:
 
 ```sh
-mealyctl --home "$HOME/.mealy" setup
-mealyd --home "$HOME/.mealy" &
+mealyctl --home "$HOME/.mealy" onboard
 mealyctl --home "$HOME/.mealy" doctor
 ```
 

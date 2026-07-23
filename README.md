@@ -27,7 +27,7 @@ chmod 0755 "$tmp/install-mealy-release.sh"
 "$tmp/install-mealy-release.sh"
 ```
 
-The command prints the exact `setup` and service-install handoff. No release is implied when the
+The command prints the exact `onboard` handoff. No release is implied when the
 repository has not published and attested these assets.
 
 Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and current x86-64 Arch.
@@ -42,28 +42,23 @@ To build this checkout instead, run:
 scripts/build-release-binaries.sh
 ```
 
-For a real model, run `target/release/mealyctl --home "$HOME/.mealy" setup` while the daemon is
-stopped; the wizard supports API-key-backed OpenAI, Anthropic, OpenRouter, or a literal-loopback
-Responses-compatible model and prints the exact next commands. Advanced stopped-home commands
-also support authenticated private Responses endpoints and owner-local OpenAI/Claude subscription
-sign-in through the official Codex or Claude client. For an immediate offline conformance run,
-skip setup and use the deterministic fixture provider.
+For a real model on a supported Linux host, run
+`target/release/mealyctl --home "$HOME/.mealy" onboard`. The guided path supports strictly free
+OpenRouter models, authenticated custom OpenAI-compatible endpoints, credentialless loopback
+models, owner-local ChatGPT/Claude subscriptions through their official clients, and advanced
+OpenAI/Anthropic API routes. It probes the route, starts the owner service, and verifies `doctor`
+before handing off to chat. See [getting started](docs/GETTING_STARTED.md) for the short path.
 
-Start the daemon in terminal 1 and chat in terminal 2:
+After successful onboarding:
 
 ```sh
-# terminal 1
-target/release/mealyd --home "$HOME/.mealy"
-
-# terminal 2
 target/release/mealyctl --home "$HOME/.mealy" doctor
 target/release/mealyctl --home "$HOME/.mealy" chat
 ```
 
 At the `you>` prompt, plain text queues a turn and `/help` lists steering, approvals, memory,
-governed tools, and `/attach PATH`. For a persistent user service after installing both binaries
-side by side, run `mealyctl --home "$HOME/.mealy" service install` and execute the printed
-activation command. See the [quickstart](docs/QUICKSTART.md) for provider setup and capabilities,
+governed tools, and `/attach PATH`. See the [quickstart](docs/QUICKSTART.md) for detailed provider
+setup and capabilities,
 the [CLI reference](docs/CLI.md) for the complete public command map, or the
 [release guide](docs/RELEASE.md) for attested archive and native-package
 install/upgrade/rollback behavior. Treat a build as published only when its exact tag workflow has
@@ -80,9 +75,11 @@ reviewed free-provider acceptance, tag promotion, attestation, and public clean-
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
 > Messages adapters, including explicit mixed-protocol fallback chains, plus a guarded OpenRouter
 > stateless Responses-beta preset with account-filtered catalog/price discovery. A clean-home
-> `mealyctl setup` wizard reviews non-secret provider/model/limit/price inputs,
+> `mealyctl onboard` journey reviews non-secret provider/model/limit/price inputs,
 > consumes credentials only from standard environment variables, performs the existing bounded
-> activation probe, brokers the key, and prints exact daemon/doctor/chat handoff commands. A
+> activation probe, brokers the key, installs and starts the Linux owner service, and verifies
+> liveness plus `doctor`. It refuses to silently replace an existing home. The lower-level
+> `setup` command remains available for stopped-home/foreground workflows. A
 > separate official-client bridge supports existing ChatGPT and Claude subscription sessions
 > without importing OAuth tokens: it pins the canonical client executable and SHA-256, clears API
 > key variables, disables client tools/connectors/session persistence, validates structured output
@@ -282,7 +279,11 @@ verifiable.
 
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — normative requirements and release-one acceptance boundary.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — practical design and requirement traceability.
+- [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — verified install, onboarding, and first chat.
 - [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md) — pinned review of all eight reference systems.
+- [`docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md`](docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md)
+  — fresh comparison of competitor installation, onboarding, maintenance, documentation, CI,
+  release, and user-facing workflows.
 - [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — vertical phases and exit gates.
 - [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — prerequisites, release build, first run, and current limitations.
 - [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) — active blockers and competitive acceptance gates.

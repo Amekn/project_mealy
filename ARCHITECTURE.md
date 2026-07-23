@@ -871,6 +871,17 @@ mutation. Probe/config failure retains either no home or the safe builtin defaul
 depends on repairing partial provider authority. The daemon's typed default serialization is
 regression-tested against the same shared document constructor used by `mealyctl`.
 
+`mealyctl onboard` is a convenience composition over those existing authority boundaries, not a
+second configuration implementation. It selects a named provider/authentication route, reuses
+bounded model discovery and exact provider activation, then reuses service-definition generation
+before invoking trusted `/usr/bin/systemctl` with a fixed argument vocabulary. It polls only the
+owner-private connection descriptor and authenticated health/doctor endpoints. An existing
+configuration requires explicit `--reconfigure`; free OpenRouter selection requires complete
+tool/text/limit metadata, an exact `:free` model ID, and zero input, output, and auxiliary prices.
+Failure after provider activation retains the stopped configured home and service diagnostics
+instead of attempting an unsafe multi-resource rollback. `--configure-only` ends at the provider
+transaction for foreground and isolated acceptance environments.
+
 ## 17. Repository layout
 
 ```text

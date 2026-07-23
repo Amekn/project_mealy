@@ -233,5 +233,4 @@ if [[ -z $installed_prefix || -z $installed_home ]]; then
   exit 65
 fi
 printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
-printf '  %q --home %q setup\n' "$installed_prefix/bin/mealyctl" "$installed_home"
-printf '  %q --home %q service install\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+printf '  %q --home %q onboard\n' "$installed_prefix/bin/mealyctl" "$installed_home"

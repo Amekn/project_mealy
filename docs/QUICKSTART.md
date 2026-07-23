@@ -41,7 +41,7 @@ Use `--version vX.Y.Z` to select a particular stable release, or `--prefix`/`--h
 paths. Public release metadata/assets are fetched with bounded HTTPS requests, so no GitHub login
 or token is required. The bootstrap rejects drafts, prereleases, unsupported architectures, incomplete downloads,
 self-hosted provenance, a different signer workflow/ref, and any checksum or inventory mismatch.
-It prints the exact `mealyctl setup` and service-install commands after success. Continue with the
+It prints the exact `mealyctl onboard` command after success. Continue with the
 prerequisites and first-run checks below before enabling governed tools.
 
 ## Native Linux packages
@@ -200,6 +200,27 @@ install -Dm755 target/release/mealyctl "$HOME/.local/bin/mealyctl"
 Ensure `$HOME/.local/bin` is on `PATH`, or use the absolute paths below.
 
 ## Guided first run (recommended)
+
+The shortest supported-Linux path is:
+
+```sh
+mealyctl --home "$HOME/.mealy" onboard
+```
+
+It offers strictly free OpenRouter, authenticated custom, credentialless loopback, ChatGPT
+subscription, Claude subscription, OpenAI API, and Anthropic API routes. The command discovers
+models where the provider supplies a bounded catalog, derives complete OpenRouter free-model
+limits and exact zero prices, shows one non-secret plan, performs the bounded live probe, installs
+and starts the owner service, waits for health, and requires `doctor` to pass. See
+[getting started](GETTING_STARTED.md) for the short route-specific examples.
+
+An existing configuration is never silently replaced. Diagnose a running home with `doctor`, or
+stop it and use `--reconfigure` only after intentionally reviewing the replacement. Use
+`--configure-only` when a foreground/test deployment deliberately should not install, start, or
+verify the service. `--skip-connectivity-test` requires `--configure-only`; the normal full
+onboarding path cannot claim an unprobed provider.
+
+## Provider-only setup for foreground and advanced workflows
 
 `mealyctl setup` initializes a clean owner-private home and activates one provider while the daemon
 is stopped. It prompts only for non-secret provider/model/limit/price choices. For a remote

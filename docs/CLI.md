@@ -19,6 +19,7 @@ public command cannot be added or removed without updating this reference.
 
 | Command | Purpose |
 | --- | --- |
+| `onboard` | Configure one provider route, install/start the Linux owner service, and verify health and doctor. |
 | `setup` | Initialize a clean stopped home and activate one bounded provider configuration. |
 | `chat` | Start or resume the interactive durable conversation client. |
 | `session` | Create, submit to, inspect, search, or watch durable sessions. |
@@ -55,7 +56,9 @@ choose a bounded non-interactive path.
 
 ## Common workflows
 
-- Follow the [quickstart](QUICKSTART.md) for verified installation, provider activation, first
+- Follow [getting started](GETTING_STARTED.md) for verified installation, one-command onboarding,
+  and the first chat.
+- Follow the [quickstart](QUICKSTART.md) for detailed provider activation, first
   conversation, skills, tools, channels, schedules, and delegation.
 - Use the [operations guide](OPERATIONS.md) for health, metrics, drain, backup/restore, retention,
   service management, upgrades, and incidents.
@@ -68,3 +71,25 @@ Commands that mutate stopped-home configuration require the daemon lock to be fr
 require exact explicit approval. Commands against a running daemon authenticate through the
 owner-only `connection.json`. Safe mode and drain intentionally reject ordinary mutations; consult
 the command's JSON error and retryability contract instead of bypassing those states.
+
+## Onboarding routes
+
+`mealyctl --home "$HOME/.mealy" onboard` is the ordinary clean-install path. It prompts for one of
+seven explicit routes: `openrouter-free`, `custom`, `local`, `chatgpt-subscription`,
+`claude-subscription`, `openai-api`, or `anthropic-api`.
+
+The OpenRouter route fetches the live account catalog and admits only tool-capable text models
+whose exact ID ends in `:free`, whose context/output limits are complete, and whose posted
+input/output plus auxiliary prices are exactly zero. Custom and official API routes import a
+credential from a named environment variable into the private broker. The local route requires a
+literal-loopback endpoint and no credential. Subscription routes pin and live-probe the installed
+official Codex or Claude executable without extracting its subscription credential.
+
+Before mutation, onboarding prints a non-secret provider digest and its service action, then
+requires the exact word `APPROVE` unless `--approve` was given. A pre-existing configuration is
+rejected unless `--reconfigure` explicitly acknowledges replacement while the daemon is stopped.
+The normal Linux path installs and starts `mealy.service`, waits up to 30 seconds, and requires
+liveness, control-plane readiness, and an available sandbox. `--configure-only` deliberately stops
+after provider activation and reports the exact service-install command as the next step.
+`--skip-connectivity-test` requires that configure-only mode, preventing a staged provider from
+being reported as a verified running onboarding result.

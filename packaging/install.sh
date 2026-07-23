@@ -46,6 +46,7 @@ release_documents=(
   CI_CD.md
   CLI.md
   DOMAIN_MODEL.md
+  GETTING_STARTED.md
   IMPLEMENTATION_PLAN.md
   LINUX_SUPPORT.md
   OPERATIONS.md
@@ -87,6 +88,7 @@ release_documents=(
   decisions/0009-sqlite-writer-and-snapshot-readers.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
 )
 while [[ $# -gt 0 ]]; do

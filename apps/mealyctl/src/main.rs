@@ -65,7 +65,7 @@ use std::{
     io::{BufRead, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command as ProcessCommand, ExitCode},
     time::{Duration, SystemTime},
 };
 
@@ -148,6 +148,8 @@ struct Arguments {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Configure a provider, start the owner service, and verify a first usable Linux install.
+    Onboard(OnboardOptions),
     /// Initialize a clean home and guide one bounded provider activation while the daemon is stopped.
     Setup(SetupOptions),
     /// Start or resume a friendly line-oriented durable chat session.
@@ -318,6 +320,71 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, clap::Args)]
+struct OnboardOptions {
+    /// Authentication/provider route; prompted when omitted.
+    #[arg(long, value_enum)]
+    route: Option<OnboardRouteArgument>,
+    /// Override the route's official, custom, or literal-loopback API version base.
+    #[arg(long)]
+    base_url: Option<String>,
+    /// Exact model ID; discovered or prompted when omitted.
+    #[arg(long)]
+    model: Option<String>,
+    /// Conservative context-token limit; derived from trusted catalog metadata when possible.
+    #[arg(long)]
+    context_tokens: Option<u64>,
+    /// Maximum output tokens Mealy may request or accept.
+    #[arg(long, default_value_t = 4_096)]
+    maximum_output_tokens: u64,
+    /// Environment variable imported once for an API credential.
+    #[arg(long)]
+    credential_env: Option<String>,
+    /// Input price in currency microunits per million tokens.
+    #[arg(long)]
+    input_microunits_per_million_tokens: Option<u64>,
+    /// Output price in currency microunits per million tokens.
+    #[arg(long)]
+    output_microunits_per_million_tokens: Option<u64>,
+    /// Installed official subscription client; PATH lookup is used when omitted.
+    #[arg(long)]
+    executable_path: Option<PathBuf>,
+    /// Use terminal-only JSON when an HTTP endpoint does not support provider streaming.
+    #[arg(long)]
+    disable_streaming: bool,
+    /// Stage configuration without the default bounded live connectivity/model probe.
+    #[arg(long, requires = "configure_only")]
+    skip_connectivity_test: bool,
+    /// Stop after provider configuration instead of installing and starting the Linux service.
+    #[arg(long)]
+    configure_only: bool,
+    /// Explicitly allow replacing the provider configuration in an existing stopped home.
+    #[arg(long)]
+    reconfigure: bool,
+    /// Confirm the reviewed onboarding plan non-interactively.
+    #[arg(long)]
+    approve: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OnboardRouteArgument {
+    /// Discover and admit only an exact zero-price, tool-capable `OpenRouter` `:free` model.
+    OpenrouterFree,
+    /// Authenticated custom `OpenAI` Responses-compatible HTTPS endpoint.
+    Custom,
+    /// Credentialless literal-loopback `OpenAI` Responses-compatible endpoint.
+    Local,
+    /// Existing official Codex CLI session authenticated with a `ChatGPT` subscription.
+    ChatgptSubscription,
+    /// Existing official Claude Code session authenticated with a Claude subscription.
+    ClaudeSubscription,
+    /// Official `OpenAI` Responses API credential.
+    OpenaiApi,
+    /// Official Anthropic Messages API credential.
+    AnthropicApi,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1949,6 +2016,9 @@ fn main() -> ExitCode {
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), CliError> {
     let arguments = Arguments::parse();
+    if let Command::Onboard(options) = &arguments.command {
+        return run_onboard(&arguments.home, options).await;
+    }
     if let Command::Setup(options) = &arguments.command {
         return run_setup(&arguments.home, options);
     }
@@ -2015,6 +2085,9 @@ async fn run() -> Result<(), CliError> {
         .connect_timeout(Duration::from_secs(2))
         .build()?;
     match arguments.command {
+        Command::Onboard(_) => {
+            unreachable!("offline onboarding returned before ordinary API initialization")
+        }
         Command::Setup(_) => unreachable!("offline setup returned before API initialization"),
         Command::Chat { session_id } => {
             run_chat(&client, &arguments.home, &connection, session_id.as_deref()).await?;
@@ -6546,6 +6619,813 @@ struct ResolvedSetup {
     skip_connectivity_test: bool,
 }
 
+struct ResolvedOnboard {
+    route: OnboardRouteArgument,
+    provider: ProviderConfig,
+    secret_id: Option<String>,
+    credential_env: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnboardResponse {
+    provider: ProviderConfigurationResponse,
+    service: Option<ServiceInstallationResponse>,
+    service_started: bool,
+    health_verified: bool,
+    doctor: Option<DoctorResponse>,
+    next_command: String,
+}
+
+impl OnboardRouteArgument {
+    const fn display_name(self) -> &'static str {
+        match self {
+            Self::OpenrouterFree => "OpenRouter free model",
+            Self::Custom => "custom authenticated OpenAI-compatible endpoint",
+            Self::Local => "local credentialless OpenAI-compatible endpoint",
+            Self::ChatgptSubscription => "ChatGPT subscription through official Codex CLI",
+            Self::ClaudeSubscription => "Claude subscription through official Claude Code",
+            Self::OpenaiApi => "OpenAI API",
+            Self::AnthropicApi => "Anthropic API",
+        }
+    }
+
+    const fn default_base_url(self) -> Option<&'static str> {
+        match self {
+            Self::OpenrouterFree => Some("https://openrouter.ai/api/v1"),
+            Self::Local => Some("http://127.0.0.1:11434/v1"),
+            Self::OpenaiApi => Some("https://api.openai.com/v1"),
+            Self::AnthropicApi => Some("https://api.anthropic.com/v1"),
+            Self::Custom | Self::ChatgptSubscription | Self::ClaudeSubscription => None,
+        }
+    }
+
+    const fn default_credential_environment(self) -> Option<&'static str> {
+        match self {
+            Self::OpenrouterFree => Some("OPENROUTER_API_KEY"),
+            Self::Custom => Some("CUSTOM_API_KEY"),
+            Self::OpenaiApi => Some("OPENAI_API_KEY"),
+            Self::AnthropicApi => Some("ANTHROPIC_API_KEY"),
+            Self::Local | Self::ChatgptSubscription | Self::ClaudeSubscription => None,
+        }
+    }
+
+    const fn uses_subscription_client(self) -> bool {
+        matches!(self, Self::ChatgptSubscription | Self::ClaudeSubscription)
+    }
+}
+
+async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliError> {
+    if options.skip_connectivity_test && !options.configure_only {
+        return Err(CliError::InvalidSetupInput);
+    }
+    validate_onboard_home_target(home, options.reconfigure)?;
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let stderr = std::io::stderr();
+    let mut prompt = stderr.lock();
+    let resolved = resolve_onboard(options, &mut input, &mut prompt)?;
+    render_onboard_summary(&resolved, options, &mut prompt)?;
+    if !options.approve
+        && prompt_line(
+            &mut input,
+            &mut prompt,
+            "Type APPROVE to perform this exact onboarding plan: ",
+        )? != "APPROVE"
+    {
+        return Err(CliError::SetupNotApproved);
+    }
+
+    initialize_setup_home(home)?;
+    let credential_import = resolved
+        .secret_id
+        .as_deref()
+        .zip(resolved.credential_env.as_deref())
+        .map(|(secret_id, credential_env)| ProviderCredentialImport {
+            secret_id,
+            credential_env,
+        });
+    let provider = activate_provider(
+        home,
+        resolved.provider,
+        credential_import,
+        true,
+        options.skip_connectivity_test,
+    )?;
+    let home = absolute_service_path(home)?;
+    let next_command = format!(
+        "mealyctl --home {} chat",
+        setup_shell_argument(&home.display().to_string())
+    );
+
+    if options.configure_only {
+        writeln!(
+            prompt,
+            "\nProvider configuration is active. Service installation was intentionally skipped."
+        )?;
+        return print_json(OnboardResponse {
+            provider,
+            service: None,
+            service_started: false,
+            health_verified: false,
+            doctor: None,
+            next_command: format!(
+                "mealyctl --home {} service install",
+                setup_shell_argument(&home.display().to_string())
+            ),
+        });
+    }
+
+    let service = install_service_definition(
+        &home,
+        &ServiceCommand::Install {
+            daemon_path: None,
+            destination: None,
+        },
+    )
+    .map_err(|error| CliError::OnboardService(format!("service installation failed: {error}")))?;
+    activate_owner_service()
+        .map_err(|error| CliError::OnboardService(format!("service activation failed: {error}")))?;
+    let doctor = wait_for_onboard_readiness(&home).await.map_err(|error| {
+        CliError::OnboardService(format!(
+            "service started but did not pass bounded health and doctor verification: {error}"
+        ))
+    })?;
+    writeln!(
+        prompt,
+        "\nOnboarding complete. The verified owner service is running."
+    )?;
+    writeln!(prompt, "Start chatting with:\n  {next_command}")?;
+    print_json(OnboardResponse {
+        provider,
+        service: Some(service),
+        service_started: true,
+        health_verified: true,
+        doctor: Some(doctor),
+        next_command,
+    })
+}
+
+fn validate_onboard_home_target(home: &Path, reconfigure: bool) -> Result<(), CliError> {
+    let requested = absolute_service_path(home)?;
+    let config = requested.join("config.json");
+    match fs::symlink_metadata(&config) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(CliError::InvalidProviderConfiguration)
+        }
+        Ok(_) if !reconfigure => Err(CliError::OnboardExistingHome),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CliError::Io(error)),
+    }
+}
+
+fn resolve_onboard(
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<ResolvedOnboard, CliError> {
+    let route = options
+        .route
+        .map_or_else(|| prompt_onboard_route(input, prompt), Ok)?;
+    if route.uses_subscription_client() {
+        return resolve_subscription_onboard(route, options, input, prompt);
+    }
+    resolve_http_onboard(route, options, input, prompt)
+}
+
+fn prompt_onboard_route(
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<OnboardRouteArgument, CliError> {
+    writeln!(prompt, "How should Mealy access a model?")?;
+    writeln!(
+        prompt,
+        "  1. OpenRouter free model (recommended without paid API credit)"
+    )?;
+    writeln!(
+        prompt,
+        "  2. Custom authenticated OpenAI-compatible endpoint"
+    )?;
+    writeln!(
+        prompt,
+        "  3. Local credentialless OpenAI-compatible endpoint"
+    )?;
+    writeln!(
+        prompt,
+        "  4. ChatGPT subscription through official Codex CLI"
+    )?;
+    writeln!(
+        prompt,
+        "  5. Claude subscription through official Claude Code"
+    )?;
+    writeln!(prompt, "  6. OpenAI API")?;
+    writeln!(prompt, "  7. Anthropic API")?;
+    match prompt_line(input, prompt, "Route [1-7]: ")?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "openrouter" | "openrouter-free" => Ok(OnboardRouteArgument::OpenrouterFree),
+        "2" | "custom" => Ok(OnboardRouteArgument::Custom),
+        "3" | "local" => Ok(OnboardRouteArgument::Local),
+        "4" | "chatgpt" | "chatgpt-subscription" => Ok(OnboardRouteArgument::ChatgptSubscription),
+        "5" | "claude" | "claude-subscription" => Ok(OnboardRouteArgument::ClaudeSubscription),
+        "6" | "openai" | "openai-api" => Ok(OnboardRouteArgument::OpenaiApi),
+        "7" | "anthropic" | "anthropic-api" => Ok(OnboardRouteArgument::AnthropicApi),
+        _ => Err(CliError::InvalidSetupInput),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn resolve_http_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<ResolvedOnboard, CliError> {
+    if options.executable_path.is_some() {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let base_url = options.base_url.clone().map_or_else(
+        || match route.default_base_url() {
+            Some(default) => Ok(default.to_owned()),
+            None => prompt_line(input, prompt, "OpenAI-compatible HTTPS API base URL: "),
+        },
+        Ok,
+    )?;
+    let credential_env = route.default_credential_environment().map(|default| {
+        options
+            .credential_env
+            .clone()
+            .unwrap_or_else(|| default.to_owned())
+    });
+    if credential_env
+        .as_deref()
+        .is_some_and(|name| !valid_provider_credential_environment_name(name))
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    if matches!(route, OnboardRouteArgument::Local)
+        && (options.credential_env.is_some()
+            || options
+                .input_microunits_per_million_tokens
+                .is_some_and(|value| value != 0)
+            || options
+                .output_microunits_per_million_tokens
+                .is_some_and(|value| value != 0))
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let local_endpoint =
+        validate_provider_base_url(&base_url).map_err(|_| CliError::InvalidSetupInput)?;
+    if matches!(route, OnboardRouteArgument::Local) && !local_endpoint {
+        return Err(CliError::InvalidSetupInput);
+    }
+
+    let discovered = discover_onboard_models(
+        route,
+        &base_url,
+        credential_env.as_deref(),
+        options.model.as_deref(),
+    )?;
+    let selected =
+        select_onboard_model(route, discovered, options.model.as_deref(), input, prompt)?;
+    let model = selected
+        .as_ref()
+        .map(|item| item.id.clone())
+        .or_else(|| options.model.clone())
+        .map_or_else(|| prompt_line(input, prompt, "Exact model ID: "), Ok)?;
+    let context_tokens = resolve_onboard_context(
+        options.context_tokens,
+        selected.as_ref().and_then(|item| item.context_tokens),
+        input,
+        prompt,
+    )?;
+    let maximum_output_tokens = selected
+        .as_ref()
+        .and_then(|item| item.maximum_output_tokens)
+        .map_or(options.maximum_output_tokens, |advertised| {
+            advertised.min(options.maximum_output_tokens)
+        });
+
+    let (input_price, output_price) = if matches!(route, OnboardRouteArgument::OpenrouterFree) {
+        if options
+            .input_microunits_per_million_tokens
+            .is_some_and(|value| value != 0)
+            || options
+                .output_microunits_per_million_tokens
+                .is_some_and(|value| value != 0)
+        {
+            return Err(CliError::InvalidSetupInput);
+        }
+        (0, 0)
+    } else if matches!(route, OnboardRouteArgument::Local) {
+        (0, 0)
+    } else {
+        (
+            options.input_microunits_per_million_tokens.map_or_else(
+                || {
+                    prompt_u64(
+                        input,
+                        prompt,
+                        "Input price in currency microunits per million tokens (zero only for a verified free route): ",
+                        true,
+                    )
+                },
+                Ok,
+            )?,
+            options.output_microunits_per_million_tokens.map_or_else(
+                || {
+                    prompt_u64(
+                        input,
+                        prompt,
+                        "Output price in currency microunits per million tokens (zero only for a verified free route): ",
+                        true,
+                    )
+                },
+                Ok,
+            )?,
+        )
+    };
+
+    let common = (
+        base_url,
+        model,
+        context_tokens,
+        maximum_output_tokens,
+        !options.disable_streaming,
+        input_price,
+        output_price,
+    );
+    let (provider, secret_id) = match route {
+        OnboardRouteArgument::AnthropicApi => (
+            ProviderConfig::AnthropicMessages {
+                provider_id: "anthropic.messages".to_owned(),
+                base_url: common.0,
+                model: common.1,
+                credential: Some(ProviderCredentialReference::Broker {
+                    secret_id: "anthropic-primary".to_owned(),
+                }),
+                residency: "anthropic-api".to_owned(),
+                context_tokens: common.2,
+                maximum_output_tokens: common.3,
+                streaming: common.4,
+                input_microunits_per_million_tokens: common.5,
+                output_microunits_per_million_tokens: common.6,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+            },
+            Some("anthropic-primary".to_owned()),
+        ),
+        OnboardRouteArgument::Local => (
+            ProviderConfig::OpenAiResponses {
+                provider_id: "local.responses".to_owned(),
+                base_url: common.0,
+                model: common.1,
+                credential: None,
+                residency: "local".to_owned(),
+                context_tokens: common.2,
+                maximum_output_tokens: common.3,
+                streaming: common.4,
+                input_microunits_per_million_tokens: 0,
+                output_microunits_per_million_tokens: 0,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+            },
+            None,
+        ),
+        OnboardRouteArgument::OpenrouterFree
+        | OnboardRouteArgument::Custom
+        | OnboardRouteArgument::OpenaiApi => {
+            let (provider_id, secret_id, residency) = match route {
+                OnboardRouteArgument::OpenrouterFree => (
+                    "openrouter.responses",
+                    "openrouter-primary",
+                    "openrouter-api",
+                ),
+                OnboardRouteArgument::Custom => {
+                    ("custom.responses", "custom-primary", "custom-api")
+                }
+                OnboardRouteArgument::OpenaiApi => {
+                    ("openai.responses", "openai-primary", "openai-api")
+                }
+                _ => unreachable!("covered Responses route"),
+            };
+            (
+                ProviderConfig::OpenAiResponses {
+                    provider_id: provider_id.to_owned(),
+                    base_url: common.0,
+                    model: common.1,
+                    credential: Some(ProviderCredentialReference::Broker {
+                        secret_id: secret_id.to_owned(),
+                    }),
+                    residency: residency.to_owned(),
+                    context_tokens: common.2,
+                    maximum_output_tokens: common.3,
+                    streaming: common.4,
+                    input_microunits_per_million_tokens: common.5,
+                    output_microunits_per_million_tokens: common.6,
+                    estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+                },
+                Some(secret_id.to_owned()),
+            )
+        }
+        OnboardRouteArgument::ChatgptSubscription | OnboardRouteArgument::ClaudeSubscription => {
+            unreachable!("subscription routes were resolved separately")
+        }
+    };
+    provider
+        .validate()
+        .map_err(|_| CliError::InvalidSetupInput)?;
+    Ok(ResolvedOnboard {
+        route,
+        provider,
+        secret_id,
+        credential_env,
+    })
+}
+
+fn discover_onboard_models(
+    route: OnboardRouteArgument,
+    base_url: &str,
+    credential_env: Option<&str>,
+    requested_model: Option<&str>,
+) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                discover_onboard_models_blocking(route, base_url, credential_env, requested_model)
+            })
+            .join()
+            .map_err(|_| {
+                CliError::ProviderDiscovery("onboarding model-discovery worker failed".to_owned())
+            })?
+    })
+}
+
+fn discover_onboard_models_blocking(
+    route: OnboardRouteArgument,
+    base_url: &str,
+    credential_env: Option<&str>,
+    requested_model: Option<&str>,
+) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
+    let discover = match route {
+        OnboardRouteArgument::OpenrouterFree => {
+            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
+            let credential = read_provider_credential_environment(environment)?;
+            let result = discover_openrouter_models_blocking(
+                base_url,
+                credential.as_str(),
+                None,
+                PROVIDER_DISCOVERY_MAXIMUM_MODELS,
+            )?;
+            drop(credential);
+            Some(
+                result
+                    .models
+                    .into_iter()
+                    .filter(openrouter_model_is_strictly_free)
+                    .collect::<Vec<_>>(),
+            )
+        }
+        OnboardRouteArgument::Custom | OnboardRouteArgument::OpenaiApi
+            if requested_model.is_none() =>
+        {
+            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
+            let credential = read_provider_credential_environment(environment)?;
+            let result = discover_openai_models_blocking(
+                base_url,
+                Some(credential.as_str()),
+                None,
+                100,
+                false,
+            )?;
+            drop(credential);
+            Some(result.models)
+        }
+        OnboardRouteArgument::Local if requested_model.is_none() => {
+            Some(discover_openai_models_blocking(base_url, None, None, 100, true)?.models)
+        }
+        OnboardRouteArgument::AnthropicApi if requested_model.is_none() => {
+            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
+            let credential = read_provider_credential_environment(environment)?;
+            let result =
+                discover_anthropic_models_blocking(base_url, credential.as_str(), None, 100, None)?;
+            drop(credential);
+            Some(result.models)
+        }
+        OnboardRouteArgument::Custom
+        | OnboardRouteArgument::Local
+        | OnboardRouteArgument::OpenaiApi
+        | OnboardRouteArgument::AnthropicApi => None,
+        OnboardRouteArgument::ChatgptSubscription | OnboardRouteArgument::ClaudeSubscription => {
+            None
+        }
+    };
+    Ok(discover)
+}
+
+fn openrouter_model_is_strictly_free(model: &ProviderModelDiscoveryItem) -> bool {
+    model.id.ends_with(":free")
+        && model.tool_capable == Some(true)
+        && model.token_limits_complete
+        && model.context_tokens.is_some_and(|value| value > 0)
+        && model.maximum_output_tokens.is_some_and(|value| value > 0)
+        && model.pricing_complete
+        && model.input_microunits_per_million_tokens == Some(0)
+        && model.output_microunits_per_million_tokens == Some(0)
+        && model.unsupported_pricing_axes.is_empty()
+}
+
+fn select_onboard_model(
+    route: OnboardRouteArgument,
+    discovered: Option<Vec<ProviderModelDiscoveryItem>>,
+    requested: Option<&str>,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<Option<ProviderModelDiscoveryItem>, CliError> {
+    let Some(mut models) = discovered else {
+        return Ok(None);
+    };
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    if models.is_empty() {
+        return Err(CliError::OnboardNoEligibleModel(route.display_name()));
+    }
+    if let Some(requested) = requested {
+        return models
+            .into_iter()
+            .find(|model| model.id == requested)
+            .map(Some)
+            .ok_or(CliError::OnboardNoEligibleModel(route.display_name()));
+    }
+    writeln!(
+        prompt,
+        "Eligible models (live account catalog; exact zero posted token price):"
+    )?;
+    for (index, model) in models.iter().take(20).enumerate() {
+        match (model.context_tokens, model.maximum_output_tokens) {
+            (Some(context), Some(output)) => writeln!(
+                prompt,
+                "  {}. {} (context {context}, output {output})",
+                index + 1,
+                model.id
+            )?,
+            _ => writeln!(prompt, "  {}. {}", index + 1, model.id)?,
+        }
+    }
+    let selected = prompt_line(input, prompt, "Model number: ")?
+        .parse::<usize>()
+        .ok()
+        .filter(|index| (1..=models.len().min(20)).contains(index))
+        .ok_or(CliError::InvalidSetupInput)?;
+    Ok(Some(models.remove(selected - 1)))
+}
+
+fn resolve_onboard_context(
+    requested: Option<u64>,
+    advertised: Option<u64>,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<u64, CliError> {
+    match (requested, advertised) {
+        (Some(requested), Some(advertised)) if requested == 0 || requested > advertised => {
+            Err(CliError::InvalidSetupInput)
+        }
+        (Some(requested), _) if requested > 0 => Ok(requested),
+        (None, Some(advertised)) if advertised > 0 => Ok(advertised),
+        (None, _) => prompt_u64(input, prompt, "Conservative context-token limit: ", false),
+        _ => Err(CliError::InvalidSetupInput),
+    }
+}
+
+fn resolve_subscription_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<ResolvedOnboard, CliError> {
+    if options.base_url.is_some()
+        || options.credential_env.is_some()
+        || options.input_microunits_per_million_tokens.is_some()
+        || options.output_microunits_per_million_tokens.is_some()
+        || options.disable_streaming
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let model = options.model.clone().map_or_else(
+        || prompt_line(input, prompt, "Exact subscription model ID: "),
+        Ok,
+    )?;
+    let context_tokens = options.context_tokens.map_or_else(
+        || prompt_u64(input, prompt, "Conservative context-token limit: ", false),
+        Ok,
+    )?;
+    let (client, executable_name, provider_id, residency) = match route {
+        OnboardRouteArgument::ChatgptSubscription => (
+            SubscriptionCliClient::OpenAiCodex,
+            "codex",
+            "openai.subscription",
+            "openai-subscription",
+        ),
+        OnboardRouteArgument::ClaudeSubscription => (
+            SubscriptionCliClient::AnthropicClaude,
+            "claude",
+            "claude.subscription",
+            "claude-subscription",
+        ),
+        _ => return Err(CliError::InvalidSetupInput),
+    };
+    let selected = options
+        .executable_path
+        .clone()
+        .or_else(|| find_executable_on_path(executable_name))
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
+        .map_err(|_| CliError::InvalidProviderConfiguration)?;
+    let canonical = canonical
+        .to_str()
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let provider = ProviderConfig::SubscriptionCli {
+        provider_id: provider_id.to_owned(),
+        client,
+        executable_path: canonical.to_owned(),
+        executable_sha256,
+        model,
+        residency: residency.to_owned(),
+        context_tokens,
+        maximum_output_tokens: options.maximum_output_tokens,
+        estimated_latency_ms: 60_000,
+    };
+    provider
+        .validate()
+        .map_err(|_| CliError::InvalidSetupInput)?;
+    Ok(ResolvedOnboard {
+        route,
+        provider,
+        secret_id: None,
+        credential_env: None,
+    })
+}
+
+fn render_onboard_summary(
+    resolved: &ResolvedOnboard,
+    options: &OnboardOptions,
+    prompt: &mut impl Write,
+) -> Result<(), CliError> {
+    let provider_json = serde_json::to_value(&resolved.provider)?;
+    let provider_id = provider_json
+        .get("providerId")
+        .and_then(Value::as_str)
+        .ok_or(CliError::InvalidSetupInput)?;
+    let model = provider_json
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or(CliError::InvalidSetupInput)?;
+    writeln!(prompt, "\nReview the exact non-secret onboarding plan:")?;
+    writeln!(prompt, "  route: {}", resolved.route.display_name())?;
+    writeln!(prompt, "  provider ID: {provider_id}")?;
+    writeln!(prompt, "  model: {model}")?;
+    if let Some(base_url) = provider_json.get("baseUrl").and_then(Value::as_str) {
+        writeln!(prompt, "  API base: {base_url}")?;
+    }
+    let context_tokens = provider_json
+        .get("contextTokens")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidSetupInput)?;
+    let maximum_output_tokens = provider_json
+        .get("maximumOutputTokens")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidSetupInput)?;
+    writeln!(
+        prompt,
+        "  context/output tokens: {context_tokens}/{maximum_output_tokens}"
+    )?;
+    if let (Some(input_price), Some(output_price)) = (
+        provider_json
+            .get("inputMicrounitsPerMillionTokens")
+            .and_then(Value::as_u64),
+        provider_json
+            .get("outputMicrounitsPerMillionTokens")
+            .and_then(Value::as_u64),
+    ) {
+        writeln!(
+            prompt,
+            "  input/output price microunits per million tokens: {input_price}/{output_price}"
+        )?;
+    }
+    if let Some(streaming) = provider_json.get("streaming").and_then(Value::as_bool) {
+        writeln!(prompt, "  streaming: {streaming}")?;
+    }
+    writeln!(
+        prompt,
+        "  provider config digest preview: {}",
+        sha256_digest(&serde_json::to_vec(&resolved.provider)?)
+    )?;
+    writeln!(
+        prompt,
+        "  connectivity probe: {}",
+        if options.skip_connectivity_test {
+            "SKIPPED (configuration is not production-verified)"
+        } else {
+            "required before activation"
+        }
+    )?;
+    if let Some(environment) = &resolved.credential_env {
+        writeln!(
+            prompt,
+            "  credential source: environment variable {environment} (the value is never printed or stored in config)"
+        )?;
+    } else if resolved.route.uses_subscription_client() {
+        writeln!(
+            prompt,
+            "  credential source: existing official client subscription session (no token extraction)"
+        )?;
+    } else {
+        writeln!(prompt, "  credential source: none (literal loopback only)")?;
+    }
+    writeln!(
+        prompt,
+        "  service action: {}",
+        if options.configure_only {
+            "do not install or start a service"
+        } else {
+            "install, enable, start, and verify the Linux owner service"
+        }
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn activate_owner_service() -> Result<(), CliError> {
+    let systemctl = Path::new("/usr/bin/systemctl");
+    if !systemctl.is_file() || !is_trusted_system_executable(systemctl) {
+        return Err(CliError::InvalidService(
+            "onboarding requires trusted /usr/bin/systemctl".to_owned(),
+        ));
+    }
+    for arguments in [
+        ["--user", "daemon-reload"].as_slice(),
+        ["--user", "enable", "--now", "mealy.service"].as_slice(),
+    ] {
+        let output = ProcessCommand::new(systemctl).args(arguments).output()?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::InvalidService(format!(
+                "systemctl {} failed: {}",
+                arguments.join(" "),
+                terminal_safe_single_line(detail.trim())
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn activate_owner_service() -> Result<(), CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production onboarding service activation is supported only on Linux".to_owned(),
+    ))
+}
+
+async fn wait_for_onboard_readiness(home: &Path) -> Result<DoctorResponse, CliError> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(connection) = load_connection(home) {
+            let client = Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(2))
+                .build()?;
+            if let Ok(response) = authorized(
+                client.get(format!("{}/health/live", connection.base_url)),
+                &connection,
+            )
+            .send()
+            .await
+                && let Ok(health) = decode::<HealthResponse>(response).await
+                && health.api_version == API_VERSION
+                && health.live
+                && let Ok(response) = authorized(
+                    client.get(format!("{}/v1/admin/doctor", connection.base_url)),
+                    &connection,
+                )
+                .send()
+                .await
+                && let Ok(doctor) = decode::<DoctorResponse>(response).await
+                && doctor.api_version == API_VERSION
+                && doctor.control_plane_ready
+                && doctor.sandbox_available
+            {
+                return Ok(doctor);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::InvalidService(
+                "timed out after 30 seconds".to_owned(),
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 impl SetupProviderArgument {
     const fn display_name(self) -> &'static str {
         match self {
@@ -8767,6 +9647,22 @@ fn configure_provider(
     approve: bool,
     skip_connectivity_test: bool,
 ) -> Result<(), CliError> {
+    print_json(activate_provider(
+        home,
+        provider,
+        credential_import,
+        approve,
+        skip_connectivity_test,
+    )?)
+}
+
+fn activate_provider(
+    home: &Path,
+    provider: ProviderConfig,
+    credential_import: Option<ProviderCredentialImport<'_>>,
+    approve: bool,
+    skip_connectivity_test: bool,
+) -> Result<ProviderConfigurationResponse, CliError> {
     if !approve {
         return Err(CliError::ApprovalRequired);
     }
@@ -8846,7 +9742,7 @@ fn configure_provider(
     atomic_write_service(&replaced, &current_body)?;
     atomic_write_service(&current, &updated)?;
     let (protocol, provider_id, model, streaming) = provider_configuration_identity(provider)?;
-    print_json(ProviderConfigurationResponse {
+    Ok(ProviderConfigurationResponse {
         provider_config_digest,
         protocol: protocol.to_owned(),
         provider_id,
@@ -11406,6 +12302,13 @@ fn read_channel_credential_environment(name: &str) -> Result<Zeroizing<String>, 
 }
 
 fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(), CliError> {
+    print_json(install_service_definition(home, command)?)
+}
+
+fn install_service_definition(
+    home: &Path,
+    command: &ServiceCommand,
+) -> Result<ServiceInstallationResponse, CliError> {
     let ServiceCommand::Install {
         daemon_path,
         destination,
@@ -11434,7 +12337,7 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
     create_private_service_directory(parent)?;
     let rollback = preserve_service_rollback(&destination)?;
     atomic_write_service(&destination, body.as_bytes())?;
-    print_json(ServiceInstallationResponse {
+    Ok(ServiceInstallationResponse {
         platform,
         service_definition: destination.display().to_string(),
         daemon_path: daemon.display().to_string(),
@@ -12142,6 +13045,19 @@ enum CliError {
     /// Interactive setup did not receive the exact final authorization phrase.
     #[error("guided setup was not approved; no provider activation was attempted")]
     SetupNotApproved,
+    /// Onboarding would replace an existing provider configuration without explicit authorization.
+    #[error(
+        "the Mealy home already has configuration; run `doctor` against a running service or rerun onboarding with --reconfigure while the daemon is stopped"
+    )]
+    OnboardExistingHome,
+    /// A live provider catalog contained no model satisfying the route's fail-closed policy.
+    #[error("no eligible model was found for the {0} onboarding route")]
+    OnboardNoEligibleModel(&'static str),
+    /// Provider setup completed, but service installation, activation, or verification did not.
+    #[error(
+        "onboarding configured the provider but could not finish the owner service; the stopped home and diagnostics were preserved: {0}"
+    )]
+    OnboardService(String),
     /// Provider settings or the current daemon configuration document are invalid.
     #[error("provider configuration is invalid")]
     InvalidProviderConfiguration,
@@ -13135,6 +14051,36 @@ mod tests {
                 && secret_id == "openrouter-primary"
                 && credential_env == "OPENROUTER_API_KEY"
         ));
+    }
+
+    #[test]
+    fn onboarding_openrouter_free_policy_requires_complete_exact_zero_metadata() {
+        let eligible = super::ProviderModelDiscoveryItem {
+            id: "vendor/tool-model:free".to_owned(),
+            display_name: Some("Tool model free".to_owned()),
+            created_at: None,
+            created_at_unix_seconds: Some(1),
+            owned_by: Some("vendor".to_owned()),
+            context_tokens: Some(32_768),
+            maximum_output_tokens: Some(4_096),
+            token_limits_complete: true,
+            input_microunits_per_million_tokens: Some(0),
+            output_microunits_per_million_tokens: Some(0),
+            pricing_complete: true,
+            unsupported_pricing_axes: Vec::new(),
+            tool_capable: Some(true),
+        };
+        assert!(super::openrouter_model_is_strictly_free(&eligible));
+
+        let mut paid = eligible;
+        paid.output_microunits_per_million_tokens = Some(1);
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
+        paid.output_microunits_per_million_tokens = Some(0);
+        paid.id = "vendor/tool-model".to_owned();
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
+        paid.id = "vendor/tool-model:free".to_owned();
+        paid.unsupported_pricing_axes.push("web_search".to_owned());
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
     }
 
     #[test]

@@ -333,12 +333,13 @@ PATH="$bootstrap_fake_bin:$PATH" \
     >"$temporary/bootstrap-output"
 [[ $("$temporary/bootstrap prefix/bin/mealyd") == mealyd-v1 ]]
 [[ $("$temporary/bootstrap prefix/bin/mealyctl") == mealyctl-v1 ]]
-printf -v expected_setup '  %q --home %q setup' \
-  "$temporary/bootstrap prefix/bin/mealyctl" "$temporary/bootstrap home"
-printf -v expected_service '  %q --home %q service install' \
+printf -v expected_setup '  %q --home %q onboard' \
   "$temporary/bootstrap prefix/bin/mealyctl" "$temporary/bootstrap home"
 grep -Fqx "$expected_setup" "$temporary/bootstrap-output"
-grep -Fqx "$expected_service" "$temporary/bootstrap-output"
+if grep -F -- ' service install' "$temporary/bootstrap-output"; then
+  echo "release installer emitted the obsolete multi-command first-run handoff" >&2
+  exit 1
+fi
 for asset in "$archive" "SHA256SUMS-${target}" install-mealy.sh \
   install-mealy-release.sh; do
   grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
@@ -408,6 +409,8 @@ printf 'preserve durable state\n' >"$temporary/home/state.keep"
 [[ -f $temporary/prefix/share/mealy/docs/benchmarks/README.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/benchmarks/release-soak-subject.json ]]
 [[ -f $temporary/prefix/share/mealy/docs/decisions/README.md ]]
+[[ -f $temporary/prefix/share/mealy/docs/GETTING_STARTED.md ]]
+[[ -f $temporary/prefix/share/mealy/docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/research/REFERENCE_SYSTEMS.md ]]
 [[ -f $temporary/prefix/share/mealy/ARCHITECTURE.md ]]
 [[ -f $temporary/prefix/share/mealy/REQUIREMENTS.md ]]

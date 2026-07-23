@@ -368,9 +368,11 @@ service restriction that can pass startup/`doctor` yet block a secure nested wor
 standalone command requires a reachable systemd user manager, refuses to replace an existing
 `mealy.service`, and requires explicit opt-in outside a disposable container.
 
-Run `mealyctl --home "$HOME/.mealy" setup`, then `mealyctl service install` and the quickstart's
-first-run checks after a clean install. Setup does not start the daemon; it reviews and probes one
-provider before publishing the secret reference and prints the exact operational handoff. A
+Run `mealyctl --home "$HOME/.mealy" onboard` and the quickstart's first-chat check after a clean
+install. Onboarding reviews and probes one provider before publishing the secret reference, then
+installs/starts the Linux owner service and requires bounded health plus `doctor` verification.
+The provider-only `setup` and `service install` commands remain available for foreground,
+automation, and recovery workflows. A
 checksum detects accidental corruption; the GitHub attestation ties the bytes to this repository
 and release workflow. Keep the active home on a persistent local filesystem outside `/tmp` and
 `/var/tmp`; Linux service installation rejects private-temporary paths and volatile

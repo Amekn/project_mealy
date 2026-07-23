@@ -320,12 +320,14 @@ fn provider_model_discovery_does_not_echo_failure_body_or_credential() {
 
 #[test]
 #[cfg(unix)]
+#[allow(clippy::too_many_lines)]
 fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let cases = [
         (
             "provider-subscription-openai",
+            "chatgpt-subscription",
             "openai_subscription_cli",
             "open_ai_codex",
             "openai.subscription",
@@ -341,6 +343,7 @@ fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
         ),
         (
             "provider-subscription-claude",
+            "claude-subscription",
             "claude_subscription_cli",
             "anthropic_claude",
             "claude.subscription",
@@ -354,7 +357,7 @@ fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
         ),
     ];
 
-    for (command, protocol, client, provider_id, fixture_body) in cases {
+    for (command, onboarding_route, protocol, client, provider_id, fixture_body) in cases {
         let home = tempfile::tempdir().expect("temporary subscription home");
         fs::create_dir(home.path().join("config-history")).expect("configuration history");
         fs::write(
@@ -416,6 +419,49 @@ fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
         assert_eq!(config["provider"]["model"], "fixture-model");
         assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
         assert!(!home.path().join("provider-secrets").exists());
+
+        let onboard_home = tempfile::tempdir().expect("temporary subscription onboarding home");
+        let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+            .arg("--home")
+            .arg(onboard_home.path())
+            .args(["onboard", "--route", onboarding_route, "--executable-path"])
+            .arg(&executable)
+            .args([
+                "--model",
+                "fixture-model",
+                "--context-tokens",
+                "32768",
+                "--maximum-output-tokens",
+                "64",
+                "--configure-only",
+                "--approve",
+            ])
+            .env("OPENAI_API_KEY", "must-not-reach-official-client")
+            .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+            .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+            .env("LOCAL_API_KEY", "must-not-reach-official-client")
+            .output()
+            .expect("onboard subscription provider");
+        assert!(
+            output.status.success(),
+            "{onboarding_route} onboarding failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+        assert_eq!(response["provider"]["protocol"], protocol);
+        assert_eq!(response["provider"]["providerId"], provider_id);
+        assert_eq!(response["provider"]["connectivityTested"], true);
+        assert_eq!(response["provider"]["secretId"], Value::Null);
+        assert_eq!(response["service"], Value::Null);
+        assert_eq!(response["serviceStarted"], false);
+        let config: Value = serde_json::from_slice(
+            &fs::read(onboard_home.path().join("config.json"))
+                .expect("subscription onboarding config"),
+        )
+        .expect("subscription onboarding JSON");
+        assert_eq!(config["provider"]["client"], client);
+        assert_eq!(config["provider"]["executableSha256"], executable_digest);
+        assert!(!onboard_home.path().join("provider-secrets").exists());
     }
 }
 
@@ -575,6 +621,192 @@ fn guided_setup_interactively_selects_local_model_and_requires_exact_approval() 
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("was not approved"));
     assert!(!denied_home.path().join("config.json").exists());
+}
+
+#[test]
+fn onboarding_configures_a_clean_home_and_refuses_silent_replacement() {
+    let home = tempfile::tempdir().expect("clean onboarding home");
+    let arguments = [
+        "onboard",
+        "--route",
+        "local",
+        "--model",
+        "local-onboarding-model",
+        "--context-tokens",
+        "32768",
+        "--maximum-output-tokens",
+        "2048",
+        "--skip-connectivity-test",
+        "--configure-only",
+        "--approve",
+    ];
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(arguments)
+        .output()
+        .expect("run clean-home onboarding");
+    assert!(
+        output.status.success(),
+        "onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["providerId"], "local.responses");
+    assert_eq!(response["provider"]["model"], "local-onboarding-model");
+    assert_eq!(response["provider"]["connectivityTested"], false);
+    assert_eq!(response["service"], Value::Null);
+    assert_eq!(response["serviceStarted"], false);
+    assert_eq!(response["healthVerified"], false);
+    assert!(
+        response["nextCommand"]
+            .as_str()
+            .is_some_and(|command| command.contains("service install"))
+    );
+    let prompt = String::from_utf8_lossy(&output.stderr);
+    assert!(prompt.contains("Review the exact non-secret onboarding plan"));
+    assert!(prompt.contains("Service installation was intentionally skipped"));
+
+    let configured = fs::read(home.path().join("config.json")).expect("configured home");
+    let second = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(arguments)
+        .output()
+        .expect("rerun onboarding without reconfigure");
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stderr).contains("already has configuration"));
+    assert_eq!(
+        fs::read(home.path().join("config.json")).expect("unchanged configuration"),
+        configured
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn onboarding_openrouter_free_route_discovers_and_probes_only_exact_free_metadata() {
+    let home = tempfile::tempdir().expect("clean OpenRouter onboarding home");
+    let catalog = json!({
+        "data": [
+            {
+                "id": "vendor/tool-model:free",
+                "name": "Tool Model Free",
+                "created": 50,
+                "context_length": 32768,
+                "pricing": {
+                    "prompt": "0",
+                    "completion": "0",
+                    "request": "0",
+                    "image": "0",
+                    "web_search": "0",
+                    "internal_reasoning": "0",
+                    "input_cache_read": "0",
+                    "input_cache_write": "0"
+                },
+                "supported_parameters": ["max_tokens", "tools"],
+                "architecture": {"output_modalities": ["text"]},
+                "top_provider": {
+                    "context_length": 32768,
+                    "max_completion_tokens": 8192
+                }
+            },
+            {
+                "id": "vendor/paid-model",
+                "name": "Paid Model",
+                "created": 40,
+                "context_length": 32768,
+                "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+                "supported_parameters": ["max_tokens", "tools"],
+                "architecture": {"output_modalities": ["text"]},
+                "top_provider": {
+                    "context_length": 32768,
+                    "max_completion_tokens": 8192
+                }
+            }
+        ]
+    })
+    .to_string();
+    let completed = json!({
+        "id": "resp-openrouter-onboarding",
+        "object": "response",
+        "model": "vendor/tool-model:free",
+        "status": "completed",
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "OK"}]
+        }]
+    });
+    let event = json!({"type": "response.completed", "response": completed});
+    let probe = format!("event: response.completed\ndata: {event}\n\ndata: [DONE]\n\n");
+    let (base_url, capture, server) = serve_openrouter_onboarding(catalog, probe);
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "openrouter-free",
+            "--base-url",
+            &base_url,
+            "--model",
+            "vendor/tool-model:free",
+            "--credential-env",
+            "MEALY_TEST_ONBOARD_OPENROUTER_KEY",
+            "--configure-only",
+            "--approve",
+        ])
+        .env(
+            "MEALY_TEST_ONBOARD_OPENROUTER_KEY",
+            "openrouter-onboarding-secret",
+        )
+        .output()
+        .expect("run OpenRouter free onboarding");
+    assert!(
+        output.status.success(),
+        "OpenRouter onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("openrouter-onboarding-secret"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("openrouter-onboarding-secret"));
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["providerId"], "openrouter.responses");
+    assert_eq!(response["provider"]["model"], "vendor/tool-model:free");
+    assert_eq!(response["provider"]["connectivityTested"], true);
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.path().join("config.json")).expect("OpenRouter config"),
+    )
+    .expect("OpenRouter config JSON");
+    assert_eq!(config["provider"]["contextTokens"], 32768);
+    assert_eq!(config["provider"]["maximumOutputTokens"], 4096);
+    assert_eq!(config["provider"]["inputMicrounitsPerMillionTokens"], 0);
+    assert_eq!(config["provider"]["outputMicrounitsPerMillionTokens"], 0);
+    let requests = capture.recv().expect("captured onboarding requests");
+    assert!(
+        requests[0]
+            .0
+            .starts_with("GET /v1/models/user HTTP/1.1\r\n")
+    );
+    assert!(requests[1].0.starts_with("POST /v1/responses HTTP/1.1\r\n"));
+    assert_eq!(
+        requests[1].1.as_ref().expect("probe JSON")["model"],
+        "vendor/tool-model:free"
+    );
+    assert_eq!(
+        requests[1].1.as_ref().expect("probe JSON")["max_output_tokens"],
+        256
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|(headers, _)| headers.lines().any(|line| {
+                line.split_once(':').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("authorization")
+                        && value.trim() == "Bearer openrouter-onboarding-secret"
+                })
+            }))
+    );
+    server.join().expect("OpenRouter onboarding server");
 }
 
 #[test]
@@ -2223,6 +2455,74 @@ fn serve_probe(
             response_body.len()
         )
         .expect("write provider probe response");
+    });
+    (format!("http://{address}/v1"), receiver, handle)
+}
+
+type CapturedHttpRequest = (String, Option<Value>);
+
+fn serve_openrouter_onboarding(
+    catalog_body: String,
+    probe_body: String,
+) -> (
+    String,
+    mpsc::Receiver<Vec<CapturedHttpRequest>>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind onboarding server");
+    let address = listener.local_addr().expect("onboarding server address");
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for (index, response_body) in [catalog_body, probe_body].into_iter().enumerate() {
+            let (mut stream, _) = listener.accept().expect("accept onboarding request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("onboarding read timeout");
+            let mut raw = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            let header_end = loop {
+                let read = stream.read(&mut chunk).expect("read onboarding request");
+                assert!(read != 0, "onboarding request ended before headers");
+                raw.extend_from_slice(&chunk[..read]);
+                if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break position + 4;
+                }
+            };
+            let headers =
+                String::from_utf8(raw[..header_end].to_vec()).expect("onboarding headers");
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':').and_then(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().expect("content length"))
+                    })
+                })
+                .unwrap_or_default();
+            while raw.len().saturating_sub(header_end) < length {
+                let read = stream.read(&mut chunk).expect("read onboarding body");
+                assert!(read != 0, "onboarding body ended early");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            let body = (length != 0).then(|| {
+                serde_json::from_slice::<Value>(&raw[header_end..header_end + length])
+                    .expect("onboarding request JSON")
+            });
+            captured.push((headers, body));
+            let content_type = if index == 0 {
+                "application/json"
+            } else {
+                "text/event-stream"
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            )
+            .expect("write onboarding response");
+        }
+        sender.send(captured).expect("capture onboarding requests");
     });
     (format!("http://{address}/v1"), receiver, handle)
 }

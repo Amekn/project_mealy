@@ -104,6 +104,8 @@ cmp "$temporary/extracted/usr/bin/mealyctl" "$release_root/bin/mealyctl"
 [[ $(stat -Lc '%a' "$temporary/extracted/usr/bin/mealyd") == 755 ]]
 [[ $(stat -c '%a' "$release_root/README.md") == 644 ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/QUICKSTART.md ]]
+[[ -f $temporary/extracted/usr/share/doc/mealy/GETTING_STARTED.md ]]
+[[ -f $temporary/extracted/usr/share/doc/mealy/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/benchmarks/release-soak-subject.json ]]
 if [[ -n $(find "$temporary/extracted" ! -type f ! -type d ! -type l -print -quit) ]]; then
   echo "RPM contains an unsupported filesystem type" >&2

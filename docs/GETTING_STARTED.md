@@ -1,0 +1,119 @@
+# Get started on Linux
+
+This is the shortest path from a verified Mealy installation to a useful chat on a supported
+Linux host. It applies to Ubuntu, Debian, Fedora, and Arch Linux; read the
+[Linux support contract](LINUX_SUPPORT.md) for exact qualified versions and derivative limits.
+
+No production release exists merely because source code is present. Before installing, confirm
+that the selected GitHub release is published, attested, and has green linked acceptance jobs as
+described in the [release guide](RELEASE.md).
+
+## 1. Install a verified release
+
+Install Bubblewrap, GitHub CLI, `curl`, `jq`, and the ordinary host packages listed in the
+[quickstart prerequisites](QUICKSTART.md#prerequisites). Then use the attestation-verifying
+rootless release bootstrap from [the fast install instructions](QUICKSTART.md#fast-verified-linux-install).
+It installs `mealyd` and `mealyctl` beneath `$HOME/.local` without a Rust toolchain or root access.
+
+Make sure `$HOME/.local/bin` is on `PATH`, then check the installed client:
+
+```sh
+mealyctl --version
+```
+
+## 2. Choose how Mealy reaches a model
+
+`mealyctl onboard` offers these routes:
+
+| Choice | What must already exist |
+| --- | --- |
+| OpenRouter free | `OPENROUTER_API_KEY`; Mealy admits only a live catalog model whose exact ID ends in `:free`, supports tools/text, has complete limits, and advertises zero token and auxiliary prices. |
+| Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and a credential in a named environment variable. |
+| Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
+| ChatGPT subscription | The official `codex` client installed and already signed in with ChatGPT. |
+| Claude subscription | The official `claude` client installed and already signed in with a Claude subscription. |
+| OpenAI API | `OPENAI_API_KEY`. |
+| Anthropic API | `ANTHROPIC_API_KEY`. |
+
+Subscription routes use the existing official client session. Mealy does not extract OAuth tokens,
+inherit API-key variables into that client, or treat a ChatGPT/Claude subscription as an API key.
+
+## 3. Run onboarding
+
+For the recommended no-paid-credit route:
+
+```sh
+export OPENROUTER_API_KEY='replace-with-your-key'
+mealyctl --home "$HOME/.mealy" onboard --route openrouter-free
+unset OPENROUTER_API_KEY
+```
+
+Mealy fetches the account-visible catalog, shows only strictly eligible free models, derives their
+advertised limits and zero price, live-probes the selected model, brokers the key, installs and
+starts the systemd user service, waits for health, and requires `doctor` to pass. It prints the
+complete non-secret plan before asking you to type `APPROVE`.
+
+For an authenticated custom endpoint:
+
+```sh
+export CUSTOM_API_KEY='replace-with-your-endpoint-key'
+mealyctl --home "$HOME/.mealy" onboard \
+  --route custom \
+  --base-url 'https://your-endpoint.example/v1' \
+  --credential-env CUSTOM_API_KEY
+unset CUSTOM_API_KEY
+```
+
+Use `--credential-env LOCAL_API_KEY` when that is the environment-variable name chosen for a
+private remote endpoint. Never put the credential value itself on the command line.
+
+For a credentialless loopback server:
+
+```sh
+mealyctl --home "$HOME/.mealy" onboard \
+  --route local \
+  --base-url 'http://127.0.0.1:11434/v1'
+```
+
+For a subscription, first complete sign-in in the official client, then choose
+`chatgpt-subscription` or `claude-subscription`:
+
+```sh
+mealyctl --home "$HOME/.mealy" onboard --route chatgpt-subscription
+```
+
+Onboarding refuses to replace an existing `config.json`. Diagnose an existing running home with
+`doctor`; only use `--reconfigure` after stopping the daemon and intentionally reviewing the new
+provider plan. `--configure-only` is available for a foreground or test installation and
+deliberately skips service installation, startup, health, and doctor verification.
+`--skip-connectivity-test` is accepted only together with `--configure-only`, so an unprobed
+provider cannot be presented as fully onboarded.
+
+## 4. Chat and verify
+
+On successful full onboarding, start the durable interactive client:
+
+```sh
+mealyctl --home "$HOME/.mealy" chat
+```
+
+At `you>`, enter a prompt. `/help` lists session controls, approvals, memory, attachments, and
+governed action modes. The owner service survives logout/reboot when the host's systemd user
+manager and lingering policy provide that behavior.
+
+Recheck the installation at any time:
+
+```sh
+mealyctl --home "$HOME/.mealy" doctor
+mealyctl --home "$HOME/.mealy" status
+```
+
+Stop before changing provider or other stopped-home configuration:
+
+```sh
+mealyctl --home "$HOME/.mealy" drain
+```
+
+Continue with the comprehensive [quickstart](QUICKSTART.md) for workspace tools, web/browser,
+skills, MCP, memory, channels, schedules, backup, and recovery. Use the
+[operations guide](OPERATIONS.md) for incidents and the [CLI reference](CLI.md) for every command.

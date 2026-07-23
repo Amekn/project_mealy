@@ -76,6 +76,8 @@ unit="$unit_directory/mealy.service"
 daemon_pid=
 service_pid=
 linked=false
+default_unit="$HOME/.config/systemd/user/mealy.service"
+default_unit_created=false
 
 cleanup() {
   status=$?
@@ -104,6 +106,16 @@ cleanup() {
     timeout --foreground --signal=TERM --kill-after=2 5 \
       systemctl --user reset-failed mealy.service >/dev/null 2>&1
   fi
+  if [[ $default_unit_created == true && -f $default_unit ]] \
+    && grep -Fq "ExecStart=\"$mealyd\" --home \"$home\"" "$default_unit"; then
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user disable --now mealy.service >/dev/null 2>&1
+    rm -f -- "$default_unit"
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user daemon-reload >/dev/null 2>&1
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user reset-failed mealy.service >/dev/null 2>&1
+  fi
   if [[ -n $service_pid && -e /proc/$service_pid/exe \
     && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == "$mealyd" \
     && -r /proc/$service_pid/cgroup \
@@ -122,6 +134,96 @@ cleanup() {
   rm -rf -- "$home" "$unit_directory"
 }
 trap cleanup EXIT
+
+# Prove the ordinary clean-home journey composes subscription probing, default service
+# installation/activation, authenticated health/doctor, and one durable useful turn. The fake
+# official client owns no credential and is never installed outside this disposable proof.
+subscription_fixture="$unit_directory/codex-subscription-fixture"
+cat >"$subscription_fixture" <<'EOF'
+#!/bin/sh
+test -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}" || exit 90
+cat >/dev/null
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"systemd-onboarding-fixture"}' \
+  '{"type":"item.completed","item":{"type":"agent_message","text":"{\"kind\":\"final\",\"text\":\"MEALYONBOARDINGOK\",\"toolId\":null,\"arguments\":null}"}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+EOF
+chmod 0700 "$subscription_fixture"
+default_unit_created=true
+onboard=$(
+  OPENAI_API_KEY=must-not-reach-client \
+  ANTHROPIC_API_KEY=must-not-reach-client \
+  OPENROUTER_API_KEY=must-not-reach-client \
+  LOCAL_API_KEY=must-not-reach-client \
+    "$mealyctl" --home "$home" onboard \
+      --route chatgpt-subscription \
+      --executable-path "$subscription_fixture" \
+      --model fixture-model \
+      --context-tokens 32768 \
+      --maximum-output-tokens 64 \
+      --approve
+)
+jq -e \
+  --arg daemon "$mealyd" \
+  --arg home "$home" '
+    .provider.protocol == "openai_subscription_cli"
+    and .provider.providerId == "openai.subscription"
+    and .provider.connectivityTested == true
+    and .provider.secretId == null
+    and .service.daemonPath == $daemon
+    and .service.home == $home
+    and .serviceStarted == true
+    and .healthVerified == true
+    and .doctor.controlPlaneReady == true
+    and .doctor.sandboxAvailable == true
+    and (.nextCommand | contains(" chat"))
+  ' <<<"$onboard" >/dev/null
+"$mealyctl" --home "$home" health >/dev/null
+session=$("$mealyctl" --home "$home" session create)
+onboarding_session_id=$(jq -er '.sessionId' <<<"$session")
+"$mealyctl" --home "$home" session send "$onboarding_session_id" \
+  "Complete the onboarding acceptance turn." \
+  --idempotency-key systemd-onboarding-turn-1 >/dev/null
+onboarding_task_id=
+for _ in $(seq 1 400); do
+  search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
+  onboarding_task_id=$(jq -er --arg session "$onboarding_session_id" '
+    [.hits[] | select(
+      .sessionId == $session
+      and (.assistantExcerpt // "" | contains("MEALYONBOARDINGOK"))
+    )] | if length == 1 then .[0].taskId else empty end
+  ' <<<"$search" 2>/dev/null || true)
+  if [[ -n $onboarding_task_id ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ -z $onboarding_task_id ]]; then
+  echo "onboarding service did not complete the first durable model turn" >&2
+  exit 70
+fi
+onboarding_task=$("$mealyctl" --home "$home" task status "$onboarding_task_id")
+jq -e '.status == "succeeded"' <<<"$onboarding_task" >/dev/null
+"$mealyctl" --home "$home" drain >/dev/null
+for _ in $(seq 1 400); do
+  state=$(systemctl_user show mealy.service --property=ActiveState --value)
+  if [[ $state != active && $state != deactivating ]]; then
+    break
+  fi
+  sleep 0.05
+done
+systemctl_user disable --now mealy.service >/dev/null
+if [[ ! -f $default_unit ]] \
+  || ! grep -Fq "ExecStart=\"$mealyd\" --home \"$home\"" "$default_unit"; then
+  echo "onboarding did not install the expected default owner unit" >&2
+  exit 70
+fi
+rm -- "$default_unit"
+default_unit_created=false
+systemctl_user daemon-reload
+systemctl_user reset-failed mealy.service >/dev/null
+rm -rf -- "$home"
+mkdir -m 0700 -- "$home"
 
 # Initialize a complete default home and prove the same binaries work before
 # adding systemd supervision. The daemon never receives a credential.
