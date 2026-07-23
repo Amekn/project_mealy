@@ -13704,8 +13704,23 @@ fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
             "loaded mealy.service does not match the reviewed definition".to_owned(),
         ));
     }
-    if loaded.is_some() {
-        run_systemctl(&["--user", "disable", "--now", "mealy.service"], true)?;
+    if let Some(reviewed) = loaded.as_ref() {
+        // Keep stop and disable as separate, ordered operations. systemd 257 removes a linked
+        // fragment before attempting the `--now` stop, then reports "unit not loaded" even though
+        // the service has stopped. Stopping first preserves the reviewed fragment for the state
+        // check and makes the transaction portable across the supported systemd versions.
+        run_systemctl(&["--user", "stop", "mealy.service"], true)?;
+        if owner_service_active_or_absent()? {
+            return Err(CliError::InvalidService(
+                "mealy.service remained active after stop".to_owned(),
+            ));
+        }
+        if loaded_owner_service_fragment()?.as_ref() != Some(reviewed) {
+            return Err(CliError::InvalidService(
+                "loaded mealy.service changed while stopping".to_owned(),
+            ));
+        }
+        run_systemctl(&["--user", "disable", "mealy.service"], true)?;
     }
     if owner_service_active_or_absent()? {
         return Err(CliError::InvalidService(

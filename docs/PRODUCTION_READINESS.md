@@ -119,7 +119,13 @@ Full onboarding now opens the first durable chat automatically only when all thr
 streams are terminals; `--chat` and `--no-chat` make the boundary explicit for scripted or
 machine-readable use. The real systemd acceptance drives the subscription probe, service
 installation, health, `doctor`, chat creation, first visible model response, durable search, and
-clean chat exit as one installed-binary journey.
+clean chat exit as one installed-binary journey. It also requires the generated owner unit to be
+enabled and running the exact installed daemon, restarts that unit across a distinct process,
+re-establishes bounded health plus sandbox-conformant `doctor`, and uses `chat --continue` to
+resume the exact original durable session without creating another. Disposable Ubuntu 24.04
+systemd 255 and Debian 13 systemd 257 runs also prove that owner-service removal now stops the
+reviewed unit before disabling its links; this avoids systemd 257's linked-unit `disable --now`
+failure without regressing the older supported manager.
 The next daily-use slice keeps authoritative provider operations visible inside that chat:
 startup and `/status` render provider/model identity, live health, locality/residency,
 context/output limits, provider overhead, configured prices, queue state, and route pressure.

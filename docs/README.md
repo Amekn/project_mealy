@@ -27,7 +27,10 @@ Start with these documents in order:
 20. [`research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md`](research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md)
     — current install, onboarding, maintenance, documentation, CI, release, and user-experience
     comparison.
-21. [`benchmarks/`](benchmarks/) — versioned soak/performance reports and reproduction commands.
+21. [`research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md`](research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md)
+    — direct evidence for each competitor-grade onboarding outcome and its remaining external
+    release gates.
+22. [`benchmarks/`](benchmarks/) — versioned soak/performance reports and reproduction commands.
 
 Requirements are authoritative for product intent. Accepted ADRs are authoritative for cross-cutting implementation decisions. Architecture describes the current synthesis and must be updated when an ADR supersedes it.
 

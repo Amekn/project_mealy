@@ -86,6 +86,7 @@ release_documents=(
   decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md
   research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
 )

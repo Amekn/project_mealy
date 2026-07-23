@@ -1,0 +1,63 @@
+# Competitor-grade onboarding completion audit
+
+Observed: 2026-07-24 (Pacific/Auckland)
+
+Standard: the ten-item definition in
+[PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md](PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md#definition-of-competitor-grade-onboarding)
+
+This audit separates implemented source behavior from a publicly usable production release. A
+green pull-request check proves the exact source revision it tested; it does not prove that the
+revision is merged, tagged, published, or installed by an ordinary user. “Source-ready” below
+therefore remains distinct from “publicly complete.”
+
+## Requirement evidence
+
+| # | Ordinary-user outcome | Authoritative evidence | Current conclusion |
+| --- | --- | --- | --- |
+| 1 | Obtain an attested package without Rust | `packaging/install-release.sh` verifies exact release-workflow Sigstore bundles and complete checksums; native packages and `packaging/build-signed-linux-repositories.sh` cover APT, DNF, and Pacman; package/repository clean-install tests cover every qualified family. | **Source-ready, public-release gated.** No source checkout can substitute for the first qualifying published tag and public repository acceptance. |
+| 2 | Run one guided command | `mealyctl onboard` composes provider selection, reviewed activation, service installation/start, health, `doctor`, and chat; the verified interactive bootstrap hands off to that installed command. | **Source-ready and process-tested.** |
+| 3 | Choose free, subscription, local, custom, or advanced API routes without researching accounting | The `OnboardRouteArgument` command surface and provider-configuration process tests cover strict free OpenRouter, authenticated custom Responses, credentialless loopback, official Codex/Claude subscription clients, OpenAI API, and Anthropic API. Catalog routes derive limits/prices; advanced routes require explicit conservative values. | **Source-ready and fixture-tested.** OpenRouter free remains subject to exact live acceptance for publication. |
+| 4 | See a bounded live route probe pass | Onboarding calls the existing byte-, event-, identity-, timeout-, and model-bounded provider probes before activation. Provider process tests cover each protocol and redaction; the private custom endpoint has separate live acceptance. | **Source-ready.** The release still requires reviewed free-OpenRouter live evidence. |
+| 5 | Have the owner service installed and running | `scripts/systemd-service-smoke.sh` starts from a clean home, uses the real generated enabled systemd user unit, requires health plus sandbox-conformant `doctor`, and executes a governed mutation. Protected Linux CI prepares a clean user manager with lingering enabled. | **Source-ready and installed-service tested.** |
+| 6 | Reach the first useful chat | The same installed-service journey drives onboarding through a real terminal input, requires the visible model response, verifies exact usage, and finds the committed durable task before accepting success. | **Source-ready and end-to-end tested.** |
+| 7 | Restart and resume | `chat --continue` selects the newest exact-binding session without creating another. The systemd journey now captures the enabled installed service and its PID, restarts it, requires a distinct healthy daemon and passing `doctor`, then resumes the exact prior session and rechecks the one-session inventory. Login-manager lingering plus the generated enabled unit cover boot activation under the supported distro contract. | **Implemented; exact protected systemd acceptance is required on every revision.** A hosted runner cannot reboot its physical host, so Mealy proves the controllable cold-process, durable-state, enabled-unit, and distro-contract components instead of claiming a literal hardware reboot occurred in CI. |
+| 8 | Diagnose a failure with one command | `mealyctl doctor` checks API readiness, SQLite startup integrity, permissions, required system executables, and enforceability of every sandbox profile; onboarding will not report completion until it passes. | **Source-ready and package-tested.** |
+| 9 | Update and roll back without losing state | `install-status`, no-mutation `update`, restartable approved archive update, pre-update backup, qualification, automatic same-schema slot rollback, repair, uninstall, and native manager handoffs are implemented. Installed failure injection requires the prior package, health, `doctor`, backup, and durable task to survive. | **Source-ready and installed-package tested.** |
+| 10 | Find the same short, version-matched workflow | `GETTING_STARTED.md` is bundled in every archive/native package. The signed repository landing page carries distro install, onboarding, continuation, diagnostics, update, fingerprint, and version-tagged detailed links inside the complete signed repository inventory. Documentation validation binds public CLI/API surfaces and local links. | **Source-ready and package/repository tested.** |
+
+## Failure-behavior audit
+
+The composed path also has direct negative evidence:
+
+- credential values are read from one named environment variable into the private broker and are
+  excluded from plans, config, service environments, official subscription clients, and
+  diagnostics;
+- the free OpenRouter route admits only exact `:free`, tool/text-capable catalog entries whose
+  complete token and auxiliary prices are zero;
+- an existing `config.json` is never replaced without `--reconfigure` while stopped;
+- service-start or bounded readiness failure preserves the configured home and reports the
+  completed boundary;
+- `--configure-only` makes an intentionally unstarted home explicit; and
+- owner-service removal stops the still-reviewed loaded unit before disabling its links, avoiding
+  the linked-unit `disable --now` ordering failure in systemd 257 while retaining systemd 255
+  behavior; and
+- release install, onboarding, service operations, provider activation, and update transactions
+  either reuse stable identities or report their durable completion evidence.
+
+## Remaining gates before the goal is publicly true
+
+1. The exact v0.1.1 candidate must complete its uninterrupted 24-hour soak and pass the checked
+   report validator.
+2. Final release archives and native packages must be rebuilt from the promoted subject and pass
+   protected release/package acceptance.
+3. An owner-reviewed, exact-zero-price OpenRouter run must pass against the promoted commit.
+4. The owner must supply the offline-controlled production repository identity, fingerprint, and
+   encrypted signing-subkey export; CI must not invent that trust root.
+5. The onboarding stack must be merged through protected CI into a subsequent qualifying release,
+   or be deliberately selected for the current release only if its exact release subject and soak
+   are rebuilt and repeated.
+6. The tag workflow must publish immutable attested assets, deploy the signed repositories, and
+   pass clean public HTTPS bootstrap plus APT/DNF/Pacman acceptance.
+
+Until those gates are satisfied, the implementation is a protected-green candidate experience,
+not a production release available to everyone.

@@ -101,6 +101,7 @@ cmp "$temporary/extracted/usr/bin/mealyctl" "$release_root/bin/mealyctl"
 [[ $(stat -c '%a' "$release_root/install-release.sh") == 755 ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/QUICKSTART.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/GETTING_STARTED.md ]]
+[[ -f $temporary/extracted/usr/share/doc/mealy/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]
 [[ -f $temporary/extracted/usr/share/doc/mealy/benchmarks/release-soak-subject.json ]]
 if [[ -n $(find "$temporary/extracted" \

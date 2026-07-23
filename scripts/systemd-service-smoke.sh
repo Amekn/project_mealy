@@ -226,6 +226,19 @@ grep -Fq \
   'usage> 10 input + 5 output token(s) | 0 configured-cost microunit(s) | 1 model call(s) | 0 tool call(s) | 0 retries' \
   "$onboard_output"
 "$mealyctl" --home "$home" health >/dev/null
+onboard_service_enabled=$(
+  systemctl_user is-enabled mealy.service 2>/dev/null || true
+)
+onboard_service_pid_before=$(
+  systemctl_user show mealy.service --property=MainPID --value
+)
+if [[ $onboard_service_enabled != enabled \
+  || ! $onboard_service_pid_before =~ ^[1-9][0-9]*$ \
+  || ! -e /proc/$onboard_service_pid_before/exe \
+  || $(readlink -f -- "/proc/$onboard_service_pid_before/exe") != "$mealyd" ]]; then
+  echo "onboarding did not leave an enabled owner service running the installed daemon" >&2
+  exit 70
+fi
 onboarding_session_id=$(awk '
   $1 == "Mealy" && $2 == "chat" && $3 == "session" {print $4; exit}
 ' "$onboard_output")
@@ -234,6 +247,44 @@ if [[ -z $onboarding_session_id ]]; then
   exit 70
 fi
 sessions_before_continue=$("$mealyctl" --home "$home" session list --limit 100)
+
+# Exercise the reboot-relevant boundary rather than merely reopening the client against the same
+# daemon process. An enabled generated unit, a new healthy mealyd PID, passing doctor, and the
+# exact prior durable session together establish the parts of cold host recovery under Mealy's
+# control; distro qualification separately proves the unit's systemd contract.
+systemctl_user restart mealy.service
+restart_ready=false
+for _ in $(seq 1 400); do
+  if "$mealyctl" --home "$home" health >/dev/null 2>&1; then
+    restart_ready=true
+    break
+  fi
+  sleep 0.05
+done
+if [[ $restart_ready != true ]]; then
+  echo "the restarted onboarding service did not recover bounded control-plane health" >&2
+  exit 70
+fi
+onboard_service_pid_after=$(
+  systemctl_user show mealy.service --property=MainPID --value
+)
+if [[ ! $onboard_service_pid_after =~ ^[1-9][0-9]*$ \
+  || $onboard_service_pid_after == "$onboard_service_pid_before" \
+  || ! -e /proc/$onboard_service_pid_after/exe \
+  || $(readlink -f -- "/proc/$onboard_service_pid_after/exe") != "$mealyd" ]]; then
+  echo "systemd restart did not activate a distinct installed daemon process" >&2
+  exit 70
+fi
+restart_doctor=$("$mealyctl" --home "$home" doctor)
+jq -e '
+  .controlPlaneReady == true
+  and .sandboxAvailable == true
+  and (.checks.sqlite | startswith("ok:"))
+  and any(.sandboxProfiles[]; .profile == "observe" and .status == "enforceable")
+  and any(.sandboxProfiles[];
+    .profile == "workspace_write" and .status == "enforceable")
+' <<<"$restart_doctor" >/dev/null
+
 continued_output="$unit_directory/continued.stdout"
 printf '/quit\n' \
   | "$mealyctl" --home "$home" chat --continue >"$continued_output"

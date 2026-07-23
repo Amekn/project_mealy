@@ -311,6 +311,9 @@ verifiable.
 - [`docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md`](docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md)
   — fresh comparison of competitor installation, onboarding, maintenance, documentation, CI,
   release, and user-facing workflows.
+- [`docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md`](docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md)
+  — requirement-by-requirement proof and the remaining distinction between protected source and a
+  publicly usable release.
 - [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — vertical phases and exit gates.
 - [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — prerequisites, release build, first run, and current limitations.
 - [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) — active blockers and competitive acceptance gates.

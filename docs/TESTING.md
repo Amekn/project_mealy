@@ -402,8 +402,11 @@ GitHub-hosted runner or disposable container's user manager,
 first drives full subscription-backed `onboard` through provider probing, default service
 installation/start, authenticated health/doctor, the composed chat handoff, and one visible plus
 searchable successful durable model turn with the expected provider/model status, context boundary,
-and exact terminal token/cost/call accounting before leaving chat cleanly. It removes that exact
-default unit and home before the existing independent service proof.
+and exact terminal token/cost/call accounting before leaving chat cleanly. The journey then
+requires that the generated unit is enabled and running the exact installed daemon, restarts it
+across a distinct main process, rechecks bounded health plus sandbox-conformant `doctor`, and
+resumes the exact original durable session through `chat --continue` without creating a duplicate.
+It removes that exact default unit and home before the existing independent service proof.
 That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
 It rejects both an outer Bubblewrap wrapper (which Ubuntu's reviewed profile makes incompatible
