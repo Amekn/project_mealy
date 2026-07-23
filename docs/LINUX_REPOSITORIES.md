@@ -12,6 +12,12 @@ The expected GitHub Pages address is:
 https://amekn.github.io/mealy
 ```
 
+Its root page is a no-JavaScript, release-versioned install guide for all three package-manager
+families, followed by the ordinary onboarding, latest-chat continuation, diagnostics, and update
+commands. The release builder includes that page in `REPOSITORY-MANIFEST.json` before signing the
+complete inventory, so the independent verification path below also covers the instructions a user
+sees. The page does not execute installation or pipe a remote program into a privileged shell.
+
 Do not use a mirror, shortened URL, or copied configuration whose signed manifest names a
 different `baseUrl`.
 

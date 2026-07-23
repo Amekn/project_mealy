@@ -10,11 +10,18 @@ described in the [release guide](RELEASE.md).
 
 ## 1. Install a verified release
 
-Install Bubblewrap, GitHub CLI, `curl`, `jq`, and the ordinary host packages listed in the
-[quickstart prerequisites](QUICKSTART.md#prerequisites). The shortest distribution-native route is
-the signed APT, DNF, or Pacman setup in [LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). The
-attestation-verifying rootless release bootstrap in the
-[fast install instructions](QUICKSTART.md#fast-verified-linux-install) remains available when the
+The shortest distribution-native route is the versioned
+[signed repository landing page](https://amekn.github.io/mealy/) and the corresponding APT, DNF,
+or Pacman setup in [LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). Those package managers install
+Mealy's Bubblewrap, CA-certificate, libc, and runtime dependencies; the setup step itself uses
+`curl` to download a small configuration file for inspection. The landing page is part of the
+repository's signed complete inventory and gives inspect-before-privilege commands for all three
+families; use it only after the selected release's publication and public-install jobs are green.
+
+For the attestation-verifying rootless release bootstrap, first install Bubblewrap, GitHub CLI,
+`curl`, `jq`, and the ordinary host packages listed in the
+[quickstart prerequisites](QUICKSTART.md#prerequisites). The
+[fast install instructions](QUICKSTART.md#fast-verified-linux-install) remain available when the
 repository has not yet been deployed or root access is undesirable. Neither route requires a Rust
 toolchain. The verified bootstrap continues directly into this guide's onboarding flow on an
 interactive fresh install; use its `--no-onboard` option when installation must remain passive.

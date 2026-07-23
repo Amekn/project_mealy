@@ -4,11 +4,19 @@ Mealy is a local-first, self-contained agent runtime for a reliable personal AI 
 
 ## Run it
 
-For a published stable Linux release, install GitHub CLI plus the host prerequisites in the
-[quickstart](docs/QUICKSTART.md), then download and verify the small release
-bootstrap before running it. The bootstrap selects x86-64 or ARM64, resolves one exact stable tag,
-verifies every downloaded asset against the tag's release-workflow attestations and checksums, and
-installs rootlessly beneath `$HOME/.local` without a Rust toolchain, root access, or GitHub account:
+For a published stable Linux release, the
+[signed repository landing page](https://amekn.github.io/mealy/) gives version-matched APT, DNF,
+and Pacman installation, onboarding, continuation, diagnostics, and update commands. Use it only
+after the selected release shows green `Publish signed Linux repositories` and public-repository
+acceptance jobs. The page, package-manager configurations, public key, and package indexes are all
+bound into the release's signed repository inventory.
+
+For independent first-trust verification, a rootless install, or a release whose repository has
+not been deployed, install GitHub CLI plus the host prerequisites in the
+[quickstart](docs/QUICKSTART.md), then download and verify the small release bootstrap before
+running it. The bootstrap selects x86-64 or ARM64, resolves one exact stable tag, verifies every
+downloaded asset against the tag's release-workflow attestations and checksums, and installs
+rootlessly beneath `$HOME/.local` without a Rust toolchain, root access, or GitHub account:
 
 ```sh
 tmp=$(mktemp -d)

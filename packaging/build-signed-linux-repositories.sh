@@ -357,23 +357,207 @@ sign_detached "$build/arch/x86_64/mealy.db" "$build/arch/x86_64/mealy.db.sig"
 } >"$build/mealy.pacman.conf"
 
 printf '%s\n' "$expected_fingerprint" >"$build/REPOSITORY-KEY-FINGERPRINT"
-cat >"$build/index.html" <<EOF
+cat >"$temporary/repository-index.template" <<'EOF'
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Mealy Linux repositories</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Install Mealy on Linux</title>
+<style>
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.55;
+  color: #172033;
+  background: #f4f6fb;
+}
+body {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+header, section {
+  background: #fff;
+  border: 1px solid #dfe4ef;
+  border-radius: 1rem;
+  box-shadow: 0 .35rem 1.5rem rgba(24, 37, 66, .07);
+  margin: 0 0 1rem;
+  padding: clamp(1.1rem, 3vw, 2rem);
+}
+h1, h2, h3 { line-height: 1.2; }
+h1 { margin: 0 0 .5rem; font-size: clamp(2rem, 6vw, 3.4rem); }
+h2 { margin-top: 0; }
+.lede { font-size: 1.15rem; max-width: 48rem; }
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  background: #e7edff;
+  color: #173b8f;
+  font-weight: 700;
+  padding: .25rem .75rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 1rem;
+}
+.card {
+  border: 1px solid #dfe4ef;
+  border-radius: .8rem;
+  padding: 1rem;
+  min-width: 0;
+}
+pre {
+  background: #111827;
+  color: #f8fafc;
+  border-radius: .65rem;
+  overflow-x: auto;
+  padding: 1rem;
+  white-space: pre;
+}
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+p code, li code {
+  background: #eef1f7;
+  border-radius: .25rem;
+  padding: .1rem .3rem;
+}
+a { color: #2457c5; }
+.fingerprint {
+  overflow-wrap: anywhere;
+  font-size: .95rem;
+}
+.note {
+  border-left: .3rem solid #2457c5;
+  padding-left: 1rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root { color: #e8edf7; background: #0d1320; }
+  header, section, .card { background: #151d2d; border-color: #354058; box-shadow: none; }
+  .badge { background: #243a72; color: #e6edff; }
+  p code, li code { background: #263147; }
+  a { color: #91b4ff; }
+}
+</style>
+</head>
 <body>
-<h1>Mealy Linux repositories</h1>
-<p>Stable Mealy ${version} packages for Debian/Ubuntu, Fedora, and Arch Linux.</p>
-<p>Signing-key fingerprint: <code>${expected_fingerprint}</code></p>
-<ul>
-<li><a href="mealy.sources">APT deb822 source</a></li>
-<li><a href="mealy.repo">DNF repository file</a></li>
-<li><a href="mealy.pacman.conf">Pacman repository stanza</a></li>
-<li><a href="repository-signing-key.asc">OpenPGP repository key</a></li>
-</ul>
+<header>
+  <span class="badge">Stable @@VERSION@@</span>
+  <h1>Install Mealy on Linux</h1>
+  <p class="lede">Signed native packages for Ubuntu, Debian, Fedora, and Arch Linux.
+  Choose your distribution, install through its normal package manager, then let one guided
+  command configure the provider, owner service, health checks, and first chat.</p>
+  <p class="note">These steps download small configuration files for inspection before privileged
+  installation. They never pipe a remote program into a privileged shell.</p>
+</header>
+
+<section aria-labelledby="install">
+  <h2 id="install">1. Install the signed package</h2>
+  <div class="grid">
+    <article class="card">
+      <h3>Ubuntu or Debian</h3>
+      <pre><code>tmp=$(mktemp)
+curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  @@BASE_URL@@/mealy.sources --output "$tmp"
+sudo install -m 0644 "$tmp" /etc/apt/sources.list.d/mealy.sources
+rm -f "$tmp"
+sudo apt update
+sudo apt install mealy</code></pre>
+      <p>The deb822 source embeds the repository key and requires signed APT metadata.</p>
+    </article>
+    <article class="card">
+      <h3>Fedora</h3>
+      <pre><code>tmp=$(mktemp)
+curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  @@BASE_URL@@/mealy.repo --output "$tmp"
+sudo install -m 0644 "$tmp" /etc/yum.repos.d/mealy.repo
+rm -f "$tmp"
+sudo dnf install mealy</code></pre>
+      <p>The repository requires signatures on both RPM packages and repository metadata.</p>
+    </article>
+    <article class="card">
+      <h3>Arch Linux</h3>
+      <pre><code>tmp=$(mktemp -d)
+curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  @@BASE_URL@@/repository-signing-key.asc \
+  --output "$tmp/repository-signing-key.asc"
+curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  @@BASE_URL@@/mealy.pacman.conf --output "$tmp/mealy.pacman.conf"
+fingerprint=$(gpg --batch --show-keys --with-colons \
+  "$tmp/repository-signing-key.asc" | awk -F: \
+  '$1 == "pub" {want = 1; next} want &amp;&amp; $1 == "fpr" {print toupper($10); exit}')
+test "$fingerprint" = "@@FINGERPRINT@@"
+sudo pacman-key --add "$tmp/repository-signing-key.asc"
+sudo pacman-key --lsign-key "$fingerprint"
+sudo install -m 0644 "$tmp/mealy.pacman.conf" /etc/pacman.d/mealy.conf
+grep -Fqx 'Include = /etc/pacman.d/mealy.conf' /etc/pacman.conf ||
+  printf '\nInclude = /etc/pacman.d/mealy.conf\n' | sudo tee -a /etc/pacman.conf
+rm -rf "$tmp"
+sudo pacman -Syu mealy</code></pre>
+      <p>Pacman requires signatures on the package and repository database. The command stops if
+      the downloaded primary fingerprint differs from this release.</p>
+    </article>
+  </div>
+</section>
+
+<section aria-labelledby="onboard">
+  <h2 id="onboard">2. Configure and start Mealy</h2>
+  <p>Guided onboarding supports a strictly free OpenRouter model, a custom authenticated endpoint,
+  a credentialless loopback server, ChatGPT or Claude subscription clients, and advanced direct
+  APIs. It live-probes the selected route before starting the owner service.</p>
+  <pre><code>mealyctl --version
+mealyctl --home "$HOME/.mealy" onboard</code></pre>
+  <p>On a fresh interactive terminal, successful onboarding opens the first durable chat after
+  service health and <code>doctor</code> pass.</p>
+</section>
+
+<section aria-labelledby="return">
+  <h2 id="return">3. Return, diagnose, or update</h2>
+  <div class="grid">
+    <article class="card">
+      <h3>Continue the latest chat</h3>
+      <pre><code>mealyctl --home "$HOME/.mealy" chat --continue</code></pre>
+    </article>
+    <article class="card">
+      <h3>Check the installation</h3>
+      <pre><code>mealyctl install-status
+mealyctl --home "$HOME/.mealy" doctor</code></pre>
+    </article>
+    <article class="card">
+      <h3>Review an update</h3>
+      <pre><code>mealyctl --home "$HOME/.mealy" update</code></pre>
+      <p>The verified plan prints the exact APT, DNF, or Pacman command; the client does not mutate
+      a package-manager-owned installation behind its back.</p>
+    </article>
+  </div>
+</section>
+
+<section aria-labelledby="trust">
+  <h2 id="trust">Repository identity and independent verification</h2>
+  <p>Primary signing-key fingerprint:</p>
+  <p class="fingerprint"><code>@@FINGERPRINT@@</code></p>
+  <ul>
+    <li><a href="REPOSITORY-MANIFEST.json">Complete signed-inventory manifest</a></li>
+    <li><a href="REPOSITORY-MANIFEST.json.asc">Manifest OpenPGP signature</a></li>
+    <li><a href="repository-signing-key.asc">Repository public key</a></li>
+    <li><a href="REPOSITORY-KEY-FINGERPRINT">Machine-readable fingerprint</a></li>
+    <li><a href="https://github.com/Amekn/mealy/blob/v@@VERSION@@/docs/LINUX_REPOSITORIES.md">Independent attestation verification and rollback guide</a></li>
+    <li><a href="https://github.com/Amekn/mealy/blob/v@@VERSION@@/docs/GETTING_STARTED.md">Provider choices and first-five-minute guide</a></li>
+  </ul>
+  <p>Qualified targets are documented for current Ubuntu, Debian, Fedora, and Arch Linux. A
+  derivative is compatibility-expected only when its libc, systemd user manager, sandbox, and
+  package-manager behavior preserve that family contract.</p>
+</section>
 </body>
 </html>
 EOF
+html_base_url=$(printf '%s' "$base_url" | sed 's/&/\&amp;/g')
+sed_base_url=$(printf '%s' "$html_base_url" | sed 's/[\\&|]/\\&/g')
+sed \
+  -e "s|@@VERSION@@|$version|g" \
+  -e "s|@@BASE_URL@@|$sed_base_url|g" \
+  -e "s|@@FINGERPRINT@@|$expected_fingerprint|g" \
+  "$temporary/repository-index.template" >"$build/index.html"
 
 find "$build" -type d -exec chmod 0755 {} +
 find "$build" -type f -exec chmod 0644 {} +

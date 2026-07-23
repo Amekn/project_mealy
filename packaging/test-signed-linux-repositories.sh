@@ -209,6 +209,39 @@ if grep -RIl -- 'PRIVATE KEY' "$repository" | grep -q .; then
   echo "published fixture repository leaked its private key" >&2
   exit 1
 fi
+repository_index="$repository/index.html"
+if [[ ! -f $repository_index || $(stat -c '%s' "$repository_index") -gt 65536 ]]; then
+  echo "repository install page is missing or exceeds its 64 KiB bound" >&2
+  exit 1
+fi
+# These are literal browser-visible command strings; the test must not expand its own home.
+# shellcheck disable=SC2016
+for expected in \
+  '<title>Install Mealy on Linux</title>' \
+  '<span class="badge">Stable 9.8.7</span>' \
+  'file:///repository/mealy.sources' \
+  'sudo apt install mealy' \
+  'file:///repository/mealy.repo' \
+  'sudo dnf install mealy' \
+  'file:///repository/repository-signing-key.asc' \
+  'sudo pacman -Syu mealy' \
+  'mealyctl --home "$HOME/.mealy" onboard' \
+  'mealyctl --home "$HOME/.mealy" chat --continue' \
+  'mealyctl --home "$HOME/.mealy" update' \
+  'href="REPOSITORY-MANIFEST.json"' \
+  'href="REPOSITORY-MANIFEST.json.asc"' \
+  'href="repository-signing-key.asc"' \
+  'href="REPOSITORY-KEY-FINGERPRINT"' \
+  "$fingerprint"; do
+  if ! grep -Fq -- "$expected" "$repository_index"; then
+    echo "repository install page omitted required content: $expected" >&2
+    exit 1
+  fi
+done
+if grep -Eq '<script|@@(VERSION|BASE_URL|FINGERPRINT)@@' "$repository_index"; then
+  echo "repository install page contains JavaScript or an unresolved template field" >&2
+  exit 1
+fi
 
 docker run --rm \
   --env DEBIAN_FRONTEND=noninteractive \
