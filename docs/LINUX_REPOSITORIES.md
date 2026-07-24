@@ -187,6 +187,7 @@ printf '%s' "$fingerprint" |
 gpg --armor --export-secret-subkeys "$fingerprint" | base64 -w0 |
   gh secret set MEALY_REPOSITORY_GPG_PRIVATE_KEY_BASE64 \
     --repo Amekn/mealy --env linux-repository-signing
+scripts/preflight-release-environments.sh Amekn/mealy
 ```
 
 Use a real project-controlled address in the production UID. Do not commit the output, paste it
@@ -199,6 +200,11 @@ fingerprint and a usable signing key, removes the exported secret before any thi
 and publishes only the minimal public certificate. RPM dependencies are prepared before the key is
 mounted; the signing process then runs unprivileged with a read-only root, no Linux capabilities,
 no privilege escalation, and no network interface beyond loopback.
+
+The final command must be run from the canonical source checkout. It reads Environment secret names
+but cannot retrieve their values, and fails before tagging when the Pages identity, tag policies,
+review requirements, fingerprint, signing-subkey secret, or free-OpenRouter release gate is
+incomplete.
 
 The checked builder creates APT `InRelease`/`Release.gpg`, signed RPMs and `repomd.xml`, signed Arch
 packages and database, a complete signed inventory, package-manager configurations, and APT

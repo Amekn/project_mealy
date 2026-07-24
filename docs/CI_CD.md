@@ -134,7 +134,17 @@ candidate=$(git rev-parse origin/main)
 git status --short
 printf '%s\n' "$candidate"
 gh run list --workflow ci.yml --branch main --commit "$candidate"
+scripts/preflight-release-environments.sh Amekn/mealy
 ```
+
+Run the preflight from the canonical source checkout before creating any release tag. It reads only
+public repository/Pages/environment policy plus GitHub's variable and secret-name metadata; it
+cannot retrieve secret values. It fails unless the canonical repository is public and enabled,
+Pages is a public HTTPS workflow deployment, both signing and Pages environments admit only stable
+version tags, signing requires owner review, the Pages URL and uppercase primary fingerprint are
+exact, the signing-subkey secret name exists, and the reviewed free-OpenRouter environment remains
+restricted to protected branches. This catches an incomplete trust-root ceremony before an
+immutable tag exists.
 
 The release report at `docs/benchmarks/release-soak.json` must pass
 `scripts/validate-release-soak.sh`. For release one it must represent a clean, retained-disk,
