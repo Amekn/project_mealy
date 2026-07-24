@@ -454,6 +454,223 @@ fn onboarding_without_a_credential_or_terminal_fails_before_mutation() {
     assert!(!home.path().join("provider-secrets").exists());
 }
 
+#[test]
+fn chatgpt_onboarding_composes_managed_device_login_and_catalog_default() {
+    let root = tempfile::tempdir().expect("ChatGPT app-server fixture root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
+        .expect("private ChatGPT fixture root");
+    let executable = root.path().join("codex-app-server-fixture");
+    let fixture = r#"#!/bin/sh
+test -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}" || exit 90
+test "${1:-}" = app-server || exit 91
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","platformFamily":"linux","platformOs":"linux"}}' ;;
+    *'"method":"initialized"'*) ;;
+    *'"method":"account/read"'*)
+      case "$line" in
+        *'"id":2'*) printf '%s\n' '{"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}' ;;
+        *'"id":4'*) printf '%s\n' '{"id":4,"result":{"account":{"type":"chatgpt","planType":"plus"},"requiresOpenaiAuth":true}}' ;;
+        *) exit 92 ;;
+      esac
+      ;;
+    *'"method":"account/login/start"'*)
+      printf '%s\n' '{"id":3,"result":{"type":"chatgptDeviceCode","loginId":"pty-login","verificationUrl":"https://auth.openai.com/codex/device","userCode":"WXYZ-9876"}}'
+      printf '%s\n' '{"method":"account/login/completed","params":{"loginId":"pty-login","success":true,"error":null}}'
+      ;;
+    *'"method":"model/list"'*)
+      printf '%s\n' '{"id":5,"result":{"data":[{"id":"gpt-pty-default","model":"gpt-pty-default","displayName":"PTY Default","hidden":false,"isDefault":true}],"nextCursor":null}}'
+      ;;
+    *) exit 93 ;;
+  esac
+done
+"#;
+    fs::write(&executable, fixture).expect("write ChatGPT app-server fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make ChatGPT app-server fixture executable");
+
+    let home = tempfile::tempdir().expect("ChatGPT managed-login home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private ChatGPT managed-login home");
+    let executable_text = executable.to_str().expect("UTF-8 fixture path");
+    let arguments = [
+        "--route",
+        "chatgpt-subscription",
+        "--executable-path",
+        executable_text,
+        "--chatgpt-login",
+        "device-code",
+        "--configure-only",
+        "--skip-connectivity-test",
+        "--approve",
+    ];
+    let (mut terminal, mut child) = spawn_mealyctl_pty_with_removed_environment(
+        home.path(),
+        Some("onboard"),
+        &arguments,
+        &[
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "LOCAL_API_KEY",
+        ],
+    );
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"Start an official managed ChatGPT sign-in now? [y/N]: ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(b"yes\n")
+        .and_then(|()| terminal.flush())
+        .expect("approve managed ChatGPT login");
+    let status = wait_for_child_and_collect(
+        &mut terminal,
+        &mut child,
+        &mut rendered,
+        Duration::from_secs(10),
+    );
+    assert!(
+        status.success(),
+        "managed ChatGPT onboarding failed: {status}; terminal: {}",
+        String::from_utf8_lossy(&rendered)
+    );
+    let visible = String::from_utf8_lossy(&rendered);
+    assert!(visible.contains("https://auth.openai.com/codex/device"));
+    assert!(visible.contains("WXYZ-9876"));
+    assert!(visible.contains("Official Codex sign-in completed (plus)"));
+    assert!(visible.contains("Using Codex account-catalog model PTY Default (gpt-pty-default)"));
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.path().join("config.json")).expect("managed-login configuration"),
+    )
+    .expect("managed-login configuration JSON");
+    assert_eq!(config["provider"]["client"], "open_ai_codex");
+    assert_eq!(config["provider"]["model"], "gpt-pty-default");
+    assert_eq!(config["provider"]["contextTokens"], 128_000);
+    assert!(!home.path().join("provider-secrets").exists());
+}
+
+#[test]
+fn chatgpt_onboarding_requires_a_terminal_before_starting_external_login() {
+    let fixture_root = tempfile::tempdir().expect("signed-out Codex fixture root");
+    let login_started = fixture_root.path().join("login-started");
+    let executable = write_signed_out_codex_fixture(fixture_root.path(), &login_started);
+    let home = tempfile::tempdir().expect("nonterminal ChatGPT onboarding home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private nonterminal ChatGPT onboarding home");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "chatgpt-subscription",
+            "--executable-path",
+        ])
+        .arg(&executable)
+        .args(["--configure-only", "--skip-connectivity-test", "--approve"])
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("OPENROUTER_API_KEY")
+        .env_remove("LOCAL_API_KEY")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run nonterminal ChatGPT onboarding");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("rerun this route with terminal stdin and stderr"));
+    assert!(!login_started.exists());
+    assert!(!home.path().join("config.json").exists());
+    assert!(!home.path().join("provider-secrets").exists());
+}
+
+#[test]
+fn declining_managed_chatgpt_login_starts_no_login_and_changes_no_mealy_home() {
+    let fixture_root = tempfile::tempdir().expect("declined Codex fixture root");
+    let login_started = fixture_root.path().join("login-started");
+    let executable = write_signed_out_codex_fixture(fixture_root.path(), &login_started);
+    let home = tempfile::tempdir().expect("declined ChatGPT onboarding home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private declined ChatGPT onboarding home");
+    let executable_text = executable.to_str().expect("UTF-8 fixture path");
+    let arguments = [
+        "--route",
+        "chatgpt-subscription",
+        "--executable-path",
+        executable_text,
+        "--configure-only",
+        "--skip-connectivity-test",
+        "--approve",
+    ];
+    let (mut terminal, mut child) = spawn_mealyctl_pty_with_removed_environment(
+        home.path(),
+        Some("onboard"),
+        &arguments,
+        &[
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "LOCAL_API_KEY",
+        ],
+    );
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"Start an official managed ChatGPT sign-in now? [y/N]: ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(b"no\n")
+        .and_then(|()| terminal.flush())
+        .expect("decline managed ChatGPT login");
+    let status = wait_for_child_and_collect(
+        &mut terminal,
+        &mut child,
+        &mut rendered,
+        Duration::from_secs(5),
+    );
+    assert!(!status.success());
+    assert!(
+        String::from_utf8_lossy(&rendered).contains("official Codex ChatGPT sign-in was declined")
+    );
+    assert!(!login_started.exists());
+    assert!(!home.path().join("config.json").exists());
+    assert!(!home.path().join("provider-secrets").exists());
+}
+
+fn write_signed_out_codex_fixture(
+    directory: &std::path::Path,
+    login_started: &std::path::Path,
+) -> PathBuf {
+    let executable = directory.join("signed-out-codex-fixture");
+    let script = format!(
+        r#"#!/bin/sh
+test -z "${{OPENAI_API_KEY:-}}${{ANTHROPIC_API_KEY:-}}${{OPENROUTER_API_KEY:-}}${{LOCAL_API_KEY:-}}" || exit 90
+test "${{1:-}}" = app-server || exit 91
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{{"id":1,"result":{{"userAgent":"fixture","platformFamily":"linux","platformOs":"linux"}}}}' ;;
+    *'"method":"initialized"'*) ;;
+    *'"method":"account/read"'*) printf '%s\n' '{{"id":2,"result":{{"account":null,"requiresOpenaiAuth":true}}}}' ;;
+    *'"method":"account/login/start"'*) touch '{}'; exit 92 ;;
+    *) exit 93 ;;
+  esac
+done
+"#,
+        login_started.display()
+    );
+    fs::write(&executable, script).expect("write signed-out Codex fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make signed-out Codex fixture executable");
+    executable
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_picker_resumes_the_selected_exact_session_without_creating_another() {
     let state = AdmissionState::default();

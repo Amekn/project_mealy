@@ -46,16 +46,18 @@ offers these routes:
 | OpenRouter free | An OpenRouter key. Set `OPENROUTER_API_KEY` for automation, or enter it at the hidden prompt in an interactive terminal. Mealy admits only a live catalog model whose exact ID ends in `:free`, supports tools/text, has complete limits, and advertises zero token and auxiliary prices. |
 | Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and its key. Set a named environment variable for automation, or enter the key at the hidden interactive prompt. |
 | Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
-| ChatGPT subscription | The official `codex` client installed and already signed in with ChatGPT. |
+| ChatGPT subscription | The official `codex` client installed. Guided terminal onboarding can use its existing ChatGPT session or start an official sign-in with separate consent. |
 | OpenAI API | `OPENAI_API_KEY`. |
 | Anthropic API | `ANTHROPIC_API_KEY`. |
 
-The ChatGPT route uses the existing official Codex client session. Mealy does not extract OAuth
-tokens, inherit API-key variables into that client, or treat a ChatGPT subscription as an API key.
-It defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy context
-ceiling. Anthropic's current terms prohibit third-party products from routing Claude Free, Pro, or
-Max subscription credentials; use the Anthropic API, strict-free OpenRouter, a custom endpoint, or
-Claude Code directly instead.
+The ChatGPT route uses the official Codex client's account and model catalog. Mealy does not
+extract OAuth tokens, email, account IDs, inherit API-key variables into that client, or treat a
+ChatGPT subscription as an API key. When sign-in is needed, terminal onboarding asks separately
+before displaying an official browser challenge; use `--chatgpt-login device-code` on a headless
+Linux host. It selects the unique model marked as the default for that account and applies a
+conservative 128,000-token Mealy context ceiling. Anthropic's current terms prohibit third-party
+products from routing Claude Free, Pro, or Max subscription credentials; use the Anthropic API,
+strict-free OpenRouter, a custom endpoint, or Claude Code directly instead.
 
 ## 3. Run or continue onboarding
 
@@ -105,15 +107,23 @@ mealyctl onboard \
   --base-url 'http://127.0.0.1:11434/v1'
 ```
 
-For a ChatGPT subscription, first complete sign-in in the official Codex client:
+For a ChatGPT subscription:
 
 ```sh
 codex login status
 mealyctl onboard --route chatgpt-subscription
 ```
 
-The model and context prompts are intentionally omitted on this route. Advanced users can override
-the maintained defaults with `--model` and `--context-tokens`.
+If `codex login status` reports signed out, the second command can start the official browser flow
+after a separate `y/yes` consent. On a headless host, append
+`--chatgpt-login device-code` and open the displayed HTTPS URL on another device. Codex owns and
+caches the resulting credentials; Mealy retains none of them. Because login changes shared Codex
+state before Mealy's final provider-plan approval, later cancelling that plan does not log Codex
+out.
+
+The model prompt is intentionally omitted: onboarding selects the unique default from the current
+account catalog. Advanced users can request an exact catalog ID with `--model` and can override
+the conservative Mealy limit with `--context-tokens`.
 
 Onboarding refuses to replace an existing `config.json`. Diagnose an existing running home with
 `doctor`; only use `--reconfigure` after stopping the daemon and intentionally reviewing the new

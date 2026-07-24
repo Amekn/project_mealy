@@ -690,22 +690,41 @@ activation or acceptance; never remove the `:free` suffix or substitute a merely
 ### ChatGPT subscription sign-in and Claude alternatives
 
 A ChatGPT subscription is not an OpenAI Platform API key. Mealy supports that owner-local account
-only by launching the official Codex client that is already signed in with ChatGPT. It does not
-read, copy, refresh, or store the client's OAuth material:
+only through the installed official Codex client. It does not read, copy, refresh, or store the
+client's OAuth material, email, or account identifiers. The ordinary guided path is:
 
 ```sh
 codex login status
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" onboard \
+  --route chatgpt-subscription
+```
+
+If the first command reports signed out—or another Codex login mode is active—onboarding discloses
+the change and requires a separate `y/yes` before starting the official browser flow. For a
+headless Linux host, append `--chatgpt-login device-code`, then open the displayed HTTPS URL and
+enter the code on another device. The bounded wait is five minutes. A non-terminal caller cannot
+initiate login, and declining starts no login and changes no Mealy home. Completing login changes
+the shared Codex account before Mealy's final provider-plan approval; cancelling that later
+approval does not log Codex out.
+
+Onboarding queries the documented account-visible Codex model catalog and selects its unique
+default. `--model` is accepted only when it exactly matches a catalog entry. Mealy deliberately
+retains a conservative 128,000-token operational context ceiling because this catalog does not
+publish token limits; use `--context-tokens` only after intentionally reviewing an override. See
+OpenAI's [Codex authentication](https://learn.chatgpt.com/docs/auth),
+[Codex app-server](https://learn.chatgpt.com/docs/app-server), and
+[`model/list` contract](https://learn.chatgpt.com/docs/app-server#list-models-modellist).
+
+The lower-level stopped-home command is available for already authenticated automation:
+
+```sh
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-openai \
   --maximum-output-tokens 4096 \
   --approve
 ```
 
-The route defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy
-context ceiling. OpenAI currently documents the alias as routing to `gpt-5.6-sol`; the larger
-published model context is deliberately not assumed as Mealy's operational ceiling. Use `--model`
-or `--context-tokens` only when you intentionally need an override. See OpenAI's
-[current model guidance](https://developers.openai.com/api/docs/guides/latest-model) and
-[`gpt-5.6-sol` model page](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
+Unlike guided onboarding, this command does not manage login or query the account catalog. It
+retains the maintained `gpt-5.6`/128,000-token defaults unless explicit overrides are supplied.
 
 If PATH lookup is ambiguous, add `--executable-path /absolute/path/to/the/official/client`. Mealy
 canonicalizes that path, records its SHA-256, and rechecks the bytes before every request. The

@@ -860,7 +860,7 @@ fn read_bounded(mut reader: impl Read, maximum: usize) -> std::io::Result<Vec<u8
     }
 }
 
-fn terminate_process(child: &mut Child) {
+pub(crate) fn terminate_process(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = i32::try_from(child.id())
         .ok()
@@ -1058,7 +1058,7 @@ fn decode_claude_output(
     })
 }
 
-fn copy_owner_client_environment(command: &mut Command, client: SubscriptionCliClient) {
+pub(crate) fn copy_owner_client_environment(command: &mut Command, client: SubscriptionCliClient) {
     for name in [
         "HOME",
         "USER",
@@ -1071,6 +1071,7 @@ fn copy_owner_client_environment(command: &mut Command, client: SubscriptionCliC
         "DBUS_SESSION_BUS_ADDRESS",
         "SSL_CERT_FILE",
         "SSL_CERT_DIR",
+        "CODEX_CA_CERTIFICATE",
     ] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);

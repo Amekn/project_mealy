@@ -188,9 +188,18 @@ are terminals, onboarding reads the credential once through an echo-disabled bou
 restores the terminal before continuing, and brokers the value without printing it. Non-terminal
 automation fails before mutation unless the variable is set. The local route requires a
 literal-loopback endpoint and no credential. The ChatGPT subscription route pins and live-probes
-the installed official Codex executable without extracting its subscription credential. It uses
-the maintained `gpt-5.6` alias and a conservative 128,000-token context ceiling unless either
-value is explicitly overridden.
+the installed official Codex executable without extracting its subscription credential. Through
+the documented Codex app-server protocol it reads only coarse account state, asks for separate
+terminal consent before a required sign-in, and displays either the official browser challenge or
+the headless `--chatgpt-login device-code` challenge. Non-terminal signed-out use fails before
+login or home mutation. The route selects the unique account-catalog default; `--model` must name
+an exact visible or hidden account-catalog entry. Its Mealy context ceiling remains a conservative
+128,000 tokens unless `--context-tokens` is explicit.
+
+The lower-level stopped-home `config provider-subscription-openai` command does not manage login
+or query the catalog. It requires an existing official Codex ChatGPT session and retains the
+maintained `gpt-5.6` model alias and conservative 128,000-token defaults unless explicitly
+overridden.
 
 The retired `claude-subscription` alias and `config provider-subscription-claude` command remain
 recognizable only to give existing scripts an actionable error. They fail before home mutation or

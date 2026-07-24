@@ -60,10 +60,12 @@ chat. Scripts and service automation must continue to name an explicit subcomman
 the stable private `$HOME/.mealy` directory by default, so later commands work from any directory. The guided path
 supports strictly free OpenRouter models, authenticated custom OpenAI-compatible endpoints,
 credentialless loopback models, owner-local ChatGPT subscriptions through the official Codex
-client, and advanced OpenAI/Anthropic API routes. It probes the route, starts the owner service,
-and verifies `doctor` before opening the first chat on an interactive terminal. Use `--no-chat`
-for a passive or machine-readable handoff. See [getting started](docs/GETTING_STARTED.md) for the
-short path.
+client, and advanced OpenAI/Anthropic API routes. For ChatGPT, onboarding checks the Codex-owned
+account, offers an official browser or headless device-code sign-in when needed, and chooses the
+current account-catalog default model; Mealy never receives the subscription credential. It probes
+the route, starts the owner service, and verifies `doctor` before opening the first chat on an
+interactive terminal. Use `--no-chat` for a passive or machine-readable handoff. See
+[getting started](docs/GETTING_STARTED.md) for the short path.
 
 After successful onboarding:
 
@@ -114,12 +116,14 @@ reviewed free-provider acceptance, tag promotion, attestation, and public clean-
 > `mealyctl` invocation dispatches to onboarding when no configuration exists and to a new chat
 > when configuration is present; non-terminal callers fail without mutation and receive the
 > explicit automation commands. A
-> separate official-client bridge supports an existing ChatGPT subscription session without
-> importing OAuth tokens: it pins the canonical Codex executable and SHA-256, clears API
-> key variables, disables client tools/connectors/session persistence, validates structured output
-> and usage, and fails activation when the official client is not signed in. It defaults to
-> OpenAI's maintained `gpt-5.6` alias with a conservative 128,000-token Mealy context ceiling;
-> both remain explicitly overrideable. ChatGPT subscriptions are not OpenAI API keys, and this
+> separate official-client bridge supports a ChatGPT subscription session without importing OAuth
+> tokens: guided onboarding uses the official bounded app-server account/login/model catalog,
+> requires separate terminal consent before changing a shared Codex login, and selects the unique
+> account-recommended model unless an exact catalog model is requested. It pins the canonical Codex
+> executable and SHA-256, clears API key variables, disables client tools/connectors/session
+> persistence, and validates structured runtime output and usage. The operational Mealy context
+> ceiling remains a conservative 128,000 tokens unless explicitly overridden. ChatGPT subscriptions
+> are not OpenAI API keys, and this
 > owner-local bridge is not the unattended release-acceptance provider path. Anthropic's current
 > [legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance) prohibits
 > third-party products from routing Claude Free, Pro, or Max subscription credentials, so Mealy

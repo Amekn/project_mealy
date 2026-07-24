@@ -21,13 +21,15 @@ use mealy_domain::{
     AttemptId, ContextManifestId, RunId, ScheduleId, SkillAsset, SkillToolRequirement,
 };
 use mealy_infrastructure::{
-    BrowserBundleError, BrowserHostError, FileProviderSecretStore, InspectedSkillPackage,
-    MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES, MAXIMUM_ACTIVE_SKILL_RESOURCE_BYTES, McpHostError,
-    ProviderSecretStoreError, SubscriptionCliProvider, SubscriptionCliSettings, activate_backup,
-    activate_migration_backup, browser_worker_main, discover_mcp_stdio_server,
-    inspect_browser_bundle, inspect_skill_package, inspect_subscription_cli_executable,
-    is_trusted_system_executable, mcp_stdio_launcher_main, probe_browser_bundle_product,
-    publish_browser_bundle, publish_skill_package, verify_browser_runtime_installation,
+    BrowserBundleError, BrowserHostError, CodexAccountKind, CodexAppServerClient,
+    CodexChatgptLoginChallenge, CodexChatgptLoginFlow, CodexSubscriptionModel,
+    FileProviderSecretStore, InspectedSkillPackage, MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES,
+    MAXIMUM_ACTIVE_SKILL_RESOURCE_BYTES, McpHostError, ProviderSecretStoreError,
+    SubscriptionCliProvider, SubscriptionCliSettings, activate_backup, activate_migration_backup,
+    browser_worker_main, discover_mcp_stdio_server, inspect_browser_bundle, inspect_skill_package,
+    inspect_subscription_cli_executable, is_trusted_system_executable, mcp_stdio_launcher_main,
+    probe_browser_bundle_product, publish_browser_bundle, publish_skill_package,
+    verify_browser_runtime_installation,
 };
 use mealy_protocol::{
     API_VERSION, AdminMetricsResponse, AdminStatusResponse, AdminUsageReportResponse,
@@ -435,6 +437,9 @@ struct OnboardOptions {
     /// Installed official subscription client; PATH lookup is used when omitted.
     #[arg(long)]
     executable_path: Option<PathBuf>,
+    /// Managed `ChatGPT` login ceremony when Codex is not already signed in.
+    #[arg(long, value_enum)]
+    chatgpt_login: Option<ChatgptLoginArgument>,
     /// Use terminal-only JSON when an HTTP endpoint does not support provider streaming.
     #[arg(long)]
     disable_streaming: bool,
@@ -466,7 +471,7 @@ enum OnboardRouteArgument {
     Custom,
     /// Credentialless literal-loopback `OpenAI` Responses-compatible endpoint.
     Local,
-    /// Existing official Codex CLI session authenticated with a `ChatGPT` subscription.
+    /// Official Codex account with an existing or separately consented `ChatGPT` sign-in.
     ChatgptSubscription,
     /// Retired compatibility name; always rejected under Anthropic's third-party terms.
     #[value(hide = true)]
@@ -475,6 +480,14 @@ enum OnboardRouteArgument {
     OpenaiApi,
     /// Official Anthropic Messages API credential.
     AnthropicApi,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ChatgptLoginArgument {
+    /// Open a local-callback `ChatGPT` authorization URL.
+    Browser,
+    /// Show a verification URL and user code for a remote or headless Linux terminal.
+    DeviceCode,
 }
 
 #[derive(Debug, clap::Args)]
@@ -8178,7 +8191,15 @@ fn resolve_onboard_from_terminal(
     let base_url = resolve_onboard_base_url(route, options, input, prompt)?;
     let credential =
         resolve_onboard_credential(route, options, input, prompt, secure_terminal_boundary)?;
-    resolve_onboard(route, options, input, prompt, base_url, credential)
+    resolve_onboard(
+        route,
+        options,
+        input,
+        prompt,
+        base_url,
+        credential,
+        secure_terminal_boundary,
+    )
 }
 
 fn resolve_onboard_credential(
@@ -8236,7 +8257,7 @@ fn resolve_onboard_base_url(
     if route.uses_subscription_client() {
         return Ok(None);
     }
-    if options.executable_path.is_some() {
+    if options.executable_path.is_some() || options.chatgpt_login.is_some() {
         return Err(CliError::InvalidSetupInput);
     }
     let base_url = options.base_url.clone().map_or_else(
@@ -8267,12 +8288,19 @@ fn resolve_onboard(
     prompt: &mut impl Write,
     base_url: Option<String>,
     credential: Option<ResolvedOnboardCredential>,
+    secure_terminal_boundary: bool,
 ) -> Result<ResolvedOnboard, CliError> {
     if route.uses_subscription_client() {
         if base_url.is_some() || credential.is_some() {
             return Err(CliError::InvalidSetupInput);
         }
-        return resolve_subscription_onboard(route, options, input, prompt);
+        return resolve_subscription_onboard(
+            route,
+            options,
+            input,
+            prompt,
+            secure_terminal_boundary,
+        );
     }
     resolve_http_onboard(
         route,
@@ -8649,8 +8677,9 @@ fn resolve_onboard_context(
 fn resolve_subscription_onboard(
     route: OnboardRouteArgument,
     options: &OnboardOptions,
-    _input: &mut impl BufRead,
-    _prompt: &mut impl Write,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
 ) -> Result<ResolvedOnboard, CliError> {
     if matches!(route, OnboardRouteArgument::ClaudeSubscription) {
         return Err(CliError::ClaudeSubscriptionUnsupported);
@@ -8663,10 +8692,6 @@ fn resolve_subscription_onboard(
     {
         return Err(CliError::InvalidSetupInput);
     }
-    let model = options
-        .model
-        .clone()
-        .unwrap_or_else(|| OPENAI_SUBSCRIPTION_DEFAULT_MODEL.to_owned());
     let context_tokens = options
         .context_tokens
         .unwrap_or(OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS);
@@ -8689,6 +8714,25 @@ fn resolve_subscription_onboard(
         .ok_or(CliError::InvalidProviderConfiguration)?;
     let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
         .map_err(|_| CliError::InvalidProviderConfiguration)?;
+    let mut app_server = CodexAppServerClient::start(&canonical, &executable_sha256)
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    ensure_codex_chatgpt_account(
+        &mut app_server,
+        options,
+        input,
+        prompt,
+        secure_terminal_boundary,
+    )?;
+    let catalog = app_server
+        .list_models(options.model.is_some())
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    let selected_model = select_codex_subscription_model(&catalog, options.model.as_deref())?;
+    writeln!(
+        prompt,
+        "Using Codex account-catalog model {} ({}).",
+        selected_model.display_name, selected_model.model
+    )?;
+    let model = selected_model.model.clone();
     let canonical = canonical
         .to_str()
         .ok_or(CliError::InvalidProviderConfiguration)?;
@@ -8712,6 +8756,104 @@ fn resolve_subscription_onboard(
         secret_id: None,
         credential: None,
     })
+}
+
+fn ensure_codex_chatgpt_account(
+    app_server: &mut CodexAppServerClient,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<(), CliError> {
+    let account = app_server
+        .account_state()
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    if account.kind != CodexAccountKind::Chatgpt {
+        if !secure_terminal_boundary {
+            return Err(CliError::ChatgptLoginRequiresTerminal);
+        }
+        match account.kind {
+            CodexAccountKind::SignedOut => writeln!(
+                prompt,
+                "The official Codex client is not signed in with ChatGPT."
+            )?,
+            CodexAccountKind::Other => writeln!(
+                prompt,
+                "The official Codex client is using another login mode. Continuing will replace that shared Codex login with ChatGPT."
+            )?,
+            CodexAccountKind::Chatgpt => unreachable!("non-ChatGPT account branch"),
+        }
+        if !matches!(
+            prompt_line(
+                input,
+                prompt,
+                "Start an official managed ChatGPT sign-in now? [y/N]: ",
+            )?
+            .to_ascii_lowercase()
+            .as_str(),
+            "y" | "yes"
+        ) {
+            return Err(CliError::ChatgptLoginDeclined);
+        }
+        let flow = match options
+            .chatgpt_login
+            .unwrap_or(ChatgptLoginArgument::Browser)
+        {
+            ChatgptLoginArgument::Browser => CodexChatgptLoginFlow::Browser,
+            ChatgptLoginArgument::DeviceCode => CodexChatgptLoginFlow::DeviceCode,
+        };
+        let challenge = app_server
+            .start_chatgpt_login(flow)
+            .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+        match &challenge {
+            CodexChatgptLoginChallenge::Browser { auth_url, .. } => writeln!(
+                prompt,
+                "Open this official ChatGPT authorization URL in your browser:\n  {auth_url}\nWaiting up to five minutes for sign-in..."
+            )?,
+            CodexChatgptLoginChallenge::DeviceCode {
+                verification_url,
+                user_code,
+                ..
+            } => writeln!(
+                prompt,
+                "Open this official verification URL:\n  {verification_url}\nEnter code: {user_code}\nWaiting up to five minutes for sign-in..."
+            )?,
+        }
+        let account = app_server
+            .finish_chatgpt_login(&challenge)
+            .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+        let plan = account.plan_type.as_deref().map_or("ChatGPT", |plan| plan);
+        writeln!(prompt, "Official Codex sign-in completed ({plan}).")?;
+    } else if let Some(plan) = account.plan_type.as_deref() {
+        writeln!(
+            prompt,
+            "Using the existing official Codex ChatGPT {plan} session."
+        )?;
+    } else {
+        writeln!(prompt, "Using the existing official Codex ChatGPT session.")?;
+    }
+    Ok(())
+}
+
+fn select_codex_subscription_model<'a>(
+    catalog: &'a [CodexSubscriptionModel],
+    requested: Option<&str>,
+) -> Result<&'a CodexSubscriptionModel, CliError> {
+    if let Some(requested) = requested {
+        return catalog
+            .iter()
+            .find(|model| model.model == requested)
+            .ok_or(CliError::ChatgptSubscriptionModelUnavailable);
+    }
+    let mut defaults = catalog.iter().filter(|model| model.is_default);
+    match (defaults.next(), defaults.next()) {
+        (Some(model), None) => Ok(model),
+        (None, None) => catalog
+            .iter()
+            .find(|model| model.model == OPENAI_SUBSCRIPTION_DEFAULT_MODEL)
+            .ok_or(CliError::ChatgptSubscriptionModelUnavailable),
+        _ => Err(CliError::ChatgptSubscriptionModelUnavailable),
+    }
 }
 
 fn render_onboard_summary(
@@ -15050,6 +15192,24 @@ enum CliError {
         "Claude subscription routing is unsupported: Anthropic prohibits third-party products from using Claude Free/Pro/Max OAuth credentials; use `anthropic-api`, `openrouter-free`, a custom endpoint, or Claude Code directly"
     )]
     ClaudeSubscriptionUnsupported,
+    /// A managed `ChatGPT` sign-in was required but terminal consent could not be obtained.
+    #[error(
+        "the official Codex client is not signed in with ChatGPT; rerun this route with terminal stdin and stderr for managed sign-in, or run `codex login` first"
+    )]
+    ChatgptLoginRequiresTerminal,
+    /// The owner declined the separately disclosed external Codex login change.
+    #[error("official Codex ChatGPT sign-in was declined; no Mealy home was changed")]
+    ChatgptLoginDeclined,
+    /// The official bounded app-server account, login, or catalog exchange failed closed.
+    #[error(
+        "official Codex ChatGPT onboarding failed; verify the exact Codex installation and login with `codex doctor` or `codex login status`, then retry"
+    )]
+    ChatgptSubscriptionOnboarding,
+    /// The requested or recommended subscription model was absent or ambiguous.
+    #[error(
+        "the requested or recommended ChatGPT subscription model is unavailable in the current Codex account catalog"
+    )]
+    ChatgptSubscriptionModelUnavailable,
     /// Provider model-discovery filtering, pagination, or output bound is invalid.
     #[error("provider model-discovery request is invalid")]
     InvalidProviderDiscoveryRequest,
@@ -15189,19 +15349,21 @@ mod tests {
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
         EffectCommand, ExtensionCommand, LifecycleArguments, LifecycleCommand,
         MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
-        OnboardChatMode, OnboardOptions, ResumableChatTask, SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
-        ScheduleCommand, ServiceCommand, SetupProviderArgument, SkillCommand, TelegramPairChat,
-        TelegramPairMessage, TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute,
-        chat_usage_line, configure_workspace_grant, decode, generate_discord_pair_challenge,
+        OPENAI_SUBSCRIPTION_DEFAULT_MODEL, OnboardChatMode, OnboardOptions, ResumableChatTask,
+        SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, ServiceCommand,
+        SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
+        TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute, chat_usage_line,
+        configure_workspace_grant, decode, generate_discord_pair_challenge,
         generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
         lifecycle_invocation, load_connection, normalize_openrouter_display_name,
         observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
         onboard_chat_mode, openrouter_price_is_zero, openrouter_price_microunits_per_million,
         parse_chat_line, prepare_local_text_attachment, resolve_default_operational_subcommand,
-        resolve_setup, setup_provider_config, should_open_onboard_chat, stable_default_mealy_home,
-        telegram_pair_api_url, update_recovery_route, validate_anthropic_probe_envelope,
-        validate_anthropic_probe_stream, validate_connection, validate_discord_pair_base_url,
-        validate_provider_probe_envelope, validate_provider_probe_stream,
+        resolve_setup, select_codex_subscription_model, setup_provider_config,
+        should_open_onboard_chat, stable_default_mealy_home, telegram_pair_api_url,
+        update_recovery_route, validate_anthropic_probe_envelope, validate_anthropic_probe_stream,
+        validate_connection, validate_discord_pair_base_url, validate_provider_probe_envelope,
+        validate_provider_probe_stream,
     };
     #[cfg(target_os = "linux")]
     use super::{
@@ -15212,6 +15374,7 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
     use mealy_application::{AgentLoopLimits, ProviderConfig};
+    use mealy_infrastructure::CodexSubscriptionModel;
     use mealy_protocol::{
         API_VERSION, DeliveryMode, LocalConnectionInfo, TaskBudgetUsage, TimelineCursor,
         TimelineEvent,
@@ -15231,6 +15394,50 @@ mod tests {
             principal_id: "principal".to_owned(),
             channel_binding_id: "binding".to_owned(),
         }
+    }
+
+    #[test]
+    fn codex_catalog_selection_requires_one_recommended_or_exact_requested_model() {
+        let catalog = vec![
+            CodexSubscriptionModel {
+                model: "gpt-account-default".to_owned(),
+                display_name: "Account Default".to_owned(),
+                is_default: true,
+            },
+            CodexSubscriptionModel {
+                model: "gpt-account-other".to_owned(),
+                display_name: "Account Other".to_owned(),
+                is_default: false,
+            },
+        ];
+        assert_eq!(
+            select_codex_subscription_model(&catalog, None)
+                .expect("recommended model")
+                .model,
+            "gpt-account-default"
+        );
+        assert_eq!(
+            select_codex_subscription_model(&catalog, Some("gpt-account-other"))
+                .expect("exact requested model")
+                .model,
+            "gpt-account-other"
+        );
+        assert!(select_codex_subscription_model(&catalog, Some("absent")).is_err());
+
+        let mut ambiguous = catalog.clone();
+        ambiguous[1].is_default = true;
+        assert!(select_codex_subscription_model(&ambiguous, None).is_err());
+        let fallback = [CodexSubscriptionModel {
+            model: OPENAI_SUBSCRIPTION_DEFAULT_MODEL.to_owned(),
+            display_name: "Stable fallback".to_owned(),
+            is_default: false,
+        }];
+        assert_eq!(
+            select_codex_subscription_model(&fallback, None)
+                .expect("documented stable fallback")
+                .model,
+            OPENAI_SUBSCRIPTION_DEFAULT_MODEL
+        );
     }
 
     #[test]

@@ -27,10 +27,14 @@ interactive install enters the exact installed onboarding client automatically,
 with explicit force/passive controls and existing-home preservation. After
 service and `doctor` qualification, terminal onboarding opens the first durable
 chat; non-interactive callers retain bounded JSON and one exact next command.
-OpenAI subscription onboarding now follows the same competitor pattern of a
-maintained default: the official `gpt-5.6` alias and a conservative
-128,000-token Mealy context ceiling are selected unless the owner uses explicit
-override flags. A post-audit upstream-terms review also found that Anthropic
+OpenAI subscription onboarding now follows the same competitor pattern of
+first-run account authentication plus a maintained catalog default: bounded
+official Codex app-server methods read coarse account state, run a separately
+consented browser/device login when required, and select the current
+account-catalog recommendation. Mealy retains a conservative 128,000-token
+context ceiling unless the owner uses an explicit override; the lower-level
+already-authenticated command retains the official `gpt-5.6` alias as its
+automation default. A post-audit upstream-terms review also found that Anthropic
 explicitly prohibits third-party developers from routing Claude Free, Pro, or
 Max subscription credentials. The prior experimental Claude subscription
 bridge is therefore retired and fails before mutation or client invocation;
@@ -570,9 +574,13 @@ the first-party terms review. Anthropic's
 does not permit a third-party Mealy login or routing bridge for Free, Pro, or
 Max credentials. OpenAI's documented
 [Codex app-server](https://learn.chatgpt.com/docs/app-server) and
-[current model guidance](https://developers.openai.com/api/docs/guides/latest-model)
-provide an upstream-supported integration direction and maintained alias for
-the ChatGPT route.
+[authentication flow](https://learn.chatgpt.com/docs/auth) provide
+upstream-supported account/login/model integration for the ChatGPT route.
+Implementation uses only the stable initialized JSONL exchange,
+`account/read`, `account/login/start`, `account/login/completed`, and bounded
+`model/list` pagination. A model-call-free acceptance against the locally
+installed official client returned the existing Plus account state and selected
+its `gpt-5.6-sol` default without Mealy reading email, account IDs, or tokens.
 
 Required failure behavior:
 
@@ -605,8 +613,9 @@ From a clean home and installed release payload, test:
 - each deterministic/fixture onboarding branch;
 - OpenRouter free catalog filtering and selection;
 - a custom authenticated OpenAI-compatible endpoint;
-- subscription-client signed-out and signed-in detection without exposing
-  credentials;
+- subscription-client signed-out/signed-in detection, explicit login consent,
+  browser/device challenge completion, and account-catalog selection without
+  exposing credentials;
 - service installation/start/health/doctor;
 - first chat and durable resume; and
 - rerunning onboarding without corrupting the existing home.

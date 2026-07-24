@@ -123,13 +123,23 @@ review creates no config or broker state. Probe failure can leave only the safe 
 home so setup is retryable; it never publishes the proposed provider or credential. Never use
 `--skip-connectivity-test` as production connectivity evidence.
 
-Personal ChatGPT subscriptions use a separate stopped-home command, not the API-key wizard.
-`config provider-subscription-openai` launches an already ChatGPT-authenticated official Codex
-client. Activation pins the canonical executable path and SHA-256 and runs a bounded no-tools
-connectivity probe. Mealy never imports the client's OAuth/session material and never passes
-provider API-key variables to that process. A client upgrade or expired login requires owner-local
-reactivation. This bridge is suitable only for the owner's signed-in machine; use a brokered API
-key or private endpoint for unattended service accounts and release acceptance.
+Personal ChatGPT subscriptions never use the API-key broker. The ordinary
+`onboard --route chatgpt-subscription` journey asks the official Codex app-server for coarse
+account state and the account-visible model catalog. If Codex is signed out or uses another login
+mode, an interactive terminal discloses the shared-account change and requires separate consent
+before starting an official browser flow; `--chatgpt-login device-code` selects the headless flow.
+The login wait is bounded to five minutes. A non-terminal caller cannot start login, and declining
+starts no login and changes no Mealy home. Mealy retains no email, account ID, OAuth/session
+material, challenge, or broker identity.
+
+Onboarding selects the unique account-catalog default; explicit `--model` must exactly match a
+catalog entry. The lower-level stopped-home `config provider-subscription-openai` command assumes
+an already ChatGPT-authenticated Codex client and retains the maintained `gpt-5.6` default for
+automation. Activation pins the canonical executable path and SHA-256 and runs a bounded no-tools
+connectivity probe. Mealy never passes provider API-key variables to Codex. A client upgrade or
+expired login requires owner-local reactivation. This bridge is suitable only for the owner's
+signed-in machine; use a brokered API key or private endpoint for unattended service accounts and
+release acceptance.
 Activation expands the per-call deadline only to the declared subscription routing estimate and
 only within the existing total run wall-time. Official-client-added input tokens are represented by
 a conservative capability allowance and included in the durable reservation and replay evidence.

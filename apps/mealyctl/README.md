@@ -15,13 +15,16 @@ and prints exact daemon/doctor/chat handoff commands on stderr. Supplying all fl
 provides the same process-tested non-interactive path. `--skip-connectivity-test` is explicitly
 staged and does not count as production verification.
 
-Owner-local subscription activation is deliberately separate from this API-key wizard.
-`config provider-subscription-openai` uses an existing ChatGPT sign-in owned by the official Codex
-client. It defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy
-context ceiling; `--model` and `--context-tokens` remain explicit escape hatches. The bridge
+Owner-local subscription activation is deliberately separate from API-key handling. The ordinary
+`onboard --route chatgpt-subscription` path uses the official Codex app-server to read only coarse
+account state, obtain a browser or device-code challenge after separate terminal consent, and
+select the current account-catalog default model. It never reads or stores email, account IDs,
+OAuth/session tokens, or a broker identity. The lower-level
+`config provider-subscription-openai` command assumes Codex is already signed in and retains its
+`gpt-5.6`/128,000-token defaults for explicit stopped-home automation. Both paths allow deliberate
+model/context overrides; onboarding accepts only an exact account-catalog model. The runtime bridge
 canonicalizes and SHA-256-pins the selected executable, excludes provider API-key variables and
-host-client tools/connectors, runs a bounded structured connectivity probe, and persists no
-OAuth/session/token material or broker identity. Activation raises the configured
+host-client tools/connectors, and runs a bounded structured connectivity probe. Activation raises the configured
 provider deadline only as far as its declared latency estimate and total run wall-time permit;
 official-client input overhead is included in the durable token reservation.
 

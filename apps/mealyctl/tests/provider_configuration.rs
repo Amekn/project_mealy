@@ -332,6 +332,18 @@ fn openai_subscription_activation_pins_official_client_and_uses_safe_defaults() 
     let fixture_body = concat!(
         "#!/bin/sh\n",
         "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+        "if [ \"${1:-}\" = app-server ]; then\n",
+        "  while IFS= read -r line; do\n",
+        "    case \"$line\" in\n",
+        "      *'\"method\":\"initialize\"'*) printf '%s\\n' '{\"id\":1,\"result\":{\"userAgent\":\"fixture\",\"platformFamily\":\"linux\",\"platformOs\":\"linux\"}}' ;;\n",
+        "      *'\"method\":\"initialized\"'*) ;;\n",
+        "      *'\"method\":\"account/read\"'*) printf '%s\\n' '{\"id\":2,\"result\":{\"account\":{\"type\":\"chatgpt\",\"planType\":\"plus\"},\"requiresOpenaiAuth\":true}}' ;;\n",
+        "      *'\"method\":\"model/list\"'*) printf '%s\\n' '{\"id\":3,\"result\":{\"data\":[{\"id\":\"gpt-account-default\",\"model\":\"gpt-account-default\",\"displayName\":\"Account Default\",\"hidden\":false,\"isDefault\":true},{\"id\":\"gpt-account-other\",\"model\":\"gpt-account-other\",\"displayName\":\"Account Other\",\"hidden\":false,\"isDefault\":false}],\"nextCursor\":null}}' ;;\n",
+        "      *) exit 91 ;;\n",
+        "    esac\n",
+        "  done\n",
+        "  exit 0\n",
+        "fi\n",
         "cat >/dev/null\n",
         "printf '%s\\n' ",
         "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
@@ -429,7 +441,7 @@ fn openai_subscription_activation_pins_official_client_and_uses_safe_defaults() 
     )
     .expect("subscription onboarding JSON");
     assert_eq!(config["provider"]["client"], client);
-    assert_eq!(config["provider"]["model"], "gpt-5.6");
+    assert_eq!(config["provider"]["model"], "gpt-account-default");
     assert_eq!(config["provider"]["contextTokens"], 128_000);
     assert_eq!(config["provider"]["executableSha256"], executable_digest);
     assert!(!onboard_home.path().join("provider-secrets").exists());

@@ -104,9 +104,13 @@ explicit home without `HOME`). They also discover a live OpenRouter account cata
 paid/incomplete models,
 derive exact zero prices and limits for an eligible `:free` model, perform its bounded streaming
 probe, and keep the credential out of all output/config. The official Codex subscription-client
-fixture is exercised through `onboard`, including default model/context selection, executable
-digest pinning, and API-key environment exclusion. Separate negative process coverage proves the
-retired Claude subscription route fails before configuration mutation or client invocation. The
+fixtures exercise `onboard` through signed-in account reuse, browser and device-code challenges,
+challenge-bound completion, account-catalog default/override selection, executable digest pinning,
+and API-key environment exclusion. PTY/non-terminal proofs show login requires separate owner
+consent and that signed-out automation or explicit decline starts no login and mutates no Mealy
+home. A model-call-free live acceptance also reads the installed Codex Plus account and its
+recommended model without retaining identity or token material. Separate negative process coverage
+proves the retired Claude subscription route fails before configuration mutation or client invocation. The
 suite also proves atomic credential brokering and protocol-specific activation probes, plus
 read-only live OpenAI/Anthropic model discovery with exact authentication headers, filtering,
 Anthropic cursor pagination, token-limit normalization, and local record/response bounds. Its
