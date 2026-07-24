@@ -425,10 +425,11 @@ copying that ID:
 ```
 
 `--continue` (short form `-c`) fails with a direct new-chat instruction when this exact
-owner/channel binding has no prior session; it never creates one by surprise. Use
-`chat --session-id SESSION_ID` when you want a specific older session. Either resume path scans up
-to 100,000 retained events, rediscovers the exact active turn and durable pending inbox entries,
-and resumes their local watchers before accepting more input. Plain text and `/queue TEXT` use
+owner/channel binding has no prior session; it never creates one by surprise. Use `chat --pick` to
+choose one of the 20 newest exact-binding sessions from a terminal, or `chat --session-id
+SESSION_ID` when automation already has a specific older session. Every resume path scans up to
+100,000 retained events, rediscovers the exact active turn and durable pending inbox entries, and
+resumes their local watchers before accepting more input. Plain text and `/queue TEXT` use
 normal FIFO delivery, `/steer TEXT` attaches at the next safe boundary, and
 `/interrupt TEXT` records cancellation before durably queueing the replacement. These commands
 remain available while earlier provider or tool work is in flight. `/act TEXT` explicitly selects
@@ -475,9 +476,9 @@ Find recent sessions owned by this exact local channel binding, newest updated f
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" session list --limit 20
 ```
 
-The ordinary return path is `chat --continue`. Copy a returned `sessionId` into
-`chat --session-id SESSION_ID` only to select a specific older conversation and resume its
-active/pending work.
+The ordinary return path is `chat --continue`. Use `chat --pick` to choose an older conversation
+interactively. `session list` and `chat --session-id SESSION_ID` remain the bounded JSON/script
+path for selecting and resuming exact active/pending work.
 Telegram-owned sessions remain discoverable through `channel telegram-list`; exact channel-binding
 isolation prevents a general local session query from silently crossing transport identities.
 

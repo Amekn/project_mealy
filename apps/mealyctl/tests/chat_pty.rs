@@ -5,7 +5,7 @@
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path as AxumPath, State},
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -34,6 +34,7 @@ use std::{
 use tokio::{net::TcpListener, task::JoinHandle, time::sleep};
 
 const SESSION_ID: &str = "019f0000-0000-7000-8000-000000000001";
+const SECOND_SESSION_ID: &str = "019f0000-0000-7000-8000-000000000009";
 
 #[derive(Clone, Default)]
 struct AdmissionState {
@@ -42,6 +43,7 @@ struct AdmissionState {
     submitted_content: Arc<Mutex<Option<String>>>,
     latest_session_available: Arc<AtomicBool>,
     created_sessions: Arc<AtomicUsize>,
+    picker_sessions: Arc<Mutex<Vec<SessionSummaryResponse>>>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -162,6 +164,134 @@ async fn chat_continue_resumes_the_latest_session_without_creating_another() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_picker_resumes_the_selected_exact_session_without_creating_another() {
+    let state = AdmissionState::default();
+    *state.picker_sessions.lock().expect("picker sessions lock") = vec![
+        SessionSummaryResponse {
+            session_id: SESSION_ID.to_owned(),
+            status: "active".to_owned(),
+            revision: 3,
+            pending_inputs: 1,
+            active_turn_id: Some("019f0000-0000-7000-8000-000000000010".to_owned()),
+            created_at_ms: 1_800_000_000_000,
+            updated_at_ms: 1_800_000_003_000,
+        },
+        SessionSummaryResponse {
+            session_id: SECOND_SESSION_ID.to_owned(),
+            status: "idle".to_owned(),
+            revision: 2,
+            pending_inputs: 0,
+            active_turn_id: None,
+            created_at_ms: 1_800_000_001_000,
+            updated_at_ms: 1_800_000_002_000,
+        },
+    ];
+    let (base_url, server) = spawn_control_plane(state.clone()).await;
+    let home = tempfile::tempdir().expect("temporary Mealy home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
+    write_connection(home.path(), &base_url);
+    let (mut terminal, mut child) = spawn_chat_with_arguments(home.path(), &["--pick"]);
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"Recent Mealy conversations (newest first):",
+        1,
+        Duration::from_secs(5),
+    );
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        SECOND_SESSION_ID.as_bytes(),
+        1,
+        Duration::from_secs(1),
+    );
+    let picker = String::from_utf8_lossy(&rendered);
+    assert!(picker.contains("| active | updated just now | active turn"));
+    assert!(picker.contains("| idle | updated just now | idle"));
+    terminal
+        .write_all(b"2\n")
+        .and_then(|()| terminal.flush())
+        .expect("select second recent session");
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        format!("Mealy chat session {SECOND_SESSION_ID}").as_bytes(),
+        1,
+        Duration::from_secs(5),
+    );
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"you> ",
+        1,
+        Duration::from_secs(1),
+    );
+    assert_eq!(state.created_sessions.load(Ordering::SeqCst), 0);
+
+    terminal
+        .write_all(b"/quit\n")
+        .and_then(|()| terminal.flush())
+        .expect("quit picked chat");
+    let status = wait_for_child(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "picked chat failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_picker_requires_a_terminal_and_cancellation_creates_nothing() {
+    let state = AdmissionState::default();
+    state.latest_session_available.store(true, Ordering::SeqCst);
+    let (base_url, server) = spawn_control_plane(state.clone()).await;
+    let home = tempfile::tempdir().expect("temporary Mealy home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private temporary Mealy home");
+    write_connection(home.path(), &base_url);
+
+    let noninteractive = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(["chat", "--pick"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("run noninteractive picker");
+    assert!(!noninteractive.status.success());
+    assert!(
+        String::from_utf8_lossy(&noninteractive.stderr)
+            .contains("requires interactive stdin, stdout, and stderr")
+    );
+
+    let (mut terminal, mut child) = spawn_chat_with_arguments(home.path(), &["--pick"]);
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"Choose a conversation [1-1], or q to cancel:",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(b"q\n")
+        .and_then(|()| terminal.flush())
+        .expect("cancel picker");
+    let status = wait_for_child(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "picker cancellation failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    assert_eq!(state.created_sessions.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_continue_explains_how_to_start_when_no_session_exists() {
     let state = AdmissionState::default();
     let (base_url, server) = spawn_control_plane(state).await;
@@ -178,8 +308,7 @@ async fn chat_continue_explains_how_to_start_when_no_session_exists() {
         .expect("run no-history continuation");
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("rerun this command without `--continue` to start one"),
+        String::from_utf8_lossy(&output.stderr).contains("run `mealyctl chat` to start one"),
         "unexpected no-history diagnostic: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -311,20 +440,29 @@ async fn admin_status() -> Json<serde_json::Value> {
 }
 
 async fn list_sessions(State(state): State<AdmissionState>) -> Json<SessionsResponse> {
-    let sessions = state
-        .latest_session_available
-        .load(Ordering::SeqCst)
-        .then(|| SessionSummaryResponse {
-            session_id: SESSION_ID.to_owned(),
-            status: "active".to_owned(),
-            revision: 1,
-            pending_inputs: 0,
-            active_turn_id: None,
-            created_at_ms: 1_800_000_000_000,
-            updated_at_ms: 1_800_000_000_001,
-        })
-        .into_iter()
-        .collect();
+    let configured = state
+        .picker_sessions
+        .lock()
+        .expect("picker sessions lock")
+        .clone();
+    let sessions = if configured.is_empty() {
+        state
+            .latest_session_available
+            .load(Ordering::SeqCst)
+            .then(|| SessionSummaryResponse {
+                session_id: SESSION_ID.to_owned(),
+                status: "active".to_owned(),
+                revision: 1,
+                pending_inputs: 0,
+                active_turn_id: None,
+                created_at_ms: 1_800_000_000_000,
+                updated_at_ms: 1_800_000_000_001,
+            })
+            .into_iter()
+            .collect()
+    } else {
+        configured
+    };
     Json(SessionsResponse {
         api_version: API_VERSION.to_owned(),
         sessions,
@@ -339,10 +477,10 @@ async fn create_session(State(state): State<AdmissionState>) -> Json<CreateSessi
     })
 }
 
-async fn session_status() -> Json<SessionStatusResponse> {
+async fn session_status(AxumPath(session_id): AxumPath<String>) -> Json<SessionStatusResponse> {
     Json(SessionStatusResponse {
         api_version: API_VERSION.to_owned(),
-        session_id: SESSION_ID.to_owned(),
+        session_id,
         revision: 1,
         pending_inputs: 0,
         active_turn_id: None,

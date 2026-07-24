@@ -1,5 +1,6 @@
 //! Local administrative and scripting client for Mealy.
 
+mod chat_picker;
 mod dashboard;
 mod lifecycle;
 
@@ -219,11 +220,18 @@ enum Command {
     /// Start or resume a friendly line-oriented durable chat session.
     Chat {
         /// Existing session to resume; a new session is created when omitted.
-        #[arg(long, conflicts_with = "continue_latest")]
+        #[arg(long, conflicts_with_all = ["continue_latest", "pick"])]
         session_id: Option<String>,
         /// Resume the most recently updated session for this exact owner/channel binding.
-        #[arg(short = 'c', long = "continue", conflicts_with = "session_id")]
+        #[arg(
+            short = 'c',
+            long = "continue",
+            conflicts_with_all = ["session_id", "pick"]
+        )]
         continue_latest: bool,
+        /// Interactively choose one of the 20 most recently updated exact-binding sessions.
+        #[arg(long, conflicts_with_all = ["session_id", "continue_latest"])]
+        pick: bool,
     },
     /// Session creation, submission, timeline, and status operations.
     Session {
@@ -3110,8 +3118,11 @@ async fn run() -> Result<(), CliError> {
         Command::Chat {
             session_id,
             continue_latest,
+            pick,
         } => {
-            let selection = if continue_latest {
+            let selection = if pick {
+                ChatSessionSelection::Pick
+            } else if continue_latest {
                 ChatSessionSelection::Latest
             } else if let Some(session_id) = session_id {
                 ChatSessionSelection::Exact(session_id)
@@ -3380,6 +3391,7 @@ enum ChatSessionSelection {
     New,
     Exact(String),
     Latest,
+    Pick,
 }
 
 #[derive(Debug)]
@@ -3702,6 +3714,15 @@ async fn run_chat(
                 .next()
                 .ok_or(CliError::NoRecentSession)?;
             let status = fetch_chat_session_status(client, connection, &latest.session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::Pick => {
+            let Some(session_id) =
+                chat_picker::pick_recent_chat_session(client, connection).await?
+            else {
+                return Ok(());
+            };
+            let status = fetch_chat_session_status(client, connection, &session_id).await?;
             (status.session_id.clone(), Some(status))
         }
         ChatSessionSelection::New => {
@@ -14686,9 +14707,17 @@ enum CliError {
     Protocol(String),
     /// Latest-session continuation was requested before this binding created a session.
     #[error(
-        "no prior local session exists for this owner/channel binding; rerun this command without `--continue` to start one"
+        "no prior local session exists for this owner/channel binding; run `mealyctl chat` to start one"
     )]
     NoRecentSession,
+    /// The interactive recent-session picker was invoked without a complete terminal boundary.
+    #[error(
+        "chat --pick requires interactive stdin, stdout, and stderr; use --continue or --session-id for automation"
+    )]
+    ChatPickerRequiresTerminal,
+    /// Three bounded picker attempts did not select one of the displayed sessions.
+    #[error("no displayed conversation was selected; rerun `mealyctl chat --pick`")]
+    InvalidChatSelection,
     /// OS randomness was unavailable.
     #[error("operating-system randomness is unavailable")]
     RandomUnavailable,
@@ -15945,16 +15974,6 @@ mod tests {
 
     #[test]
     fn chat_command_and_delivery_controls_have_stable_shapes() {
-        let arguments =
-            Arguments::try_parse_from(["mealyctl", "chat", "--session-id", "durable-session"])
-                .expect("chat command");
-        assert!(matches!(
-            arguments.command,
-            Command::Chat {
-                session_id: Some(ref session_id),
-                continue_latest: false,
-            } if session_id == "durable-session"
-        ));
         assert_eq!(
             parse_chat_line("/steer update the active task"),
             ChatLine::Send {
@@ -16064,7 +16083,18 @@ mod tests {
     }
 
     #[test]
-    fn chat_continue_selects_latest_and_conflicts_with_an_exact_session() {
+    fn chat_session_selection_modes_are_explicit_and_mutually_exclusive() {
+        let exact =
+            Arguments::try_parse_from(["mealyctl", "chat", "--session-id", "durable-session"])
+                .expect("exact chat command");
+        assert!(matches!(
+            exact.command,
+            Command::Chat {
+                session_id: Some(ref session_id),
+                continue_latest: false,
+                pick: false,
+            } if session_id == "durable-session"
+        ));
         for option in ["--continue", "-c"] {
             let continued = Arguments::try_parse_from(["mealyctl", "chat", option])
                 .expect("continue latest chat command");
@@ -16073,14 +16103,36 @@ mod tests {
                 Command::Chat {
                     session_id: None,
                     continue_latest: true,
+                    pick: false,
                 }
             ));
         }
+        let picked =
+            Arguments::try_parse_from(["mealyctl", "chat", "--pick"]).expect("picker chat command");
+        assert!(matches!(
+            picked.command,
+            Command::Chat {
+                session_id: None,
+                continue_latest: false,
+                pick: true,
+            }
+        ));
         assert!(
             Arguments::try_parse_from([
                 "mealyctl",
                 "chat",
                 "--continue",
+                "--session-id",
+                "durable-session",
+            ])
+            .is_err()
+        );
+        assert!(Arguments::try_parse_from(["mealyctl", "chat", "--pick", "--continue"]).is_err());
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "chat",
+                "--pick",
                 "--session-id",
                 "durable-session",
             ])

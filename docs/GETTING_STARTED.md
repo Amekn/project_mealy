@@ -132,6 +132,16 @@ mealyctl chat
 work. It never silently creates a new session; when no prior conversation exists, the client tells
 you to start one with plain `chat`.
 
+To choose an older conversation without copying a session ID:
+
+```sh
+mealyctl chat --pick
+```
+
+The terminal-only picker shows at most 20 owner/channel-bound conversations, newest first, with
+their status, relative recency, and queued/active work. Selecting one resumes that exact durable
+session and creates nothing new.
+
 `/status` shows the live provider/model, health, locality, context/output limits, exact configured
 prices, and current request pressure. Every terminal turn prints its recorded input/output tokens,
 provider-neutral cost microunits, model/tool calls, and retries. `/help` lists session controls,

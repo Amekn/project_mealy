@@ -334,6 +334,11 @@ authenticated principal and channel binding. It reuses the ordinary bounded hist
 accepting input, and it fails with a direct new-chat instruction instead of creating a session when
 no prior local conversation exists.
 
+`chat --pick` provides the owner-facing older-session path. It requires interactive stdin, stdout,
+and stderr, fetches at most 20 newest exact-binding summaries, shows status/relative recency plus
+queued or active work, and resumes only the selected exact session. Cancellation and invalid
+selection create nothing. Automation should continue using `--continue` or `--session-id`.
+
 `session list --limit N` (1 through 100) discovers older sessions for that same binding, including
 pending-input and active-turn state. Use a selected ID with `chat --session-id`. Cross-channel
 sessions are deliberately not merged; inspect Telegram bindings through their channel

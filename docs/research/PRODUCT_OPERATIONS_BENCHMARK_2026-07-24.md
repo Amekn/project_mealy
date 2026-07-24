@@ -636,8 +636,10 @@ limits, provider overhead, configured prices, queue state, and per-route pressur
 also show exact durable tokens, provider-neutral cost microunits, model/tool calls, and retries.
 The next slice adds the competitor-familiar `chat --continue`/`-c` path: it selects the newest
 exact-binding session, performs the existing bounded durable-work rediscovery, and never creates a
-duplicate when no history exists. A specific-session picker, branching, and transcript export
-remain later polish rather than being conflated with this safe latest-session shortcut.
+duplicate when no history exists. A subsequent slice adds `chat --pick`: a terminal-only,
+20-session exact-binding chooser that shows status, relative recency, and active/queued work,
+resumes only the selected durable session, and creates nothing while browsing. Branching and
+transcript export remain later polish.
 Provider switching deliberately remains a stopped-daemon transaction until a guided flow can
 preserve the existing review, restart, health, and rollback boundary.
 

@@ -409,6 +409,9 @@ and exact terminal token/cost/call accounting before leaving chat cleanly. The j
 requires that the generated unit is enabled and running the exact installed daemon, restarts it
 across a distinct main process, rechecks bounded health plus sandbox-conformant `doctor`, and
 resumes the exact original durable session through `chat --continue` without creating a duplicate.
+The pseudo-terminal client suite also renders two bounded recent-session choices, selects the
+non-latest entry through `chat --pick`, verifies exact-session resume, and proves browsing creates
+no session.
 It removes that exact default unit and home before the existing independent service proof.
 That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
