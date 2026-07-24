@@ -22,6 +22,7 @@ public command cannot be added or removed without updating this reference.
 
 | Command | Purpose |
 | --- | --- |
+| *(no subcommand)* | On an interactive terminal, onboard an unconfigured home or open a new chat for a configured home. |
 | `onboard` | Configure one provider route, install/start the Linux owner service, and verify health and doctor. |
 | `setup` | Initialize a clean stopped home and activate one bounded provider configuration. |
 | `chat` | Start or resume the interactive durable conversation client. |
@@ -90,6 +91,11 @@ owner-only `connection.json`. Safe mode and drain intentionally reject ordinary 
 the command's JSON error and retryability contract instead of bypassing those states.
 
 ## Interactive chat status
+
+Bare `mealyctl` is the ordinary terminal entry point: it selects `onboard` only when
+`config.json` is absent and otherwise selects a new `chat`. It requires interactive stdin,
+stdout, and stderr; non-terminal callers fail without mutation and must name `onboard`, `chat`, or
+another exact subcommand. It never follows a `config.json` symlink while deciding the journey.
 
 `mealyctl chat` prints a concise status block before the first prompt.
 `/status` refreshes the same authenticated projection without leaving the conversation. It shows

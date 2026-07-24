@@ -54,9 +54,10 @@ To build this checkout instead, run:
 scripts/build-release-binaries.sh
 ```
 
-For a real model on a supported Linux host, run
-`target/release/mealyctl onboard`. The client uses the stable private
-`$HOME/.mealy` directory by default, so later commands work from any directory. The guided path
+For a real model on a supported Linux terminal, run `target/release/mealyctl`. A clean private
+home enters guided onboarding; after configuration the same bare command opens a new durable
+chat. Scripts and service automation must continue to name an explicit subcommand. The client uses
+the stable private `$HOME/.mealy` directory by default, so later commands work from any directory. The guided path
 supports strictly free OpenRouter models, authenticated custom OpenAI-compatible endpoints,
 credentialless loopback models, owner-local ChatGPT/Claude subscriptions through their official
 clients, and advanced OpenAI/Anthropic API routes. It probes the route, starts the owner service,
@@ -68,7 +69,7 @@ After successful onboarding:
 
 ```sh
 target/release/mealyctl doctor
-target/release/mealyctl chat
+target/release/mealyctl
 ```
 
 At the `you>` prompt, plain text queues a turn, `/status` shows the live provider/model, health,
@@ -108,7 +109,10 @@ reviewed free-provider acceptance, tag promotion, attestation, and public clean-
 > consumes credentials only from standard environment variables, performs the existing bounded
 > activation probe, brokers the key, installs and starts the Linux owner service, and verifies
 > liveness plus `doctor`. It refuses to silently replace an existing home. The lower-level
-> `setup` command remains available for stopped-home/foreground workflows. A
+> `setup` command remains available for stopped-home/foreground workflows. A terminal-only bare
+> `mealyctl` invocation dispatches to onboarding when no configuration exists and to a new chat
+> when configuration is present; non-terminal callers fail without mutation and receive the
+> explicit automation commands. A
 > separate official-client bridge supports existing ChatGPT and Claude subscription sessions
 > without importing OAuth tokens: it pins the canonical client executable and SHA-256, clears API
 > key variables, disables client tools/connectors/session persistence, validates structured output

@@ -2125,6 +2125,12 @@ fn main() -> ExitCode {
 
 fn combined_cli_command() -> clap::Command {
     <LifecycleCommand as clap::Subcommand>::augment_subcommands(Arguments::command())
+        .subcommand_required(false)
+        .after_help(
+            "On an interactive terminal, run without a subcommand to onboard an unconfigured \
+             home or open a new chat for a configured home. Automation must name an explicit \
+             subcommand.",
+        )
 }
 
 fn stable_default_mealy_home(user_home: Option<OsString>) -> Option<PathBuf> {
@@ -2195,6 +2201,79 @@ fn parse_operational_arguments(arguments: Vec<OsString>) -> Arguments {
     let mut matches = combined_cli_command().get_matches_from(arguments);
     <Arguments as clap::FromArgMatches>::from_arg_matches_mut(&mut matches)
         .unwrap_or_else(|error| error.exit())
+}
+
+fn resolve_default_operational_subcommand(
+    home: &Path,
+    interactive_terminal: bool,
+) -> Result<&'static str, CliError> {
+    if !interactive_terminal {
+        return Err(CliError::DefaultJourneyRequiresTerminal);
+    }
+    match fs::symlink_metadata(home.join("config.json")) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(CliError::InvalidProviderConfiguration)
+        }
+        Ok(_) => Ok("chat"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("onboard"),
+        Err(error) => Err(CliError::Io(error)),
+    }
+}
+
+enum BareOperationalInvocation {
+    NotBare,
+    Bare { explicit_home: Option<PathBuf> },
+}
+
+fn bare_operational_invocation(arguments: &[OsString]) -> BareOperationalInvocation {
+    let mut index = 1;
+    let mut home = None;
+    while let Some(argument) = arguments.get(index) {
+        if argument == "--home" {
+            let Some(value) = arguments.get(index + 1) else {
+                return BareOperationalInvocation::NotBare;
+            };
+            home = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = argument
+            .to_str()
+            .and_then(|value| value.strip_prefix("--home="))
+        {
+            home = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        return BareOperationalInvocation::NotBare;
+    }
+    BareOperationalInvocation::Bare {
+        explicit_home: home,
+    }
+}
+
+fn apply_default_operational_subcommand(
+    mut arguments: Vec<OsString>,
+) -> Result<Vec<OsString>, CliError> {
+    let BareOperationalInvocation::Bare { explicit_home } = bare_operational_invocation(&arguments)
+    else {
+        return Ok(arguments);
+    };
+    let home = explicit_home
+        .or_else(|| std::env::var_os("MEALY_HOME").map(PathBuf::from))
+        .or_else(|| stable_default_mealy_home(std::env::var_os("HOME")))
+        .ok_or(CliError::DefaultHomeUnavailable)?;
+    if home.as_os_str().is_empty() {
+        return Err(CliError::InvalidHome);
+    }
+    let subcommand = resolve_default_operational_subcommand(
+        &home,
+        std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && std::io::stderr().is_terminal(),
+    )?;
+    arguments.push(OsString::from(subcommand));
+    Ok(arguments)
 }
 
 async fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
@@ -3037,7 +3116,7 @@ fn remove_verified_owner_service_if_present(_home: &Path) -> Result<(), CliError
 
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), CliError> {
-    let raw_arguments: Vec<OsString> = std::env::args_os().collect();
+    let raw_arguments = apply_default_operational_subcommand(std::env::args_os().collect())?;
     let home_override_supplied = cli_home_override_supplied(&raw_arguments);
     if lifecycle_invocation(&raw_arguments) {
         let mut arguments = LifecycleArguments::parse_from(raw_arguments);
@@ -14718,6 +14797,11 @@ enum CliError {
     /// Three bounded picker attempts did not select one of the displayed sessions.
     #[error("no displayed conversation was selected; rerun `mealyctl chat --pick`")]
     InvalidChatSelection,
+    /// A bare invocation could not safely enter an interactive onboarding or chat journey.
+    #[error(
+        "running `mealyctl` without a subcommand requires interactive stdin, stdout, and stderr; use `mealyctl onboard`, `mealyctl chat`, or `mealyctl --help` for automation"
+    )]
+    DefaultJourneyRequiresTerminal,
     /// OS randomness was unavailable.
     #[error("operating-system randomness is unavailable")]
     RandomUnavailable,
@@ -14902,11 +14986,11 @@ mod tests {
         lifecycle_invocation, load_connection, normalize_openrouter_display_name,
         observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
         onboard_chat_mode, openrouter_price_is_zero, openrouter_price_microunits_per_million,
-        parse_chat_line, prepare_local_text_attachment, resolve_setup, setup_provider_config,
-        should_open_onboard_chat, stable_default_mealy_home, telegram_pair_api_url,
-        update_recovery_route, validate_anthropic_probe_envelope, validate_anthropic_probe_stream,
-        validate_connection, validate_discord_pair_base_url, validate_provider_probe_envelope,
-        validate_provider_probe_stream,
+        parse_chat_line, prepare_local_text_attachment, resolve_default_operational_subcommand,
+        resolve_setup, setup_provider_config, should_open_onboard_chat, stable_default_mealy_home,
+        telegram_pair_api_url, update_recovery_route, validate_anthropic_probe_envelope,
+        validate_anthropic_probe_stream, validate_connection, validate_discord_pair_base_url,
+        validate_provider_probe_envelope, validate_provider_probe_stream,
     };
     #[cfg(target_os = "linux")]
     use super::{
@@ -14935,6 +15019,38 @@ mod tests {
             bearer_token: URL_SAFE_NO_PAD.encode([7_u8; 32]),
             principal_id: "principal".to_owned(),
             channel_binding_id: "binding".to_owned(),
+        }
+    }
+
+    #[test]
+    fn bare_interactive_command_selects_onboarding_or_chat_without_following_config_links() {
+        let home = tempfile::tempdir().expect("temporary bare-command home");
+        assert_eq!(
+            resolve_default_operational_subcommand(home.path(), true)
+                .expect("clean home selects onboarding"),
+            "onboard"
+        );
+        assert!(matches!(
+            resolve_default_operational_subcommand(home.path(), false),
+            Err(super::CliError::DefaultJourneyRequiresTerminal)
+        ));
+
+        let config = home.path().join("config.json");
+        std::fs::write(&config, b"{}").expect("write configuration marker");
+        assert_eq!(
+            resolve_default_operational_subcommand(home.path(), true)
+                .expect("configured home selects chat"),
+            "chat"
+        );
+
+        std::fs::remove_file(&config).expect("remove configuration marker");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/dev/null", &config).expect("link configuration marker");
+            assert!(matches!(
+                resolve_default_operational_subcommand(home.path(), true),
+                Err(super::CliError::InvalidProviderConfiguration)
+            ));
         }
     }
 

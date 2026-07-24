@@ -210,11 +210,15 @@ Ensure `$HOME/.local/bin` is on `PATH`, or use the absolute paths below.
 The shortest supported-Linux path is:
 
 ```sh
-mealyctl onboard
+mealyctl
 ```
 
-It offers strictly free OpenRouter, authenticated custom, credentialless loopback, ChatGPT
-subscription, Claude subscription, OpenAI API, and Anthropic API routes. The command discovers
+On a terminal, a bare command enters onboarding when `$HOME/.mealy/config.json` does not exist and
+opens a new durable chat after configuration. Scripts must use the explicit `mealyctl onboard`
+command so a missing subcommand never creates state outside a terminal.
+
+The guided journey offers strictly free OpenRouter, authenticated custom, credentialless loopback,
+ChatGPT subscription, Claude subscription, OpenAI API, and Anthropic API routes. The command discovers
 models where the provider supplies a bounded catalog, derives complete OpenRouter free-model
 limits and exact zero prices, shows one non-secret plan, performs the bounded live probe, installs
 and starts the owner service, waits for health, requires `doctor` to pass, and opens the first

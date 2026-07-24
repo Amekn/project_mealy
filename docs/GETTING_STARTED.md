@@ -38,7 +38,8 @@ when you intentionally need another owner-private location.
 
 ## 2. Choose how Mealy reaches a model
 
-`mealyctl onboard` offers these routes:
+Bare `mealyctl` enters onboarding when the private home is not configured. The guided chooser
+offers these routes:
 
 | Choice | What must already exist |
 | --- | --- |
@@ -55,9 +56,16 @@ inherit API-key variables into that client, or treat a ChatGPT/Claude subscripti
 
 ## 3. Run or continue onboarding
 
-If the verified bootstrap already opened onboarding, choose the matching route below at its
-prompt. Native-package installs and passive bootstrap installs start the same guided transaction
-with one of these commands.
+If the verified bootstrap already opened onboarding, choose the matching route at its prompt.
+After a native-package or passive bootstrap install, the shortest terminal command is:
+
+```sh
+mealyctl
+```
+
+Scripts should use one of the explicit `mealyctl onboard --route ...` forms below. A bare command
+requires interactive stdin, stdout, and stderr, so it never guesses or mutates when used in
+automation.
 
 For the recommended no-paid-credit route:
 
@@ -115,6 +123,12 @@ service health and `doctor` pass. Type a prompt at `you>`. Use `--no-chat` when 
 to stop and print the exact next command, or `--chat` to force the chat handoff for a deliberately
 scripted terminal session.
 
+After configuration, bare `mealyctl` opens a separate new durable conversation:
+
+```sh
+mealyctl
+```
+
 To return later, continue the most recently updated conversation for this exact local
 owner/channel binding:
 
@@ -122,7 +136,7 @@ owner/channel binding:
 mealyctl chat --continue
 ```
 
-Use plain `chat` when you intentionally want a separate new conversation:
+The explicit equivalent, useful in scripts, is:
 
 ```sh
 mealyctl chat

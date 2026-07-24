@@ -369,6 +369,10 @@ non-secret onboarding arguments exactly, while non-interactive and
 and an existing home receives only `doctor` and `chat` handoffs. The independently installed
 systemd smoke below exercises the real onboarding/service/health/doctor/first-turn transaction, so
 the bootstrap test does not substitute a fake client for that behavior.
+The Linux pseudo-terminal suite additionally invokes the real client with no subcommand. It
+requires a clean home to display the onboarding route chooser without creating configuration,
+requires a configured home to create and open a real durable chat, and proves non-terminal use
+fails without mutation while naming the explicit automation commands.
 The release builder also requires its explicit inventory to equal the complete regular-file-only
 `docs/` tree. Archive and Debian install smokes verify that documentation indexes, requirements
 coverage, testing guidance, decisions, research, benchmarks, and negative evidence survive the

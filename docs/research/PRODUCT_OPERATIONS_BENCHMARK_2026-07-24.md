@@ -640,6 +640,10 @@ duplicate when no history exists. A subsequent slice adds `chat --pick`: a termi
 20-session exact-binding chooser that shows status, relative recency, and active/queued work,
 resumes only the selected durable session, and creates nothing while browsing. Branching and
 transcript export remain later polish.
+The installed executable is now also the product entry point observed across the end-user
+comparators: bare terminal `mealyctl` enters guided onboarding for an unconfigured private home and
+opens a new durable chat for a configured home. A process proof covers both branches, while
+non-terminal use fails without mutation and names the explicit automation commands.
 Provider switching deliberately remains a stopped-daemon transaction until a guided flow can
 preserve the existing review, restart, health, and rollback boundary.
 

@@ -164,6 +164,84 @@ async fn chat_continue_resumes_the_latest_session_without_creating_another() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bare_mealyctl_enters_onboarding_or_a_new_chat_from_home_state() {
+    let clean_home = tempfile::tempdir().expect("clean bare-command home");
+    fs::set_permissions(clean_home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private clean home");
+    let (mut clean_terminal, mut clean_child) = spawn_bare_mealyctl(clean_home.path());
+    let mut clean_rendered = Vec::new();
+    wait_for_occurrences(
+        &mut clean_terminal,
+        &mut clean_rendered,
+        b"How should Mealy access a model?",
+        1,
+        Duration::from_secs(5),
+    );
+    assert!(!clean_home.path().join("config.json").exists());
+    clean_terminal
+        .write_all(b"q\n")
+        .and_then(|()| clean_terminal.flush())
+        .expect("cancel clean-home route prompt");
+    let clean_status = wait_for_child(&mut clean_child, Duration::from_secs(5));
+    assert!(!clean_status.success());
+    assert!(!clean_home.path().join("config.json").exists());
+
+    let noninteractive_home = tempfile::tempdir().expect("noninteractive bare-command home");
+    let noninteractive = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(noninteractive_home.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run bare command without a terminal");
+    assert!(!noninteractive.status.success());
+    assert!(
+        String::from_utf8_lossy(&noninteractive.stderr)
+            .contains("without a subcommand requires interactive stdin, stdout, and stderr")
+    );
+    assert!(!noninteractive_home.path().join("config.json").exists());
+
+    let state = AdmissionState::default();
+    let (base_url, server) = spawn_control_plane(state.clone()).await;
+    let configured_home = tempfile::tempdir().expect("configured bare-command home");
+    fs::set_permissions(configured_home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private configured home");
+    write_connection(configured_home.path(), &base_url);
+    let config = configured_home.path().join("config.json");
+    fs::write(&config, b"{}").expect("write configured-home marker");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o600))
+        .expect("private configured-home marker");
+    let (mut terminal, mut child) = spawn_bare_mealyctl(configured_home.path());
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        format!("Mealy chat session {SESSION_ID}").as_bytes(),
+        1,
+        Duration::from_secs(5),
+    );
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"you> ",
+        1,
+        Duration::from_secs(1),
+    );
+    assert_eq!(state.created_sessions.load(Ordering::SeqCst), 1);
+    terminal
+        .write_all(b"/quit\n")
+        .and_then(|()| terminal.flush())
+        .expect("quit bare-command chat");
+    let status = wait_for_child(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "bare configured command failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_picker_resumes_the_selected_exact_session_without_creating_another() {
     let state = AdmissionState::default();
     *state.picker_sessions.lock().expect("picker sessions lock") = vec![
@@ -545,6 +623,18 @@ fn spawn_chat(home: &std::path::Path) -> (File, Child) {
 }
 
 fn spawn_chat_with_arguments(home: &std::path::Path, arguments: &[&str]) -> (File, Child) {
+    spawn_mealyctl_pty(home, Some("chat"), arguments)
+}
+
+fn spawn_bare_mealyctl(home: &std::path::Path) -> (File, Child) {
+    spawn_mealyctl_pty(home, None, &[])
+}
+
+fn spawn_mealyctl_pty(
+    home: &std::path::Path,
+    subcommand: Option<&str>,
+    arguments: &[&str],
+) -> (File, Child) {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("open PTY master");
     grantpt(&master).expect("grant PTY slave");
@@ -561,16 +651,18 @@ fn spawn_chat_with_arguments(home: &std::path::Path, arguments: &[&str]) -> (Fil
     let stdin = Stdio::from(slave.try_clone().expect("clone PTY stdin"));
     let stdout = Stdio::from(slave.try_clone().expect("clone PTY stdout"));
     let stderr = Stdio::from(slave);
-    let child = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
-        .arg("--home")
-        .arg(home)
-        .arg("chat")
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mealyctl"));
+    command.arg("--home").arg(home);
+    if let Some(subcommand) = subcommand {
+        command.arg(subcommand);
+    }
+    let child = command
         .args(arguments)
         .stdin(stdin)
         .stdout(stdout)
         .stderr(stderr)
         .spawn()
-        .expect("spawn chat process");
+        .expect("spawn Mealy terminal process");
     let terminal = File::from(master);
     let flags = fcntl_getfl(&terminal).expect("read PTY master flags");
     fcntl_setfl(&terminal, flags | OFlags::NONBLOCK).expect("make PTY master nonblocking");
