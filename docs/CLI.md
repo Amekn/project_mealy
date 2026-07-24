@@ -11,8 +11,9 @@ The default home is the stable private `$HOME/.mealy` directory, independent of 
 working directory. `--home` or `MEALY_HOME` overrides it for intentional alternative layouts; an
 implicit home is rejected when `HOME` is absent, empty, or relative. Keep the selected location on
 owner-private durable storage. Do not place the local bearer token or a provider credential
-directly on a command line; provider setup imports the named environment variable into Mealy's
-private broker and stores only its opaque reference.
+directly on a command line. Interactive onboarding securely prompts with terminal echo disabled
+when its named provider variable is absent; automation and the lower-level `setup` command import
+that variable. Both paths broker the value once and store only its opaque reference.
 
 Run `mealyctl --help` for the current public surface and `mealyctl COMMAND --help` for the exact
 arguments of one command. Protected CI compares that real help output with the table below, so a
@@ -182,7 +183,10 @@ seven explicit routes: `openrouter-free`, `custom`, `local`, `chatgpt-subscripti
 The OpenRouter route fetches the live account catalog and admits only tool-capable text models
 whose exact ID ends in `:free`, whose context/output limits are complete, and whose posted
 input/output plus auxiliary prices are exactly zero. Custom and official API routes import a
-credential from a named environment variable into the private broker. The local route requires a
+credential from the named environment variable when present. When it is absent and stdin/stderr
+are terminals, onboarding reads the credential once through an echo-disabled bounded prompt,
+restores the terminal before continuing, and brokers the value without printing it. Non-terminal
+automation fails before mutation unless the variable is set. The local route requires a
 literal-loopback endpoint and no credential. Subscription routes pin and live-probe the installed
 official Codex or Claude executable without extracting its subscription credential.
 

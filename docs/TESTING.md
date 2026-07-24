@@ -373,6 +373,11 @@ The Linux pseudo-terminal suite additionally invokes the real client with no sub
 requires a clean home to display the onboarding route chooser without creating configuration,
 requires a configured home to create and open a real durable chat, and proves non-terminal use
 fails without mutation while naming the explicit automation commands.
+The same suite removes the normal OpenRouter/custom variables, enters distinct sentinel
+credentials through the real echo-disabled prompt, verifies the sentinel never reaches terminal
+output or `config.json`, requires the expected bearer on catalog/probe requests and exact private
+broker bytes, and proves normal echo returns for the next model-selection prompt. A non-terminal
+missing-credential case must fail before creating any home state.
 The release builder also requires its explicit inventory to equal the complete regular-file-only
 `docs/` tree. Archive and Debian install smokes verify that documentation indexes, requirements
 coverage, testing guidance, decisions, research, benchmarks, and negative evidence survive the
@@ -526,7 +531,9 @@ then cross restart and zero-live-call replay using the same storage path.
 control endpoint that deliberately holds admission open. It proves the startup and refreshed
 `/status` views use the authenticated provider/model and token limits, a subsequent prompt is
 available while admission remains in flight, and `/quit` promptly aborts only local tracking. This
-guards the concurrent REPL behavior at a real terminal boundary instead of only testing its parser.
+guards the concurrent REPL behavior at a real terminal boundary instead of only testing its
+parser. The same binary/PTY boundary covers the bare-command journey, recent-session picker, and
+hidden OpenRouter/custom onboarding credential prompts.
 
 Replay reports evidence as incomplete when an excluded artifact-backed context item cannot be
 byte-for-byte reconstructed inside the SQLite-only verifier. The artifact adapter still verifies

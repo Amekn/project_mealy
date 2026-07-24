@@ -644,6 +644,11 @@ The installed executable is now also the product entry point observed across the
 comparators: bare terminal `mealyctl` enters guided onboarding for an unconfigured private home and
 opens a new durable chat for a configured home. A process proof covers both branches, while
 non-terminal use fails without mutation and names the explicit automation commands.
+Remote onboarding now also matches the guided credential capture seen in the comparators: it uses
+the route's named environment variable when already present, otherwise accepts one bounded
+echo-disabled terminal value, restores normal echo before the next prompt, and reuses that same
+zeroizing value for discovery, probing, and broker activation. Non-terminal callers still require
+the named variable and fail before home mutation.
 Provider switching deliberately remains a stopped-daemon transaction until a guided flow can
 preserve the existing review, restart, health, and rollback boundary.
 

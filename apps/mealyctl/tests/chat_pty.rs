@@ -18,15 +18,18 @@ use rustix::{
     fs::{Mode, OFlags, fcntl_getfl, fcntl_setfl, open},
     pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt},
 };
+use serde_json::{Value, json};
 use std::{
     fs::{self, File},
     io::{Read, Write},
+    net::TcpListener as StdTcpListener,
     os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -239,6 +242,216 @@ async fn bare_mealyctl_enters_onboarding_or_a_new_chat_from_home_state() {
         String::from_utf8_lossy(&rendered)
     );
     server.abort();
+}
+
+#[test]
+fn onboarding_hidden_prompt_brokers_openrouter_credential_without_echoing_it() {
+    let home = tempfile::tempdir().expect("OpenRouter hidden-prompt home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private OpenRouter home");
+    let probe = provider_probe_body("vendor/tool-model:free");
+    let (base_url, requests, server) = serve_provider_onboarding(vec![
+        ("application/json", strict_free_openrouter_catalog()),
+        ("text/event-stream", probe),
+    ]);
+    let secret = "pty-openrouter-hidden-secret";
+    let arguments = [
+        "--route",
+        "openrouter-free",
+        "--base-url",
+        &base_url,
+        "--configure-only",
+        "--approve",
+    ];
+    let (mut terminal, mut child) = spawn_mealyctl_pty_with_removed_environment(
+        home.path(),
+        Some("onboard"),
+        &arguments,
+        &["OPENROUTER_API_KEY"],
+    );
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"OpenRouter free model API credential (input hidden): ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(format!("{secret}\n").as_bytes())
+        .and_then(|()| terminal.flush())
+        .expect("enter hidden OpenRouter credential");
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"Model number: ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(b"1\n")
+        .and_then(|()| terminal.flush())
+        .expect("select discovered free model");
+    let status = wait_for_child_and_collect(
+        &mut terminal,
+        &mut child,
+        &mut rendered,
+        Duration::from_secs(10),
+    );
+    assert!(
+        status.success(),
+        "OpenRouter hidden-prompt onboarding failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    assert!(
+        !rendered
+            .windows(secret.len())
+            .any(|window| window == secret.as_bytes())
+    );
+    let visible = String::from_utf8_lossy(&rendered);
+    assert!(visible.contains("Model number: 1\r\n"));
+    assert!(visible.contains("credential source: hidden terminal prompt"));
+    assert!(visible.contains("OPENROUTER_API_KEY was absent"));
+    assert_brokered_onboarding(
+        home.path(),
+        "openrouter.responses",
+        "vendor/tool-model:free",
+        "openrouter-primary",
+        secret,
+    );
+    let requests = requests
+        .recv_timeout(Duration::from_secs(2))
+        .expect("captured OpenRouter onboarding requests");
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /v1/models/user HTTP/1.1\r\n"));
+    assert!(requests[1].starts_with("POST /v1/responses HTTP/1.1\r\n"));
+    assert_bearer_headers(&requests, secret);
+    server.join().expect("OpenRouter onboarding server");
+}
+
+#[test]
+fn onboarding_hidden_prompt_brokers_custom_endpoint_credential_without_echoing_it() {
+    let home = tempfile::tempdir().expect("custom hidden-prompt home");
+    fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+        .expect("private custom home");
+    let (base_url, requests, server) = serve_provider_onboarding(vec![(
+        "text/event-stream",
+        provider_probe_body("custom-tool-model"),
+    )]);
+    let secret = "pty-custom-hidden-secret";
+    let arguments = [
+        "--route",
+        "custom",
+        "--model",
+        "custom-tool-model",
+        "--context-tokens",
+        "32768",
+        "--input-microunits-per-million-tokens",
+        "0",
+        "--output-microunits-per-million-tokens",
+        "0",
+        "--configure-only",
+        "--approve",
+    ];
+    let (mut terminal, mut child) = spawn_mealyctl_pty_with_removed_environment(
+        home.path(),
+        Some("onboard"),
+        &arguments,
+        &["CUSTOM_API_KEY"],
+    );
+    let mut rendered = Vec::new();
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"OpenAI-compatible HTTPS API base URL: ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(format!("{base_url}\n").as_bytes())
+        .and_then(|()| terminal.flush())
+        .expect("enter custom endpoint base URL");
+    wait_for_occurrences(
+        &mut terminal,
+        &mut rendered,
+        b"custom authenticated OpenAI-compatible endpoint API credential (input hidden): ",
+        1,
+        Duration::from_secs(5),
+    );
+    terminal
+        .write_all(format!("{secret}\n").as_bytes())
+        .and_then(|()| terminal.flush())
+        .expect("enter hidden custom endpoint credential");
+    let status = wait_for_child_and_collect(
+        &mut terminal,
+        &mut child,
+        &mut rendered,
+        Duration::from_secs(10),
+    );
+    assert!(
+        status.success(),
+        "custom hidden-prompt onboarding failed: {}; terminal: {}",
+        status,
+        String::from_utf8_lossy(&rendered)
+    );
+    assert!(
+        !rendered
+            .windows(secret.len())
+            .any(|window| window == secret.as_bytes())
+    );
+    let visible = String::from_utf8_lossy(&rendered);
+    assert!(visible.contains("credential source: hidden terminal prompt"));
+    assert!(visible.contains("CUSTOM_API_KEY was absent"));
+    assert_brokered_onboarding(
+        home.path(),
+        "custom.responses",
+        "custom-tool-model",
+        "custom-primary",
+        secret,
+    );
+    let requests = requests
+        .recv_timeout(Duration::from_secs(2))
+        .expect("captured custom onboarding request");
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].starts_with("POST /v1/responses HTTP/1.1\r\n"));
+    assert_bearer_headers(&requests, secret);
+    server.join().expect("custom onboarding server");
+}
+
+#[test]
+fn onboarding_without_a_credential_or_terminal_fails_before_mutation() {
+    let home = tempfile::tempdir().expect("nonterminal credential home");
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "custom",
+            "--base-url",
+            "https://example.invalid/v1",
+            "--model",
+            "custom-model",
+            "--context-tokens",
+            "32768",
+            "--input-microunits-per-million-tokens",
+            "0",
+            "--output-microunits-per-million-tokens",
+            "0",
+            "--configure-only",
+            "--approve",
+        ])
+        .env_remove("CUSTOM_API_KEY")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run nonterminal credential onboarding");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("provider credential CUSTOM_API_KEY is absent"));
+    assert!(error.contains("rerun onboarding with terminal stdin and stderr"));
+    assert!(!home.path().join("config.json").exists());
+    assert!(!home.path().join("provider-secrets").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -600,6 +813,135 @@ async fn block_admission(
     })
 }
 
+fn strict_free_openrouter_catalog() -> String {
+    json!({
+        "data": [{
+            "id": "vendor/tool-model:free",
+            "name": "Tool Model Free",
+            "created": 50,
+            "context_length": 32768,
+            "pricing": {
+                "prompt": "0",
+                "completion": "0",
+                "request": "0",
+                "image": "0",
+                "web_search": "0",
+                "internal_reasoning": "0",
+                "input_cache_read": "0",
+                "input_cache_write": "0"
+            },
+            "supported_parameters": ["max_tokens", "tools"],
+            "architecture": {"output_modalities": ["text"]},
+            "top_provider": {
+                "context_length": 32768,
+                "max_completion_tokens": 8192
+            }
+        }]
+    })
+    .to_string()
+}
+
+fn provider_probe_body(model: &str) -> String {
+    let completed = json!({
+        "id": "resp-hidden-prompt-onboarding",
+        "object": "response",
+        "model": model,
+        "status": "completed",
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "OK"}]
+        }]
+    });
+    let event = json!({"type": "response.completed", "response": completed});
+    format!("event: response.completed\ndata: {event}\n\ndata: [DONE]\n\n")
+}
+
+fn serve_provider_onboarding(
+    responses: Vec<(&'static str, String)>,
+) -> (String, mpsc::Receiver<Vec<String>>, thread::JoinHandle<()>) {
+    let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind provider onboarding fixture");
+    let address = listener.local_addr().expect("provider fixture address");
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for (content_type, response_body) in responses {
+            let (mut stream, _) = listener.accept().expect("accept provider request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("provider request timeout");
+            let mut raw = Vec::new();
+            let mut chunk = [0_u8; 4_096];
+            let header_end = loop {
+                let read = stream.read(&mut chunk).expect("read provider request");
+                assert!(read != 0, "provider request ended before headers");
+                raw.extend_from_slice(&chunk[..read]);
+                if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break position + 4;
+                }
+            };
+            let headers =
+                String::from_utf8(raw[..header_end].to_vec()).expect("provider request headers");
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':').and_then(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().expect("content length"))
+                    })
+                })
+                .unwrap_or_default();
+            while raw.len().saturating_sub(header_end) < content_length {
+                let read = stream.read(&mut chunk).expect("read provider request body");
+                assert!(read != 0, "provider request ended before its body");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            captured.push(headers);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            )
+            .expect("write provider fixture response");
+        }
+        sender.send(captured).expect("publish captured requests");
+    });
+    (format!("http://{address}/v1"), receiver, handle)
+}
+
+fn assert_bearer_headers(requests: &[String], secret: &str) {
+    assert!(requests.iter().all(|headers| {
+        headers.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("authorization")
+                    && value.trim() == format!("Bearer {secret}")
+            })
+        })
+    }));
+}
+
+fn assert_brokered_onboarding(
+    home: &std::path::Path,
+    provider_id: &str,
+    model: &str,
+    secret_id: &str,
+    secret: &str,
+) {
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.join("config.json")).expect("hidden-prompt provider configuration"),
+    )
+    .expect("hidden-prompt provider configuration JSON");
+    assert_eq!(config["provider"]["providerId"], provider_id);
+    assert_eq!(config["provider"]["model"], model);
+    assert_eq!(config["provider"]["credential"]["secretId"], secret_id);
+    assert!(!config.to_string().contains(secret));
+    assert_eq!(
+        fs::read(home.join(format!("provider-secrets/{secret_id}.key")))
+            .expect("brokered hidden-prompt secret"),
+        secret.as_bytes()
+    );
+}
+
 fn write_connection(home: &std::path::Path, base_url: &str) {
     let path = home.join("connection.json");
     let connection = LocalConnectionInfo {
@@ -635,6 +977,15 @@ fn spawn_mealyctl_pty(
     subcommand: Option<&str>,
     arguments: &[&str],
 ) -> (File, Child) {
+    spawn_mealyctl_pty_with_removed_environment(home, subcommand, arguments, &[])
+}
+
+fn spawn_mealyctl_pty_with_removed_environment(
+    home: &std::path::Path,
+    subcommand: Option<&str>,
+    arguments: &[&str],
+    removed_environment: &[&str],
+) -> (File, Child) {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("open PTY master");
     grantpt(&master).expect("grant PTY slave");
@@ -655,6 +1006,9 @@ fn spawn_mealyctl_pty(
     command.arg("--home").arg(home);
     if let Some(subcommand) = subcommand {
         command.arg(subcommand);
+    }
+    for variable in removed_environment {
+        command.env_remove(variable);
     }
     let child = command
         .args(arguments)
@@ -723,5 +1077,45 @@ fn wait_for_child(child: &mut Child, timeout: Duration) -> std::process::ExitSta
         }
         assert!(Instant::now() < deadline, "chat process did not exit");
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_child_and_collect(
+    terminal: &mut File,
+    child: &mut Child,
+    output: &mut Vec<u8>,
+    timeout: Duration,
+) -> std::process::ExitStatus {
+    let deadline = Instant::now() + timeout;
+    loop {
+        read_available_terminal_output(terminal, output);
+        if let Some(status) = child.try_wait().expect("poll terminal process") {
+            read_available_terminal_output(terminal, output);
+            return status;
+        }
+        assert!(Instant::now() < deadline, "terminal process did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn read_available_terminal_output(terminal: &mut File, output: &mut Vec<u8>) {
+    let mut chunk = [0_u8; 1_024];
+    loop {
+        match terminal.read(&mut chunk) {
+            Ok(0) => return,
+            Ok(length) => output.extend_from_slice(&chunk[..length]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) || error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error()) =>
+            {
+                return;
+            }
+            Err(error) => panic!(
+                "PTY read failed while collecting output: {error}; output: {}",
+                String::from_utf8_lossy(output)
+            ),
+        }
     }
 }

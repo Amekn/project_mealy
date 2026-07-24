@@ -10,12 +10,12 @@ use clap_complete::{Shell, generate};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::StreamExt;
 use mealy_application::{
-    BrowserConfig, CancellationProbe, McpServerConfig, McpServerDiscovery, McpToolGrant,
-    MessageRole, ModelProvider, NormalizedMessage, ProviderConfig, ProviderCredentialReference,
-    ProviderRequest, ProviderResponse, SubscriptionCliClient, WebAccessConfig, WebSearchConfig,
-    default_daemon_config_document, is_sha256_digest, sha256_digest, valid_provider_secret_id,
-    validate_discord_snowflake, validate_mcp_server_set, validate_provider_base_url,
-    validate_provider_chain,
+    BrowserConfig, CancellationProbe, MAXIMUM_PROVIDER_CREDENTIAL_BYTES, McpServerConfig,
+    McpServerDiscovery, McpToolGrant, MessageRole, ModelProvider, NormalizedMessage,
+    ProviderConfig, ProviderCredentialReference, ProviderRequest, ProviderResponse,
+    SubscriptionCliClient, WebAccessConfig, WebSearchConfig, default_daemon_config_document,
+    is_sha256_digest, sha256_digest, valid_provider_secret_id, validate_discord_snowflake,
+    validate_mcp_server_set, validate_provider_base_url, validate_provider_chain,
 };
 use mealy_domain::{
     AttemptId, ContextManifestId, RunId, ScheduleId, SkillAsset, SkillToolRequirement,
@@ -75,6 +75,8 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::io::AsFd as _;
 use thiserror::Error;
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -415,7 +417,7 @@ struct OnboardOptions {
     /// Maximum output tokens Mealy may request or accept.
     #[arg(long, default_value_t = 4_096)]
     maximum_output_tokens: u64,
-    /// Environment variable imported once for an API credential.
+    /// Named one-shot API credential variable; terminal onboarding prompts when it is absent.
     #[arg(long)]
     credential_env: Option<String>,
     /// Input price in currency microunits per million tokens.
@@ -7891,7 +7893,19 @@ struct ResolvedOnboard {
     route: OnboardRouteArgument,
     provider: ProviderConfig,
     secret_id: Option<String>,
-    credential_env: Option<String>,
+    credential: Option<ResolvedOnboardCredential>,
+}
+
+struct ResolvedOnboardCredential {
+    value: Zeroizing<String>,
+    environment: String,
+    source: OnboardCredentialSource,
+}
+
+#[derive(Clone, Copy)]
+enum OnboardCredentialSource {
+    Environment,
+    HiddenTerminalPrompt,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -7962,14 +7976,22 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
+    let stdin_is_terminal = stdin.is_terminal();
+    let stdout_is_terminal = stdout.is_terminal();
+    let stderr_is_terminal = stderr.is_terminal();
     let open_chat = should_open_onboard_chat(
         onboard_chat_mode(options),
         options.configure_only,
-        stdin.is_terminal() && stdout.is_terminal() && stderr.is_terminal(),
+        stdin_is_terminal && stdout_is_terminal && stderr_is_terminal,
     );
     let mut input = stdin.lock();
     let mut prompt = stderr.lock();
-    let resolved = resolve_onboard(options, &mut input, &mut prompt)?;
+    let resolved = resolve_onboard_from_terminal(
+        options,
+        &mut input,
+        &mut prompt,
+        stdin_is_terminal && stderr_is_terminal,
+    )?;
     render_onboard_summary(&resolved, options, &mut prompt)?;
     if !options.approve
         && prompt_line(
@@ -7982,21 +8004,8 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
     }
 
     initialize_setup_home(home)?;
-    let credential_import = resolved
-        .secret_id
-        .as_deref()
-        .zip(resolved.credential_env.as_deref())
-        .map(|(secret_id, credential_env)| ProviderCredentialImport {
-            secret_id,
-            credential_env,
-        });
-    let provider = activate_provider(
-        home,
-        resolved.provider,
-        credential_import,
-        true,
-        options.skip_connectivity_test,
-    )?;
+    let provider =
+        activate_resolved_onboard_provider(home, resolved, options.skip_connectivity_test)?;
     let home = absolute_service_path(home)?;
     let next_command = format!(
         "mealyctl --home {} chat",
@@ -8051,6 +8060,35 @@ async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliErr
     drop(input);
     drop(prompt);
     open_first_onboard_chat(&home).await
+}
+
+fn activate_resolved_onboard_provider(
+    home: &Path,
+    resolved: ResolvedOnboard,
+    skip_connectivity_test: bool,
+) -> Result<ProviderConfigurationResponse, CliError> {
+    let ResolvedOnboard {
+        provider,
+        secret_id,
+        credential,
+        ..
+    } = resolved;
+    let credential_import =
+        secret_id
+            .as_deref()
+            .zip(credential.as_ref())
+            .map(|(secret_id, credential)| ProviderCredentialImport {
+                secret_id,
+                source: ProviderCredentialImportSource::Resolved(credential.value.as_str()),
+            });
+    let provider = activate_provider(
+        home,
+        provider,
+        credential_import,
+        true,
+        skip_connectivity_test,
+    )?;
+    Ok(provider)
 }
 
 async fn provision_onboard_service(
@@ -8117,18 +8155,122 @@ fn validate_onboard_home_target(home: &Path, reconfigure: bool) -> Result<(), Cl
     }
 }
 
-fn resolve_onboard(
+fn resolve_onboard_from_terminal(
     options: &OnboardOptions,
-    input: &mut impl BufRead,
+    input: &mut std::io::StdinLock<'_>,
     prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
 ) -> Result<ResolvedOnboard, CliError> {
     let route = options
         .route
         .map_or_else(|| prompt_onboard_route(input, prompt), Ok)?;
+    let base_url = resolve_onboard_base_url(route, options, input, prompt)?;
+    let credential =
+        resolve_onboard_credential(route, options, input, prompt, secure_terminal_boundary)?;
+    resolve_onboard(route, options, input, prompt, base_url, credential)
+}
+
+fn resolve_onboard_credential(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut std::io::StdinLock<'_>,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<Option<ResolvedOnboardCredential>, CliError> {
+    let Some(default_environment) = route.default_credential_environment() else {
+        return Ok(None);
+    };
+    let environment = options
+        .credential_env
+        .clone()
+        .unwrap_or_else(|| default_environment.to_owned());
+    if !valid_provider_credential_environment_name(&environment) {
+        return Err(CliError::InvalidSetupInput);
+    }
+    match std::env::var(&environment) {
+        Ok(value) => {
+            if !valid_onboard_provider_credential(&value) {
+                return Err(CliError::InvalidOnboardCredential);
+            }
+            Ok(Some(ResolvedOnboardCredential {
+                value: Zeroizing::new(value),
+                environment,
+                source: OnboardCredentialSource::Environment,
+            }))
+        }
+        Err(std::env::VarError::NotPresent) if secure_terminal_boundary => {
+            let label = format!("{} API credential (input hidden): ", route.display_name());
+            let value = prompt_hidden_onboard_credential(input, prompt, &label)?;
+            Ok(Some(ResolvedOnboardCredential {
+                value,
+                environment,
+                source: OnboardCredentialSource::HiddenTerminalPrompt,
+            }))
+        }
+        Err(std::env::VarError::NotPresent) => {
+            Err(CliError::OnboardCredentialRequiresTerminal(environment))
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(CliError::MissingProviderCredential(environment))
+        }
+    }
+}
+
+fn resolve_onboard_base_url(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<Option<String>, CliError> {
     if route.uses_subscription_client() {
+        return Ok(None);
+    }
+    if options.executable_path.is_some() {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let base_url = options.base_url.clone().map_or_else(
+        || match route.default_base_url() {
+            Some(default) => Ok(default.to_owned()),
+            None => prompt_line(input, prompt, "OpenAI-compatible HTTPS API base URL: "),
+        },
+        Ok,
+    )?;
+    let local_endpoint =
+        validate_provider_base_url(&base_url).map_err(|_| CliError::InvalidSetupInput)?;
+    if matches!(route, OnboardRouteArgument::Local) && !local_endpoint {
+        return Err(CliError::InvalidSetupInput);
+    }
+    Ok(Some(base_url))
+}
+
+fn valid_onboard_provider_credential(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAXIMUM_PROVIDER_CREDENTIAL_BYTES
+        && !value.chars().any(char::is_control)
+}
+
+fn resolve_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    base_url: Option<String>,
+    credential: Option<ResolvedOnboardCredential>,
+) -> Result<ResolvedOnboard, CliError> {
+    if route.uses_subscription_client() {
+        if base_url.is_some() || credential.is_some() {
+            return Err(CliError::InvalidSetupInput);
+        }
         return resolve_subscription_onboard(route, options, input, prompt);
     }
-    resolve_http_onboard(route, options, input, prompt)
+    resolve_http_onboard(
+        route,
+        options,
+        input,
+        prompt,
+        base_url.ok_or(CliError::InvalidSetupInput)?,
+        credential,
+    )
 }
 
 fn prompt_onboard_route(
@@ -8179,29 +8321,9 @@ fn resolve_http_onboard(
     options: &OnboardOptions,
     input: &mut impl BufRead,
     prompt: &mut impl Write,
+    base_url: String,
+    credential: Option<ResolvedOnboardCredential>,
 ) -> Result<ResolvedOnboard, CliError> {
-    if options.executable_path.is_some() {
-        return Err(CliError::InvalidSetupInput);
-    }
-    let base_url = options.base_url.clone().map_or_else(
-        || match route.default_base_url() {
-            Some(default) => Ok(default.to_owned()),
-            None => prompt_line(input, prompt, "OpenAI-compatible HTTPS API base URL: "),
-        },
-        Ok,
-    )?;
-    let credential_env = route.default_credential_environment().map(|default| {
-        options
-            .credential_env
-            .clone()
-            .unwrap_or_else(|| default.to_owned())
-    });
-    if credential_env
-        .as_deref()
-        .is_some_and(|name| !valid_provider_credential_environment_name(name))
-    {
-        return Err(CliError::InvalidSetupInput);
-    }
     if matches!(route, OnboardRouteArgument::Local)
         && (options.credential_env.is_some()
             || options
@@ -8213,16 +8335,12 @@ fn resolve_http_onboard(
     {
         return Err(CliError::InvalidSetupInput);
     }
-    let local_endpoint =
-        validate_provider_base_url(&base_url).map_err(|_| CliError::InvalidSetupInput)?;
-    if matches!(route, OnboardRouteArgument::Local) && !local_endpoint {
-        return Err(CliError::InvalidSetupInput);
-    }
-
     let discovered = discover_onboard_models(
         route,
         &base_url,
-        credential_env.as_deref(),
+        credential
+            .as_ref()
+            .map(|credential| credential.value.as_str()),
         options.model.as_deref(),
     )?;
     let selected =
@@ -8376,20 +8494,20 @@ fn resolve_http_onboard(
         route,
         provider,
         secret_id,
-        credential_env,
+        credential,
     })
 }
 
 fn discover_onboard_models(
     route: OnboardRouteArgument,
     base_url: &str,
-    credential_env: Option<&str>,
+    credential: Option<&str>,
     requested_model: Option<&str>,
 ) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                discover_onboard_models_blocking(route, base_url, credential_env, requested_model)
+                discover_onboard_models_blocking(route, base_url, credential, requested_model)
             })
             .join()
             .map_err(|_| {
@@ -8401,20 +8519,18 @@ fn discover_onboard_models(
 fn discover_onboard_models_blocking(
     route: OnboardRouteArgument,
     base_url: &str,
-    credential_env: Option<&str>,
+    credential: Option<&str>,
     requested_model: Option<&str>,
 ) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
     let discover = match route {
         OnboardRouteArgument::OpenrouterFree => {
-            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
-            let credential = read_provider_credential_environment(environment)?;
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
             let result = discover_openrouter_models_blocking(
                 base_url,
-                credential.as_str(),
+                credential,
                 None,
                 PROVIDER_DISCOVERY_MAXIMUM_MODELS,
             )?;
-            drop(credential);
             Some(
                 result
                     .models
@@ -8426,27 +8542,17 @@ fn discover_onboard_models_blocking(
         OnboardRouteArgument::Custom | OnboardRouteArgument::OpenaiApi
             if requested_model.is_none() =>
         {
-            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
-            let credential = read_provider_credential_environment(environment)?;
-            let result = discover_openai_models_blocking(
-                base_url,
-                Some(credential.as_str()),
-                None,
-                100,
-                false,
-            )?;
-            drop(credential);
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
+            let result =
+                discover_openai_models_blocking(base_url, Some(credential), None, 100, false)?;
             Some(result.models)
         }
         OnboardRouteArgument::Local if requested_model.is_none() => {
             Some(discover_openai_models_blocking(base_url, None, None, 100, true)?.models)
         }
         OnboardRouteArgument::AnthropicApi if requested_model.is_none() => {
-            let environment = credential_env.ok_or(CliError::InvalidSetupInput)?;
-            let credential = read_provider_credential_environment(environment)?;
-            let result =
-                discover_anthropic_models_blocking(base_url, credential.as_str(), None, 100, None)?;
-            drop(credential);
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
+            let result = discover_anthropic_models_blocking(base_url, credential, None, 100, None)?;
             Some(result.models)
         }
         OnboardRouteArgument::Custom
@@ -8598,7 +8704,7 @@ fn resolve_subscription_onboard(
         route,
         provider,
         secret_id: None,
-        credential_env: None,
+        credential: None,
     })
 }
 
@@ -8665,11 +8771,19 @@ fn render_onboard_summary(
             "required before activation"
         }
     )?;
-    if let Some(environment) = &resolved.credential_env {
-        writeln!(
-            prompt,
-            "  credential source: environment variable {environment} (the value is never printed or stored in config)"
-        )?;
+    if let Some(credential) = &resolved.credential {
+        match credential.source {
+            OnboardCredentialSource::Environment => writeln!(
+                prompt,
+                "  credential source: environment variable {} (imported once; the value is never printed or stored in config)",
+                credential.environment
+            )?,
+            OnboardCredentialSource::HiddenTerminalPrompt => writeln!(
+                prompt,
+                "  credential source: hidden terminal prompt ({} was absent; the value is never echoed, printed, or stored in config)",
+                credential.environment
+            )?,
+        }
     } else if resolved.route.uses_subscription_client() {
         writeln!(
             prompt,
@@ -8822,7 +8936,7 @@ fn run_setup(home: &Path, options: &SetupOptions) -> Result<(), CliError> {
         .zip(setup.credential_env.as_deref())
         .map(|(secret_id, credential_env)| ProviderCredentialImport {
             secret_id,
-            credential_env,
+            source: ProviderCredentialImportSource::Environment(credential_env),
         });
     configure_provider(
         home,
@@ -8936,6 +9050,88 @@ fn prompt_setup_provider(
         "4" | "local" => Ok(SetupProviderArgument::Local),
         _ => Err(CliError::InvalidSetupInput),
     }
+}
+
+#[cfg(unix)]
+fn prompt_hidden_onboard_credential(
+    input: &mut std::io::StdinLock<'_>,
+    prompt: &mut impl Write,
+    label: &str,
+) -> Result<Zeroizing<String>, CliError> {
+    use rustix::termios::{LocalModes, OptionalActions, Termios, tcgetattr, tcsetattr};
+    use std::os::fd::OwnedFd;
+
+    struct RestoreTerminalEcho {
+        descriptor: OwnedFd,
+        original: Option<Termios>,
+    }
+
+    impl RestoreTerminalEcho {
+        fn restore(mut self) -> Result<(), CliError> {
+            let original = self
+                .original
+                .take()
+                .expect("terminal state is present until restoration");
+            match tcsetattr(&self.descriptor, OptionalActions::Now, &original) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.original = Some(original);
+                    Err(CliError::Io(error.into()))
+                }
+            }
+        }
+    }
+
+    impl Drop for RestoreTerminalEcho {
+        fn drop(&mut self) {
+            if let Some(original) = self.original.take() {
+                let _ = tcsetattr(&self.descriptor, OptionalActions::Now, &original);
+            }
+        }
+    }
+
+    let descriptor = rustix::io::dup(input.as_fd()).map_err(|error| CliError::Io(error.into()))?;
+    let original = tcgetattr(&descriptor).map_err(|error| CliError::Io(error.into()))?;
+    let mut hidden = original.clone();
+    hidden.local_modes &= !(LocalModes::ECHO | LocalModes::ECHONL | LocalModes::ISIG);
+    tcsetattr(&descriptor, OptionalActions::Now, &hidden)
+        .map_err(|error| CliError::Io(error.into()))?;
+    let restore = RestoreTerminalEcho {
+        descriptor,
+        original: Some(original),
+    };
+    write!(prompt, "{label}")?;
+    prompt.flush()?;
+    let mut value = Zeroizing::new(String::new());
+    let read_result = (&mut *input)
+        .take(
+            u64::try_from(MAXIMUM_PROVIDER_CREDENTIAL_BYTES)
+                .unwrap_or(u64::MAX)
+                .saturating_add(2),
+        )
+        .read_line(&mut value);
+    let restore_result = restore.restore();
+    writeln!(prompt)?;
+    restore_result?;
+    let bytes = read_result?;
+    while matches!(value.as_bytes().last(), Some(b'\n' | b'\r')) {
+        value.pop();
+    }
+    if bytes == 0 || !valid_onboard_provider_credential(&value) {
+        return Err(CliError::InvalidOnboardCredential);
+    }
+    Ok(value)
+}
+
+#[cfg(not(unix))]
+fn prompt_hidden_onboard_credential(
+    _input: &mut std::io::StdinLock<'_>,
+    _prompt: &mut impl Write,
+    _label: &str,
+) -> Result<Zeroizing<String>, CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "hidden onboarding credential prompts require a Unix terminal".to_owned(),
+    ))
 }
 
 fn prompt_line(
@@ -9253,7 +9449,22 @@ struct ProviderChainConfigurationResponse {
 #[derive(Clone, Copy)]
 struct ProviderCredentialImport<'a> {
     secret_id: &'a str,
-    credential_env: &'a str,
+    source: ProviderCredentialImportSource<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum ProviderCredentialImportSource<'a> {
+    Environment(&'a str),
+    Resolved(&'a str),
+}
+
+impl ProviderCredentialImportSource<'_> {
+    fn read(self) -> Result<Zeroizing<String>, CliError> {
+        match self {
+            Self::Environment(environment) => read_provider_credential_environment(environment),
+            Self::Resolved(value) => Ok(Zeroizing::new(value.to_owned())),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -9682,7 +9893,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -9721,7 +9932,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -9760,7 +9971,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -9829,7 +10040,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -11037,7 +11248,7 @@ fn activate_provider(
         .map_err(|_| CliError::InvalidProviderConfiguration)?;
     validate_provider_credential_import(&provider, credential_import)?;
     let credential = credential_import
-        .map(|import| read_provider_credential_environment(import.credential_env))
+        .map(|import| import.source.read())
         .transpose()?;
     let (home, _instance_lock) = lock_stopped_home(home)?;
     let current = home.join("config.json");
@@ -11178,7 +11389,7 @@ fn configure_provider_fallback(
         .map_err(|_| CliError::InvalidProviderConfiguration)?;
     validate_provider_credential_import(&provider, credential_import)?;
     let credential = credential_import
-        .map(|import| read_provider_credential_environment(import.credential_env))
+        .map(|import| import.source.read())
         .transpose()?;
     let (home, _instance_lock) = lock_stopped_home(home)?;
     let current = home.join("config.json");
@@ -14828,6 +15039,16 @@ enum CliError {
         "the Mealy home already has configuration; run `doctor` against a running service or rerun onboarding with --reconfigure while the daemon is stopped"
     )]
     OnboardExistingHome,
+    /// A remote onboarding credential was absent and no hidden terminal prompt was available.
+    #[error(
+        "provider credential {0} is absent; rerun onboarding with terminal stdin and stderr to enter it securely, or set {0} for automation"
+    )]
+    OnboardCredentialRequiresTerminal(String),
+    /// A prompted or imported onboarding credential has an unsafe text shape.
+    #[error(
+        "provider credential must be nonempty UTF-8, at most 4096 bytes, and contain no control characters"
+    )]
+    InvalidOnboardCredential,
     /// A live provider catalog contained no model satisfying the route's fail-closed policy.
     #[error("no eligible model was found for the {0} onboarding route")]
     OnboardNoEligibleModel(&'static str),

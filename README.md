@@ -106,8 +106,9 @@ reviewed free-provider acceptance, tag promotion, attestation, and public clean-
 > Messages adapters, including explicit mixed-protocol fallback chains, plus a guarded OpenRouter
 > stateless Responses-beta preset with account-filtered catalog/price discovery. A clean-home
 > `mealyctl onboard` journey reviews non-secret provider/model/limit/price inputs,
-> consumes credentials only from standard environment variables, performs the existing bounded
-> activation probe, brokers the key, installs and starts the Linux owner service, and verifies
+> imports a standard environment variable when present or uses a bounded echo-disabled terminal
+> prompt when it is absent, performs the existing bounded activation probe, brokers the key,
+> installs and starts the Linux owner service, and verifies
 > liveness plus `doctor`. It refuses to silently replace an existing home. The lower-level
 > `setup` command remains available for stopped-home/foreground workflows. A terminal-only bare
 > `mealyctl` invocation dispatches to onboarding when no configuration exists and to a new chat

@@ -47,8 +47,10 @@ self-hosted provenance, a different signer workflow/ref, and any checksum or inv
 `doctor`/`chat` handoffs instead of being silently reconfigured. Continue with the prerequisites
 and first-run checks below before enabling governed tools. Automation may pass existing non-secret
 onboarding flags after a separator, for example
-`install-mealy-release.sh --onboard -- --route openrouter-free`; credentials still come from the
-named environment variable and never from an installer argument.
+`install-mealy-release.sh --onboard -- --route openrouter-free`. Interactive onboarding uses the
+named environment variable when present and otherwise reads the credential through a hidden
+terminal prompt. Automation still uses the named environment variable; credentials never belong
+in an installer or process argument.
 
 ## Native Linux packages
 

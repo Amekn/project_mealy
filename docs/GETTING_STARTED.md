@@ -43,8 +43,8 @@ offers these routes:
 
 | Choice | What must already exist |
 | --- | --- |
-| OpenRouter free | `OPENROUTER_API_KEY`; Mealy admits only a live catalog model whose exact ID ends in `:free`, supports tools/text, has complete limits, and advertises zero token and auxiliary prices. |
-| Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and a credential in a named environment variable. |
+| OpenRouter free | An OpenRouter key. Set `OPENROUTER_API_KEY` for automation, or enter it at the hidden prompt in an interactive terminal. Mealy admits only a live catalog model whose exact ID ends in `:free`, supports tools/text, has complete limits, and advertises zero token and auxiliary prices. |
+| Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and its key. Set a named environment variable for automation, or enter the key at the hidden interactive prompt. |
 | Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
 | ChatGPT subscription | The official `codex` client installed and already signed in with ChatGPT. |
 | Claude subscription | The official `claude` client installed and already signed in with a Claude subscription. |
@@ -70,29 +70,29 @@ automation.
 For the recommended no-paid-credit route:
 
 ```sh
-export OPENROUTER_API_KEY='replace-with-your-key'
 mealyctl onboard --route openrouter-free
-unset OPENROUTER_API_KEY
 ```
 
-Mealy fetches the account-visible catalog, shows only strictly eligible free models, derives their
-advertised limits and zero price, live-probes the selected model, brokers the key, installs and
-starts the systemd user service, waits for health, and requires `doctor` to pass. It prints the
-complete non-secret plan before asking you to type `APPROVE`.
+If `OPENROUTER_API_KEY` is absent, interactive onboarding asks for it with terminal echo disabled,
+then restores normal echo before the next prompt. Mealy fetches the account-visible catalog, shows
+only strictly eligible free models, derives their advertised limits and zero price, live-probes the
+selected model, brokers the key, installs and starts the systemd user service, waits for health,
+and requires `doctor` to pass. It prints the complete non-secret plan before asking you to type
+`APPROVE`.
 
 For an authenticated custom endpoint:
 
 ```sh
-export CUSTOM_API_KEY='replace-with-your-endpoint-key'
 mealyctl onboard \
   --route custom \
-  --base-url 'https://your-endpoint.example/v1' \
-  --credential-env CUSTOM_API_KEY
-unset CUSTOM_API_KEY
+  --base-url 'https://your-endpoint.example/v1'
 ```
 
-Use `--credential-env LOCAL_API_KEY` when that is the environment-variable name chosen for a
-private remote endpoint. Never put the credential value itself on the command line.
+The default automation variable is `CUSTOM_API_KEY`. Use `--credential-env LOCAL_API_KEY` when
+that is the variable name chosen for a private remote endpoint. If the selected variable is absent,
+interactive onboarding prompts securely instead. Never put the credential value itself on the
+command line. Non-interactive onboarding never attempts a prompt: set the named variable and pass
+the other complete flags, including `--approve`.
 
 For a credentialless loopback server:
 
