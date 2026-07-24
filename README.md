@@ -102,6 +102,9 @@ the [API reference](docs/API.md). Contributors and release operators should foll
 [development-to-production runbook](docs/CI_CD.md), which defines the required protected checks,
 reviewed free-provider acceptance, tag promotion, attestation, and public clean-host gates.
 
+<details>
+<summary>Detailed implementation and security status</summary>
+
 > **Implementation status (verify the exact installed tag):** the durable release-one runtime
 > proof is complete, and Mealy now supports
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
@@ -317,6 +320,8 @@ and cannot be silently displaced by history. A cited compaction cuts off the raw
 and context-epoch rotation excludes prior-session-derived material so a revoked workspace or tool
 identity cannot return through old assistant text. The exact projection remains recorded-replay
 verifiable.
+
+</details>
 
 ## Start here
 

@@ -139,14 +139,14 @@ provider acceptance.
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent/tree/781968be5e1ec2c253b617409f8bfba652c10186) | `781968be5e1ec2c253b617409f8bfba652c10186` | End-user harness | `v2026.7.20` on 2026-07-20 |
 | [OpenCode](https://github.com/anomalyco/opencode/tree/62e4641235d7847dadc60da37cca8a023dd54fc1) | `62e4641235d7847dadc60da37cca8a023dd54fc1` | End-user harness | `v1.18.4` on 2026-07-20; five stable releases in the preceding week |
 | [Codex](https://github.com/openai/codex/tree/7d748d3bbcbd640988813de962455f27c918abdf) | `7d748d3bbcbd640988813de962455f27c918abdf` | End-user harness | Stable `rust-v0.145.0` on 2026-07-21 plus frequent alpha builds |
-| [Vercel AI SDK](https://github.com/vercel/ai/tree/1f6dd3a804743555a1f5e1f066ba3e097e5392c6) | `1f6dd3a804743555a1f5e1f066ba3e097e5392c6` | Framework comparator | `ai@7.0.36` and coordinated package releases on 2026-07-23 |
-| [Eve](https://github.com/vercel/eve/tree/876bf3d7afc9029809fbb5ce27a2a2ebbaf6db11) | `876bf3d7afc9029809fbb5ce27a2a2ebbaf6db11` | Framework comparator | `eve@0.27.1` on 2026-07-22; ten releases in the preceding week |
+| [Vercel AI SDK](https://github.com/vercel/ai/tree/1f6dd3a804743555a1f5e1f066ba3e097e5392c6) | `1f6dd3a804743555a1f5e1f066ba3e097e5392c6` | Framework comparator | `ai@7.0.37` and coordinated package releases on 2026-07-23 |
+| [Eve](https://github.com/vercel/eve/tree/876bf3d7afc9029809fbb5ce27a2a2ebbaf6db11) | `876bf3d7afc9029809fbb5ce27a2a2ebbaf6db11` | Framework comparator | `eve@0.27.3` on 2026-07-23; ten releases in the preceding week |
 | [Pi](https://github.com/earendil-works/pi/tree/65ff8e7f6db447dcddb1a9c8fd05f081c5cda76a) | `65ff8e7f6db447dcddb1a9c8fd05f081c5cda76a` | End-user harness/toolkit | `v0.81.1` on 2026-07-21 |
 | [Claude Code](https://github.com/anthropics/claude-code/tree/2982f951552e94f38cd972764ae94c1d90c41da3) | `2982f951552e94f38cd972764ae94c1d90c41da3` | End-user harness; public repo is not the complete product source | `v2.1.218` on 2026-07-22; near-daily public releases |
 
-Release dates were read from each repository's public GitHub Releases API on
-the observation date. They indicate active maintenance, not release quality by
-themselves.
+Release dates were rechecked from each repository's public GitHub Releases API
+at 2026-07-24T15:37:00+12:00. They indicate active maintenance, not release
+quality by themselves.
 
 The original unlicensed mirror remains pinned at
 `a371abbe75ffa0d0a3c92290e2bbf56a7ef54367`. Its own README calls it a backup
