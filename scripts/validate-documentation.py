@@ -58,6 +58,7 @@ HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 FENCE = re.compile(r"^\s*(```+|~~~+)")
 MAX_PACKAGED_MARKDOWN_FILES = 256
 MAX_PACKAGED_MARKDOWN_BYTES = 16 * 1024 * 1024
+MAX_GETTING_STARTED_LINES = 160
 
 
 class DocumentationError(RuntimeError):
@@ -275,6 +276,16 @@ def validate_local_links(repository: Path, markdown: list[Path]) -> int:
     return checked
 
 
+def validate_short_getting_started(repository: Path) -> None:
+    guide = read_text(repository / "docs/GETTING_STARTED.md")
+    line_count = len(guide.splitlines())
+    if line_count > MAX_GETTING_STARTED_LINES:
+        raise DocumentationError(
+            "docs/GETTING_STARTED.md exceeds the 160-line first-run bound: "
+            f"{line_count} lines"
+        )
+
+
 def registered_endpoints(api_source: str) -> set[tuple[str, str]]:
     endpoints: set[tuple[str, str]] = set()
     for route in ROUTE.finditer(api_source):
@@ -386,6 +397,7 @@ def main() -> int:
         if arguments.mode == "source"
         else packaged_markdown(repository)
     )
+    validate_short_getting_started(repository)
     link_count = validate_local_links(repository, markdown)
     endpoint_count = (
         validate_api_contract(repository)

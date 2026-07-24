@@ -1,202 +1,110 @@
 # Get started on Linux
 
-This is the shortest path from a verified Mealy installation to a useful chat on a supported
-Linux host. It applies to Ubuntu, Debian, Fedora, and Arch Linux; read the
-[Linux support contract](LINUX_SUPPORT.md) for exact qualified versions and derivative limits.
+This is the shortest supported path from installation to a useful Mealy chat on Ubuntu, Debian,
+Fedora, or Arch Linux. No source checkout or Rust toolchain is required.
 
-No production release exists merely because source code is present. Before installing, confirm
-that the selected GitHub release is published, attested, and has green linked acceptance jobs as
-described in the [release guide](RELEASE.md).
+## 1. Install
 
-## 1. Install a verified release
+Use the versioned [signed repository landing page](https://amekn.github.io/mealy/) for the shortest
+APT, DNF, or Pacman path. Use that page only after the selected release shows green publication
+and public-install jobs. The [package-manager guide](LINUX_REPOSITORIES.md) contains the same
+inspect-before-privilege commands and independent trust verification.
 
-The shortest distribution-native route is the versioned
-[signed repository landing page](https://amekn.github.io/mealy/) and the corresponding APT, DNF,
-or Pacman setup in [LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). Those package managers install
-Mealy's Bubblewrap, CA-certificate, libc, and runtime dependencies; the setup step itself uses
-`curl` to download a small configuration file for inspection. The landing page is part of the
-repository's signed complete inventory and gives inspect-before-privilege commands for all three
-families; use it only after the selected release's publication and public-install jobs are green.
+For a rootless install, follow the
+[attested release bootstrap](QUICKSTART.md#fast-verified-linux-install). It selects the host
+architecture, verifies the release workflow and checksums, installs beneath `$HOME/.local`, and
+continues into onboarding on a fresh interactive home. It needs no root access or GitHub account.
 
-For the attestation-verifying rootless release bootstrap, first install Bubblewrap, GitHub CLI,
-`curl`, `jq`, and the ordinary host packages listed in the
-[quickstart prerequisites](QUICKSTART.md#prerequisites). The
-[fast install instructions](QUICKSTART.md#fast-verified-linux-install) remain available when the
-repository has not yet been deployed or root access is undesirable. Neither route requires a Rust
-toolchain. The verified bootstrap continues directly into this guide's onboarding flow on an
-interactive fresh install; use its `--no-onboard` option when installation must remain passive.
-
-Make sure `$HOME/.local/bin` is on `PATH`, then check the installed client:
+Confirm the installed command is on `PATH`:
 
 ```sh
 mealyctl --version
 ```
 
-Mealy uses the private durable `$HOME/.mealy` directory by default. That location does not change
-when you run commands from a different working directory. Set `MEALY_HOME` or pass `--home` only
-when you intentionally need another owner-private location.
+Mealy keeps its private durable state in `$HOME/.mealy` by default. See the
+[Linux support contract](LINUX_SUPPORT.md) for qualified versions, required host facilities, and
+derivative limits.
 
-## 2. Choose how Mealy reaches a model
+## 2. Start
 
-Bare `mealyctl` enters onboarding when the private home is not configured. The guided chooser
-offers these routes:
-
-| Choice | What must already exist |
-| --- | --- |
-| OpenRouter free | An OpenRouter key. Set `OPENROUTER_API_KEY` for automation, or enter it at the hidden prompt in an interactive terminal. Mealy admits only a live catalog model whose exact ID ends in `:free`, supports tools/text, has complete limits, and advertises zero token and auxiliary prices. |
-| Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and its key. Set a named environment variable for automation, or enter the key at the hidden interactive prompt. |
-| Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
-| ChatGPT subscription | The official `codex` client installed. Guided terminal onboarding can use its existing ChatGPT session or start an official sign-in with separate consent. |
-| OpenAI API | `OPENAI_API_KEY`. |
-| Anthropic API | `ANTHROPIC_API_KEY`. |
-
-The ChatGPT route uses the official Codex client's account and model catalog. Mealy does not
-extract OAuth tokens, email, account IDs, inherit API-key variables into that client, or treat a
-ChatGPT subscription as an API key. When sign-in is needed, terminal onboarding asks separately
-before displaying an official browser challenge; use `--chatgpt-login device-code` on a headless
-Linux host. It selects the unique model marked as the default for that account and applies a
-conservative 128,000-token Mealy context ceiling. Anthropic's current terms prohibit third-party
-products from routing Claude Free, Pro, or Max subscription credentials; use the Anthropic API,
-strict-free OpenRouter, a custom endpoint, or Claude Code directly instead.
-
-If `codex --version` is unavailable, use OpenAI's
-[official Codex CLI installation guide](https://learn.chatgpt.com/docs/codex/cli). Its current
-macOS/Linux standalone command is `curl -fsSL https://chatgpt.com/codex/install.sh | sh`; review
-the official instructions before running it and ensure its install directory is on `PATH`.
-Mealy never downloads or installs this external prerequisite automatically. An advanced
-installation can instead pass `--executable-path /absolute/path/to/codex`.
-
-## 3. Run or continue onboarding
-
-If the verified bootstrap already opened onboarding, choose the matching route at its prompt.
-After a native-package or passive bootstrap install, the shortest terminal command is:
+Run one command in a terminal:
 
 ```sh
 mealyctl
 ```
 
-Scripts should use one of the explicit `mealyctl onboard --route ...` forms below. A bare command
-requires interactive stdin, stdout, and stderr, so it never guesses or mutates when used in
-automation.
+On a clean home, this opens guided onboarding. After configuration, the same command opens a new
+durable chat. Scripts must use explicit subcommands so automation never guesses or prompts.
 
-For the recommended no-paid-credit route:
+Choose one route:
+
+| Route | What you need |
+| --- | --- |
+| OpenRouter free | An OpenRouter key. Mealy admits only account-visible tool/text models whose exact ID ends in `:free` and whose complete advertised prices are zero. |
+| Custom endpoint | An HTTPS OpenAI Responses-compatible `/v1` endpoint and its key. |
+| Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
+| ChatGPT subscription | The official `codex` client and its existing ChatGPT session, or consent to its official browser/device sign-in. |
+| OpenAI or Anthropic API | The corresponding API key for an advanced direct route. |
+
+Remote keys can come from the named environment variable or a bounded hidden terminal prompt.
+Mealy never puts a credential in command history or configuration. ChatGPT credentials remain
+owned by the official Codex client. Claude Free, Pro, and Max subscription routing is not
+supported because Anthropic prohibits third-party use; the Anthropic API remains supported.
+
+The guided flow discovers eligible models, derives limits and prices when available, live-probes
+the selected route, displays a non-secret plan, and asks you to type `APPROVE`. It then installs
+and starts the owner service, waits for health, requires `doctor` to pass, and opens chat.
+
+## 3. Explicit route commands
+
+Use these forms when you already know the route:
 
 ```sh
+# Strictly zero-price OpenRouter catalog
 mealyctl onboard --route openrouter-free
-```
 
-If `OPENROUTER_API_KEY` is absent, interactive onboarding asks for it with terminal echo disabled,
-then restores normal echo before the next prompt. Mealy fetches the account-visible catalog, shows
-only strictly eligible free models, derives their advertised limits and zero price, live-probes the
-selected model, brokers the key, installs and starts the systemd user service, waits for health,
-and requires `doctor` to pass. It prints the complete non-secret plan before asking you to type
-`APPROVE`.
+# Authenticated custom Responses endpoint; hidden prompt if CUSTOM_API_KEY is absent
+mealyctl onboard --route custom --base-url 'https://your-endpoint.example/v1'
 
-For an authenticated custom endpoint:
+# Credentialless loopback server
+mealyctl onboard --route local --base-url 'http://127.0.0.1:11434/v1'
 
-```sh
-mealyctl onboard \
-  --route custom \
-  --base-url 'https://your-endpoint.example/v1'
-```
-
-The default automation variable is `CUSTOM_API_KEY`. Use `--credential-env LOCAL_API_KEY` when
-that is the variable name chosen for a private remote endpoint. If the selected variable is absent,
-interactive onboarding prompts securely instead. Never put the credential value itself on the
-command line. Non-interactive onboarding never attempts a prompt: set the named variable and pass
-the other complete flags, including `--approve`.
-
-For a credentialless loopback server:
-
-```sh
-mealyctl onboard \
-  --route local \
-  --base-url 'http://127.0.0.1:11434/v1'
-```
-
-For a ChatGPT subscription:
-
-```sh
-codex login status
+# Existing or officially authenticated ChatGPT subscription
 mealyctl onboard --route chatgpt-subscription
 ```
 
-If `codex login status` reports signed out, the second command can start the official browser flow
-after a separate `y/yes` consent. On a headless host, append
-`--chatgpt-login device-code` and open the displayed HTTPS URL on another device. Codex owns and
-caches the resulting credentials; Mealy retains none of them. Because login changes shared Codex
-state before Mealy's final provider-plan approval, later cancelling that plan does not log Codex
-out.
+For a private remote endpoint whose key is already named `LOCAL_API_KEY`, add
+`--credential-env LOCAL_API_KEY`; never pass the key value itself. On a headless ChatGPT host, add
+`--chatgpt-login device-code`. OpenAI and Anthropic API routes are available in the chooser and
+documented in the [provider quickstart](QUICKSTART.md#credentialed-openai-or-anthropic).
 
-The model prompt is intentionally omitted: onboarding selects the unique default from the current
-account catalog. Advanced users can request an exact catalog ID with `--model` and can override
-the conservative Mealy limit with `--context-tokens`.
+Onboarding refuses to overwrite an existing configuration. Use `doctor` for an existing home;
+reconfigure only after stopping the service and deliberately reviewing the replacement plan.
 
-Onboarding refuses to replace an existing `config.json`. Diagnose an existing running home with
-`doctor`; only use `--reconfigure` after stopping the daemon and intentionally reviewing the new
-provider plan. `--configure-only` is available for a foreground or test installation and
-deliberately skips service installation, startup, health, and doctor verification.
-`--skip-connectivity-test` is accepted only together with `--configure-only`, so an unprobed
-provider cannot be presented as fully onboarded.
+## 4. Chat, return, and diagnose
 
-## 4. Chat and verify
+Type a prompt at `you>`. `/status` shows the selected provider/model, health, limits, configured
+prices, and request pressure; `/help` lists chat controls, approvals, memory, attachments, and
+governed actions.
 
-On a real terminal, successful full onboarding opens the first durable chat automatically after
-service health and `doctor` pass. Type a prompt at `you>`. Use `--no-chat` when you want onboarding
-to stop and print the exact next command, or `--chat` to force the chat handoff for a deliberately
-scripted terminal session.
-
-After configuration, bare `mealyctl` opens a separate new durable conversation:
-
-```sh
-mealyctl
-```
-
-To return later, continue the most recently updated conversation for this exact local
-owner/channel binding:
+Return to the newest durable conversation:
 
 ```sh
 mealyctl chat --continue
 ```
 
-The explicit equivalent, useful in scripts, is:
-
-```sh
-mealyctl chat
-```
-
-`--continue` (or `-c`) reopens the latest session and rediscovers its active and queued durable
-work. It never silently creates a new session; when no prior conversation exists, the client tells
-you to start one with plain `chat`.
-
-To choose an older conversation without copying a session ID:
+Or choose from the 20 most recent owner-bound conversations:
 
 ```sh
 mealyctl chat --pick
 ```
 
-The terminal-only picker shows at most 20 owner/channel-bound conversations, newest first, with
-their status, relative recency, and queued/active work. Selecting one resumes that exact durable
-session and creates nothing new.
-
-`/status` shows the live provider/model, health, locality, context/output limits, exact configured
-prices, and current request pressure. Every terminal turn prints its recorded input/output tokens,
-provider-neutral cost microunits, model/tool calls, and retries. `/help` lists session controls,
-approvals, memory, attachments, and governed action modes. The owner service survives logout/reboot
-when the host's systemd user manager and lingering policy provide that behavior.
-
-Recheck the installation at any time:
+Check the installation and service:
 
 ```sh
 mealyctl install-status
 mealyctl doctor
 mealyctl status
-```
-
-Stop before changing provider or other stopped-home configuration:
-
-```sh
-mealyctl drain
 ```
 
 Check for an attested stable update without changing anything:
@@ -205,20 +113,15 @@ Check for an attested stable update without changing anything:
 mealyctl update
 ```
 
-The plan identifies an owner-local archive or the native Debian, RPM, or Arch package manager. An
-explicitly approved same-schema archive update takes its own backup, drains and restarts the
-verified owner service through a disconnect-resistant helper, checks health and `doctor`, and
-automatically restores the prior slot if qualification fails. Use `update-status TRANSACTION_UUID`
-after reconnecting. Schema changes use the staged migration procedure, and native packages use the
-exact command in `nativeUpdateCommand`. `repair`, `rollback`, and `uninstall` follow the same
-plan-first/approve-second pattern and never delete the Mealy home.
+Update, repair, rollback, service removal, and uninstall are plan-first and preserve the Mealy
+home. Owner-local archive updates back up, restart, qualify, and automatically restore the prior
+same-schema slot on failure; native packages hand off to APT, DNF, or Pacman.
 
-Optional shell completion is generated locally:
+## Learn more
 
-```sh
-mealyctl completion bash >"$HOME/.local/share/bash-completion/completions/mealyctl"
-```
-
-Continue with the comprehensive [quickstart](QUICKSTART.md) for workspace tools, web/browser,
-skills, MCP, memory, channels, schedules, backup, and recovery. Use the
-[operations guide](OPERATIONS.md) for incidents and the [CLI reference](CLI.md) for every command.
+- [Comprehensive quickstart](QUICKSTART.md): providers, tools, browser, MCP, memory, channels,
+  schedules, backup, and recovery
+- [CLI reference](CLI.md): every public command and option
+- [Operations guide](OPERATIONS.md): diagnostics, backup, recovery, and incidents
+- [Release guide](RELEASE.md): attestation, packages, updates, rollback, and publication evidence
+- [Security model](THREAT_MODEL.md): trust boundaries and supported limitations
