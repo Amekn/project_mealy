@@ -9,6 +9,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+public_bootstrap=$(
+  sed -n \
+    '/- name: Exercise the public tokenless rootless bootstrap/,/- name: Re-run exact downloaded archive and Debian lifecycle smokes/p' \
+    "$repository_root/.github/workflows/release.yml"
+)
+expected_bootstrap_version="--version \"\$GITHUB_REF_NAME\""
+if [[ $public_bootstrap != *'downloaded/install-mealy-release.sh'* \
+  || $public_bootstrap != *"$expected_bootstrap_version"* ]]; then
+  echo "release workflow no longer exercises the public bootstrap installer" >&2
+  exit 1
+fi
+if [[ $public_bootstrap == *'--repository'* ]]; then
+  echo "public bootstrap acceptance bypasses the installer repository default" >&2
+  exit 1
+fi
+
 make_binaries() {
   local directory=$1
   local version=$2
