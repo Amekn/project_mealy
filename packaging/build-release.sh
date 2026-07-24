@@ -79,6 +79,7 @@ release_documents=(
   releases/README.md
   releases/v0.1.0.md
   releases/v0.1.1.md
+  releases/v0.2.0.md
 )
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \

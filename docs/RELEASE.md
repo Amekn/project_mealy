@@ -90,15 +90,19 @@ That exact v0.1.0 daemon completed the preserved clean
 [promotion manifest](benchmarks/2026-07-23-schema16-release-soak-subject.json) remains checked
 historical evidence.
 
-The current v0.1.1 release subject is the retained `mealyd` from protected revision `8867c467`,
+The most recently qualified release subject is the retained v0.1.1 `mealyd` from protected
+revision `8867c467`,
 SHA-256 `78591cafdbe79691805d651ecc03e3383313fec8bfeb6ed3428a051fa23f69a7`. It completed the
 canonical clean [release soak](benchmarks/release-soak.json) for 86,415.473 seconds, 19,208 turns,
 and 48 hard restarts. It recovered 52 interrupted-provider turns, resumed one undispatched
 read-tool turn, retained complete recorded-only replay and SQLite integrity `ok`, drained cleanly,
 and left zero residue. The report names an ancestor of this report-bearing tree directly, so no
-current lineage proof is required.
-The remaining release gates are protected report CI, reviewed free-model OpenRouter acceptance,
-native package/public-download verification, and attested publication.
+current lineage proof is required. Its protected report CI and reviewed free-model OpenRouter
+acceptance passed, but the
+[`v0.1.1` tag workflow](benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md)
+failed before publication on a temporary-home package fixture. The tag is retained and will not be
+moved or reused. The v0.2.0 candidate changes source and package inputs, so it requires a new exact
+24-hour subject before native public-package verification and attested publication.
 
 The soak host and GitHub's Linux runner are different native link environments. A hosted-runner
 rebuild is therefore audited as a source build but is not mislabeled as the byte-identical soak

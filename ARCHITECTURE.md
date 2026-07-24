@@ -1,7 +1,7 @@
 # Mealy Architecture
 
-- Version: 0.1.1
-- Status: implemented release-one baseline; competitive capability work in progress
+- Version: 0.2.0
+- Status: implemented pre-1.0 Linux baseline; release evidence in progress
 - Requirements: [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - Research: [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md)
 

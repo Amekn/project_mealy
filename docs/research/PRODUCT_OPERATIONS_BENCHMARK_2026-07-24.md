@@ -1,6 +1,6 @@
 # Product operations benchmark: Mealy and the reference agent systems
 
-Status: research baseline for the post-v0.1.1 onboarding work
+Status: researched baseline with v0.2.0 integration and delivery-state follow-up
 
 Observed: 2026-07-24 (Pacific/Auckland)
 
@@ -8,7 +8,7 @@ Scope: installation, first useful run, provider/authentication setup, daily user
 experience, updates and recovery, documentation maintenance, CI, and release
 publication
 
-Implementation note: post-v0.1.1 source now contains the P1 and P2 slices
+Implementation note: the integrated v0.2.0 candidate source now contains the P1 and P2 slices
 recommended below: `mealyctl onboard`, a short `GETTING_STARTED.md`, strict
 free-OpenRouter selection, integrated custom/local/subscription/API routes,
 service start/health/doctor composition, installed-package process tests,
@@ -42,9 +42,9 @@ Anthropic API, strict-free OpenRouter, custom endpoints, and Claude Code itself
 remain the supported alternatives.
 
 This is not a retroactive change to the matrix observed before implementation.
-It does not yet equal the complete competitor delivery experience:
-an owner-controlled production signing identity and a published qualifying tag
-remain external gates.
+It does not yet equal the complete competitor delivery experience: protected
+integration, an owner-controlled production signing identity, a new exact
+v0.2.0 soak, and a published qualifying tag remain delivery gates.
 Exact generated-service removal is now plan-first and composed into owner-local
 uninstall. Installed two-release failure injection now activates a checksum-valid
 but deliberately unready newer package under the real owner service, proves the
@@ -53,41 +53,37 @@ client, and requires automatic rollback plus health, `doctor`, backup, and
 durable-task preservation. All newer work remains next-release source until
 protected installed-package and supported-distribution acceptance qualify it.
 
-Delivery-state recheck at 2026-07-24T15:03:19+12:00: Mealy v0.1.0 is a public,
+Delivery-state recheck at 2026-07-24T18:49:22+12:00: Mealy v0.1.0 is a public,
 immutable stable GitHub release whose exact tag workflow passed native
 packaging, attestations, and public archive installation. That release predates
 the signed APT/DNF/Pacman repository and guided-onboarding stack audited here.
 GitHub Pages is enabled at `https://amekn.github.io/mealy/`, but the URL still
 returns HTTP 404 because no stable tag has yet deployed the new repository
-artifact. Exact main revision
-`8867c46774c693a335853625dd967fd3520976ff` has successful protected-main CI and
-reviewed free-model OpenRouter acceptance; those runs qualify that revision
-only, not the later evidence commit and onboarding release still required
-below. The protected signing Environment has the expected Pages URL and
-tag-only approval policy, but its production key export and fingerprint are not
-configured. These observations replace the stale pre-publication statements in
-the point-in-time matrix without rewriting what the competitor audit originally
-measured.
+artifact. The exact v0.1.1 candidate completed its 24-hour soak; protected main
+CI run `30070483983` and reviewed free-model OpenRouter run `30071532254` passed
+for its exact report-bearing commit. Annotated tag `v0.1.1` was pushed, but
+release run `30071875207` failed before publication because its native-package
+fixture placed a persistent service home below `/tmp`. No v0.1.1 GitHub release
+exists, and the tag will not be moved or reused. The protected signing
+Environment has the expected Pages URL and tag-only approval policy, but its
+production key export and fingerprint are not configured. These observations
+replace the stale pre-publication statements in the point-in-time matrix
+without rewriting what the competitor audit originally measured.
 
 ## Executive result
 
-Mealy's runtime and release controls are unusually strong for a pre-1.0 agent,
-but its user journey is not yet competitive with the easiest end-user
-harnesses.
+Mealy's runtime and release controls are unusually strong for a pre-1.0 agent.
+At the point-in-time audit, its user journey was not yet competitive with the
+easiest end-user harnesses: setup was fragmented across expert commands, the
+verified installer stopped before a working service, lifecycle operations were
+incomplete, and no short first-five-minute path organized the experience.
 
-The largest gap is not core agent capability. It is orchestration:
-
-1. a new user must understand too many implementation details before the first
-   prompt;
-2. model discovery, subscription authentication, custom endpoints, setup,
-   service installation, daemon activation, diagnostics, and chat exist as
-   separate expert commands;
-3. the installer verifies a release well but stops before a working service;
-4. update, repair, uninstall, and shell-completion experiences are incomplete;
-5. the README and quickstart are comprehensive references, not a short first
-   five-minute path; and
-6. the published v0.1.0 release predates the integrated onboarding and signed
-   Linux repository experience.
+The v0.2.0 candidate source closes those verified orchestration gaps. The
+largest remaining gap is delivery: it must merge through protected CI, receive
+an owner-controlled repository signing identity, complete a new exact-binary
+24-hour soak, pass reviewed free-model and public multi-distribution
+acceptance, and publish immutable attested artifacts. The currently public
+v0.1.0 release still predates this experience.
 
 OpenClaw, Hermes, OpenCode, Codex, Pi, and Claude Code all make the first useful
 conversation the organizing product outcome. Vercel AI SDK and Eve are
@@ -95,13 +91,13 @@ framework comparators rather than equivalent downloadable assistants, but
 their documentation, scaffolding, migration, and packed-artifact tests supply
 useful maintenance patterns.
 
-The recommended first product slice is a single guided `mealyctl onboard`
-journey which reuses Mealy's existing governed primitives. It should discover
-eligible models, make free OpenRouter and owner-local subscription paths
-first-class, configure custom OpenAI-compatible endpoints, install and start
-the owner service with explicit approval, wait for health, run `doctor`, and
-then open chat. This work belongs to the release after v0.1.1: changing the
-v0.1.1 candidate would invalidate its exact-binary 24-hour soak.
+The implemented first product slice is a single guided `mealyctl onboard`
+journey which reuses Mealy's existing governed primitives. It discovers
+eligible models, makes free OpenRouter and owner-local subscription paths
+first-class, configures custom OpenAI-compatible endpoints, installs and starts
+the owner service with explicit approval, waits for health, runs `doctor`, and
+then opens chat. This work belongs to v0.2.0; it was deliberately kept out of
+the exact v0.1.1 soak candidate.
 
 ## Method
 
@@ -556,14 +552,16 @@ the ordinary user journey is incomplete; **No** = no comparable product path;
 
 ## Prioritized Mealy remediation
 
-### P0 — preserve the v0.1.1 release boundary
+### P0 — preserve the v0.1.1 outcome and public tag
 
-- Let the exact v0.1.1 daemon finish its existing 24-hour soak.
-- Do not change or rebuild its candidate binary.
-- Complete final package validation, free-model OpenRouter acceptance,
-  protected-main CI selection, and attested publication from that exact
-  candidate.
-- Develop onboarding improvements on a separate branch for the next release.
+- The exact v0.1.1 daemon completed its 24-hour soak without being changed or
+  rebuilt.
+- Protected-main CI and reviewed zero-price OpenRouter acceptance passed.
+- The tag workflow failed before publication on its own `/tmp` package
+  fixture; the failure and its exact gates are retained as negative evidence.
+- Do not move, delete, or reuse the pushed `v0.1.1` tag.
+- Carry the corrected fixture and onboarding stack into v0.2.0, then repeat
+  exact-binary qualification for that changed candidate.
 
 ### P1 — one guided onboarding transaction
 
