@@ -87,10 +87,13 @@ family:
 
 ```sh
 mealyctl --version
-mealyctl onboard
-mealyctl doctor
-mealyctl chat
+mealyctl
 ```
+
+On a clean private home, the bare command opens guided onboarding, live-probes the chosen
+provider, starts the owner service, requires `doctor` to pass, and opens the first durable chat.
+After configuration, the same command starts another chat. Use `mealyctl chat --continue` to
+resume the latest conversation and `mealyctl doctor` whenever you want an explicit health check.
 
 ## Independent first-trust verification
 
