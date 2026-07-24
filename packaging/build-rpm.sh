@@ -130,6 +130,7 @@ find %{buildroot} -exec touch --no-dereference --date="@%{source_date_epoch}" {}
 %license /usr/share/licenses/mealy/LICENSE
 /usr/bin/mealyd
 /usr/bin/mealyctl
+%dir /usr/lib/mealy
 /usr/lib/mealy/release
 %doc /usr/share/doc/mealy
 SPEC
