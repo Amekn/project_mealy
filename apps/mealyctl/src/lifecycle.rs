@@ -2057,18 +2057,15 @@ mod tests {
         let service = prefix.join("mealy.service");
         fs::write(&service, b"[Service]\n").expect("service");
         let installation = inspect_executable(&executable);
-        let newer_version = newer_fixture_version();
-        let requested_version = format!("v{newer_version}");
         let candidate = UpdateCandidate {
             schema_version: "mealy.update-check.v1".to_owned(),
-            version: newer_version,
+            version: newer_fixture_version(),
             target: "linux-x86_64-gnu".to_owned(),
             commit: "b".repeat(40),
             state_schema_version: 15,
             verified: true,
         };
-        let plan =
-            build_update_plan(installation, &requested_version, candidate).expect("update plan");
+        let plan = build_update_plan(installation, "latest", candidate).expect("update plan");
         let mut transaction =
             prepare_update_transaction(&home, &plan, &service).expect("transaction");
         assert_eq!(transaction.phase, UpdateTransactionPhase::Scheduled);
