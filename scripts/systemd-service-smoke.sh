@@ -151,6 +151,24 @@ subscription_fixture="$unit_directory/codex-subscription-fixture"
 cat >"$subscription_fixture" <<'EOF'
 #!/bin/sh
 test -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}" || exit 90
+if [ "${1:-}" = app-server ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      *'"method":"initialize"'*)
+        printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","platformFamily":"linux","platformOs":"linux"}}'
+        ;;
+      *'"method":"initialized"'*) ;;
+      *'"method":"account/read"'*)
+        printf '%s\n' '{"id":2,"result":{"account":{"type":"chatgpt","planType":"fixture"},"requiresOpenaiAuth":true}}'
+        ;;
+      *'"method":"model/list"'*)
+        printf '%s\n' '{"id":3,"result":{"data":[{"id":"fixture-model","model":"fixture-model","displayName":"Fixture Model","hidden":false,"isDefault":true}],"nextCursor":null}}'
+        ;;
+      *) exit 91 ;;
+    esac
+  done
+  exit 0
+fi
 cat >/dev/null
 printf '%s\n' \
   '{"type":"thread.started","thread_id":"systemd-onboarding-fixture"}' \
