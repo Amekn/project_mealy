@@ -503,8 +503,9 @@ sudo pacman -Syu mealy</code></pre>
 <section aria-labelledby="onboard">
   <h2 id="onboard">2. Configure and start Mealy</h2>
   <p>Guided onboarding supports a strictly free OpenRouter model, a custom authenticated endpoint,
-  a credentialless loopback server, ChatGPT or Claude subscription clients, and advanced direct
-  APIs. It live-probes the selected route before starting the owner service.</p>
+  a credentialless loopback server, ChatGPT subscription through the official Codex client, and
+  advanced direct OpenAI or Anthropic APIs. It live-probes the selected route before starting the
+  owner service.</p>
   <pre><code>mealyctl --version
 mealyctl onboard</code></pre>
   <p>On a fresh interactive terminal, successful onboarding opens the first durable chat after

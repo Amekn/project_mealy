@@ -226,6 +226,7 @@ for expected in \
   'file:///repository/repository-signing-key.asc' \
   'sudo pacman -Syu mealy' \
   'mealyctl onboard' \
+  'ChatGPT subscription through the official Codex client' \
   'mealyctl chat --continue' \
   'mealyctl update' \
   'href="REPOSITORY-MANIFEST.json"' \
@@ -240,6 +241,10 @@ for expected in \
 done
 if grep -Eq '<script|@@(VERSION|BASE_URL|FINGERPRINT)@@' "$repository_index"; then
   echo "repository install page contains JavaScript or an unresolved template field" >&2
+  exit 1
+fi
+if grep -Fq 'Claude subscription' "$repository_index"; then
+  echo "repository install page advertises prohibited third-party Claude subscription routing" >&2
   exit 1
 fi
 

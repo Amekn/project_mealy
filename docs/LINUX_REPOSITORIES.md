@@ -175,8 +175,13 @@ tag, a repository owner must complete all of these one-time controls:
 One suitable offline-key ceremony, run in a new private `GNUPGHOME`, is:
 
 ```sh
+if [[ -z ${MEALY_REPOSITORY_GPG_UID:-} ]]; then
+  echo 'set MEALY_REPOSITORY_GPG_UID to a project-controlled OpenPGP identity' >&2
+  exit 64
+fi
+uid=$MEALY_REPOSITORY_GPG_UID
 gpg --quick-generate-key \
-  'Mealy Linux Repository <repository@mealy.invalid>' ed25519 cert 5y
+  "$uid" ed25519 cert 5y
 fingerprint=$(gpg --batch --with-colons --list-secret-keys |
   awk -F: '$1 == "sec" {want = 1; next}
     want && $1 == "fpr" {print toupper($10); exit}')
@@ -190,11 +195,12 @@ gpg --armor --export-secret-subkeys "$fingerprint" | base64 -w0 |
 scripts/preflight-release-environments.sh Amekn/mealy
 ```
 
-Use a real project-controlled address in the production UID. Do not commit the output, paste it
-into a workflow input, or store the offline primary secret on GitHub. Back up the complete offline
-key home and its generated revocation certificate separately before disconnecting that ceremony
-host. The two piped `gh` commands upload the encrypted environment values without printing the
-secret-subkey export. The build imports the
+Set `MEALY_REPOSITORY_GPG_UID` to a real project-controlled identity, with a project-controlled
+email address if one exists; an email-free `Mealy Linux Repository` UID is preferable to an
+invented address. Do not commit the output, paste it into a workflow input, or store the offline
+primary secret on GitHub. Back up the complete offline key home and its generated revocation
+certificate separately before disconnecting that ceremony host. The two piped `gh` commands upload
+the encrypted environment values without printing the secret-subkey export. The build imports the
 short-lived signing material into an ephemeral keyring, requires the configured primary
 fingerprint and a usable signing key, removes the exported secret before any third-party action,
 and publishes only the minimal public certificate. RPM dependencies are prepared before the key is
