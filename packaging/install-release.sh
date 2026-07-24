@@ -19,6 +19,8 @@ An interactive fresh install continues into guided onboarding by default.
 Arguments after -- are passed only to the verified installed onboarding command.
 --check performs the same download, provenance, checksum, and target-manifest
 verification but emits bounded JSON without installing anything.
+The historical v0.1.0 tag predates the repository rename; select it only with
+--repository Amekn/project_mealy so its retained attestations verify exactly.
 USAGE
 }
 

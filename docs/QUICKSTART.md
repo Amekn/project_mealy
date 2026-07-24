@@ -38,6 +38,9 @@ chmod 0755 "$tmp/install-mealy-release.sh"
 "$tmp/install-mealy-release.sh" --onboard
 ```
 
+The canonical signer identity above applies to v0.1.1 and later. Historical v0.1.0 bundles were
+issued as `Amekn/project_mealy` before the repository rename and retain that identity.
+
 Use `--version vX.Y.Z` to select a particular stable release, or `--prefix`/`--home` for custom
 paths. Public release metadata/assets are fetched with bounded HTTPS requests, so no GitHub login
 or token is required. The bootstrap rejects drafts, prereleases, unsupported architectures, incomplete downloads,

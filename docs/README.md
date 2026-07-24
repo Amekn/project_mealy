@@ -31,6 +31,7 @@ Start with these documents in order:
     — direct evidence for each competitor-grade onboarding outcome and its remaining external
     release gates.
 22. [`benchmarks/`](benchmarks/) — versioned soak/performance reports and reproduction commands.
+23. [`releases/`](releases/) — checked human-facing changes included in each immutable release.
 
 Requirements are authoritative for product intent. Accepted ADRs are authoritative for cross-cutting implementation decisions. Architecture describes the current synthesis and must be updated when an ADR supersedes it.
 

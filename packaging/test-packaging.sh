@@ -376,7 +376,7 @@ MEALY_TEST_TARGET="$target" \
 MEALY_TEST_GH_LOG="$temporary/bootstrap-gh.log" \
 PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/mealy \
+    --version v0.1.0 \
     --prefix "$temporary/bootstrap prefix" --home "$temporary/bootstrap home" \
     >"$temporary/bootstrap-output"
 [[ $("$temporary/bootstrap prefix/bin/mealyd") == mealyd-v1 ]]
@@ -568,6 +568,7 @@ printf 'preserve durable state\n' >"$temporary/home/state.keep"
 [[ -f $temporary/prefix/share/mealy/docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/research/REFERENCE_SYSTEMS.md ]]
+[[ -f $temporary/prefix/share/mealy/docs/releases/v0.1.1.md ]]
 [[ -f $temporary/prefix/share/mealy/ARCHITECTURE.md ]]
 [[ -f $temporary/prefix/share/mealy/REQUIREMENTS.md ]]
 [[ -f $temporary/prefix/share/mealy/SECURITY.md ]]

@@ -36,17 +36,17 @@ scripts/run-soak.sh --release \
 ```
 
 The checked [release soak](release-soak.json) is the clean packaged-binary durability observation.
-It ran for 86,409.247 seconds, completed 19,248 turns across eight sessions, survived 48 hard
-restarts, retained 1,129 exact duplicate admissions, recovered 51 interrupted-provider turns, and
-resumed two undispatched model turns plus two undispatched read-tool turns. It finished with SQLite
-integrity `ok`, complete recorded-only replay, clean drain, and zero residual work. It binds clean
-schema-16 revision `9b3653f`, exact external `mealyd` SHA-256
-`7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc`, and a retained disk-backed
-Btrfs home. Peak RSS was 296,460 KiB; p95/p99 latency was 8.372/10.292 seconds while the database
-grew to 1,693,863,936 bytes, or 88,002 bytes per completed turn. These are observed durability
+It ran for 86,415.473 seconds, completed 19,208 turns across eight sessions, survived 48 hard
+restarts, retained 1,129 exact duplicate admissions, recovered 52 interrupted-provider turns, and
+resumed one undispatched read-tool turn. It finished with SQLite integrity `ok`, complete
+recorded-only replay, clean drain, and zero residual work. It binds clean schema-16 revision
+`8867c467`, exact external `mealyd` SHA-256
+`78591cafdbe79691805d651ecc03e3383313fec8bfeb6ed3428a051fa23f69a7`, and a retained disk-backed
+Btrfs home. Peak RSS was 301,904 KiB; p95/p99 latency was 8.528/10.578 seconds while the database
+grew to 1,690,718,208 bytes, or 88,021 bytes per completed turn. These are observed durability
 measurements, not portable resource or latency guarantees.
 The unedited report SHA-256 is
-`6b02f4cdfb059e6e1c5685fcde39b7a91aee748266b3276a7700dc14ed241c50`. After clean drain, the
+`074fa080b8b87e18ad0a3638ef16084dbdf670bbfa594593a114a056c10e0898`. After clean drain, the
 stopped retained database independently returned `ok` from a full SQLite `integrity_check`, and a
 fresh authenticated download of the manifest-pinned draft asset was byte-identical to the retained
 daemon before the evidence change was committed.
@@ -56,10 +56,14 @@ an ancestor of the report-bearing and release commits, so the current release ga
 lineage transformation. The superseded schema-15
 [`release report`](2026-07-16-schema15-release-soak.json) and its exact
 [`rebase proof`](2026-07-16-schema15-release-soak-lineage.json) remain preserved as historical
-evidence. Compared with that schema-15 observation, the schema-16 run completed 21.6 percent more
-turns while using 37.7 percent fewer database bytes and 48.8 percent fewer bytes per completed
-turn. The release validator independently verifies report identity, commit ancestry, daemon
-digest/version, duration, recovery accounting, retained storage, integrity, and zero residue.
+evidence. The v0.1.0
+[`schema-16 report`](2026-07-23-schema16-release-soak.json) and its
+[`promotion manifest`](2026-07-23-schema16-release-soak-subject.json) are also retained instead of
+being overwritten by the v0.1.1 gate. Compared with the schema-15 observation, the current
+schema-16 run completed 21.4 percent more turns while using 37.8 percent fewer database bytes and
+48.8 percent fewer bytes per completed turn. The release validator independently verifies report
+identity, commit ancestry, daemon digest/version, duration, recovery accounting, retained storage,
+integrity, and zero residue.
 
 The checked
 [`2026-07-13-storage-optimized-soak.json`](2026-07-13-storage-optimized-soak.json) is the newest
@@ -156,5 +160,5 @@ the schema-16 remediation. On a 3.1 GB retained clone, one-writer/bounded-snapsh
 bundled context evidence reduced observed maximum writer wait from 14.05 seconds to 0.63 seconds
 while 48 bounded tasks retained complete replay, integrity, and zero residue. It is focused dirty-
 worktree evidence and did not replace the fresh clean exact-package 24-hour report. The current
-[schema-16 release soak](release-soak.json) above subsequently completed that gate and provides the
-retained storage comparison.
+v0.1.1 [schema-16 release soak](release-soak.json) above subsequently completed that gate and
+provides the retained storage comparison.

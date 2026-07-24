@@ -1,6 +1,7 @@
 # Production readiness
 
-- Status: current schema-16 source is not release-qualified; verify the exact published tag and its linked workflows
+- Status: the exact v0.1.1 runtime passed its long-duration gate, but its tag workflow failed
+  before publication; the integrated onboarding source is not yet release-qualified
 - Reviewed: 2026-07-24
 - Target: one-owner Linux production release across Ubuntu, Debian, Fedora, Arch, and compatible
   derivatives; macOS and Windows are outside the active production contract
@@ -9,14 +10,16 @@ This document separates Mealy's completed runtime proof from a product an owner 
 every day. Passing the release-one architecture scenarios is necessary, but it is not sufficient
 for a production claim.
 
-The checked schema-16 release soak now qualifies the exact protected runtime and package daemon for
-the long-duration gate. It followed the stopped schema-15 run whose retained database exposed
+The checked schema-16 release soak qualifies the exact v0.1.1 protected runtime and package daemon
+for the long-duration gate. It followed the stopped schema-15 run whose retained database exposed
 process-wide SQLite head-of-line blocking and context-manifest write amplification, and exercises
 the accepted
 [writer/snapshot-reader and bundled-manifest architecture](decisions/0009-sqlite-writer-and-snapshot-readers.md).
-Production readiness still requires the report-bearing tree to pass protected CI, reviewed
-free-model OpenRouter acceptance on that exact commit, and green attested multi-distribution Linux
-publication plus dependent public-download verification.
+Protected CI and reviewed free-model OpenRouter acceptance passed for that exact commit, but the
+tag workflow rejected its own temporary-home package fixture before publication. The integrated
+onboarding source and corrected release fixture therefore require a new semantic version, its own
+exact-binary 24-hour soak, and green attested multi-distribution publication plus dependent
+public-download verification.
 
 ## Comparison baseline
 
@@ -103,7 +106,7 @@ direct Anthropic Messages API adapter remains supported.
 | Scheduling | Schedules are canonical SQLite state with timezone/missed-run policy, durable due claims, run history, pause/resume, overlap control, and channel/webhook delivery. | Canonical five-field cron definitions, IANA zones/DST, bounded `skip`/`latest` coalescing, overlap policy, leased/recoverable claims, deterministic idempotent session admission, revision-fenced lifecycle, API/CLI, status/metrics/doctor visibility, run history, safe-mode denial, remote Telegram-session delivery, and process/unit/store proofs are implemented. | P0 acceptance is complete. Editing requires cancel/create, and one-shot or sub-minute schedules remain outside the current contract. |
 | Provider and extension operations | Status/doctor report configured identity, last success/failure, degraded state, rate/concurrency pressure, and actionable repair without exposing secrets. | Authenticated status/doctor expose each primary/fallback protocol, identity, model, residency, locality, streaming, live health, latency estimate, live/max concurrency, current-minute/max rate pressure, cumulative durable invocation counts, durable last success/failure timestamps, and recent failures. A restart process proof retains the exact history while returning live health to `configured_unprobed`, so stale success never masquerades as current connectivity. Doctor emits concrete secret-free repair guidance for every health class. | P0 acceptance is complete. Automated upstream credential rotation remains future convenience. |
 | Configuration lifecycle | Setup and edits validate before activation, high-risk changes are approved, activation cannot split an in-flight turn, and rollback/backup behavior is tested. | Configuration mutation is deliberately a stopped-daemon transaction: every command holds the real home lock, validates the complete candidate before atomic publication, archives the prior bytes, and cannot coexist with an in-flight turn. The next start records the exact effective digest and rotates affected context epochs before dispatch. Startup validation, digest history, approved rollback, isolated backup verification, exact-digest encrypted backup activation, and exact-transition pre-migration snapshot activation through stopped-home atomic directory exchanges with untouched prior homes retained are implemented and process-tested. Complete archives and migration reconstruction also carry exact configured skill packages, content-addressed MCP executables, and every file/executable-mode bit in the configured browser bundle. Browser inspect/add/enable performs sandboxed product/CDP/render verification; disable/revoke preserves rollback bytes and web authority cannot be removed underneath an enabled browser. | P0 acceptance is complete under the stopped-daemon activation boundary. Hot reload, guided general mutation, and a visual diff remain future convenience rather than weaker alternate mutation paths. |
-| Release quality | Public-API smoke, upgrade/downgrade, clean-install, backup/restore, adversarial tool, load, cancellation, soak, and optional live-provider suites pass with published measurements. | Tag-driven Linux x86-64/ARM64 jobs re-run strict, RustSec, auditable-binary, sandbox, systemd, browser, package lifecycle, SBOM, and provenance gates. Publication requires a clean retained-disk external-binary report of at least 86,400 seconds for the exact promoted daemon and tag ancestry (or a checked identical-tree lineage proof), with complete recovery accounting, SQLite integrity, ordered latency evidence, and zero residue. The publisher revalidates the remote tag, exact protected-main CI, and owner-reviewed free-model live-provider run immediately before creating the immutable release. Dependent delivery jobs download only public assets, verify release/asset integrity, provenance, checksums, and exact inventory, then repeat tokenless bootstrap and native package lifecycles on Ubuntu 24.04/26.04, Debian 13, Fedora 44, and Arch Linux. Pinned dependency, workflow, shell, browser, load/recovery, and all-feature gates remain mandatory. The clean schema-16 [release soak](benchmarks/release-soak.json) ran 86,409.247 seconds, completed 19,248 turns across eight sessions, survived 48 hard restarts, recovered 51 interrupted-provider turns, resumed two undispatched model turns and two undispatched read-tool turns, retained complete recorded-only replay and SQLite integrity `ok`, drained cleanly, and left zero residual work. | The runtime gate is complete. Version 0.1.1 requires a new exact-binary 24-hour soak because source/version/package inputs changed after the 0.1.0 subject. Release quality is complete only when that tag also has green protected CI, owner-reviewed free OpenRouter acceptance, native public-package verification, and attested publication. |
+| Release quality | Public-API smoke, upgrade/downgrade, clean-install, backup/restore, adversarial tool, load, cancellation, soak, and optional live-provider suites pass with published measurements. | Tag-driven Linux x86-64/ARM64 jobs re-run strict, RustSec, auditable-binary, sandbox, systemd, browser, package lifecycle, SBOM, and provenance gates. Publication requires a clean retained-disk external-binary report of at least 86,400 seconds for the exact promoted daemon and tag ancestry (or a checked identical-tree lineage proof), with complete recovery accounting, SQLite integrity, ordered latency evidence, and zero residue. The publisher revalidates the remote tag, exact protected-main CI, and owner-reviewed free-model live-provider run immediately before creating the immutable release. Dependent delivery jobs download only public assets, verify release/asset integrity, provenance, checksums, and exact inventory, then repeat tokenless bootstrap and native package lifecycles on Ubuntu 24.04/26.04, Debian 13, Fedora 44, and Arch Linux. Pinned dependency, workflow, shell, browser, load/recovery, and all-feature gates remain mandatory. The exact v0.1.1 schema-16 [release soak](benchmarks/release-soak.json) ran 86,415.473 seconds, completed 19,208 turns across eight sessions, survived 48 hard restarts, recovered 52 interrupted-provider turns, resumed one undispatched read-tool turn, retained complete recorded-only replay and SQLite integrity `ok`, drained cleanly, and left zero residual work. | The v0.1.1 long-duration runtime gate is complete. Release quality is complete only when the report-bearing commit also has green protected CI, owner-reviewed free OpenRouter acceptance, native public-package verification, and attested publication. |
 | Documentation/support | Install, setup, first task, approvals, backup/restore, upgrades, incident recovery, limits, costs, security boundary, and troubleshooting are verified from a clean machine. | Quickstart, local HTTP/SSE API, developer-to-production delivery, operations, and attested package install/upgrade/same-schema/cross-schema rollback/uninstall runbooks exist; public Rust APIs are documented under a warnings-denied CI gate, and credential-scoped provider discovery, encrypted backup, and migration-snapshot activation have executable offline process proofs. | Complete only for an exact published tag whose dependent x86_64 and ARM64 clean-host acceptance jobs are green. |
 
 Post-v0.1.1 source adds `mealyctl onboard` as the single-command composition missing from the
@@ -162,17 +165,22 @@ restores the previous release, retires itself, and must recover health, `doctor`
 backup, and a durable task. Protected CI and native tag jobs make this qualification mandatory.
 Signed repository construction, package-manager-native trust, tamper rejection, Pages deployment,
 GitHub manifest attestation, and tag-qualified public repository acceptance are now implemented in
-the stacked source. GitHub Pages and protected deployment environments are activated; the exact
+the integrated source. GitHub Pages and protected deployment environments are activated; the exact
 release still requires one owner-controlled signing identity and a fully green qualifying tag
 workflow. Source tests do not retroactively create a public repository.
 
-The release-quality row's clean soak remains valid historical schema-16 evidence for exact
-version-0.1.0 revision `9b3653f` and daemon SHA-256
-`7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc`. It does not qualify the
-0.1.1 Linux-distribution release. That release still needs its own exact-binary 24-hour report,
-protected CI, reviewed free OpenRouter acceptance, native package/public-download verification,
-and attested publication. Owner-local private-provider acceptance is additional operator evidence
-and does not substitute for the public free-model gate.
+The preserved historical
+[v0.1.0 schema-16 soak](benchmarks/2026-07-23-schema16-release-soak.json) remains bound to revision
+`9b3653f` and daemon SHA-256
+`7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc`. The current canonical report
+qualifies exact v0.1.1 revision `8867c467` and daemon SHA-256
+`78591cafdbe79691805d651ecc03e3383313fec8bfeb6ed3428a051fa23f69a7` for the long-duration gate.
+Its protected CI and reviewed free OpenRouter acceptance passed, but the
+[`v0.1.1` tag workflow](benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md)
+failed before creating a release because its package fixture placed a persistent service home
+below `/tmp`. That pushed tag will not be moved or reused. The corrected integrated source needs a
+new version and exact-binary soak; owner-local private-provider acceptance remains additional
+operator evidence and does not substitute for the public free-model gate.
 
 The first exact-candidate 24-hour attempt was externally terminated after approximately 9 hours 14
 minutes. Its retained database contains 7,272 succeeded turns, 18 planned hard-restart recoveries,
@@ -335,7 +343,7 @@ readers, and one compressed digest-bound manifest bundle plus sparse provenance 
 retained clone, 48 bounded eight-session diagnostic tasks completed with full replay/integrity and
 zero residue; maximum writer wait fell from 14.05 seconds to 0.63 seconds. This is strong focused
 evidence that motivated the final design, not a replacement for the long-duration gate. The current
-schema-16 [release soak](benchmarks/release-soak.json) subsequently completed 19,248 turns and 48
+schema-16 [release soak](benchmarks/release-soak.json) subsequently completed 19,208 turns and 48
 hard restarts against the exact packaged daemon with complete replay, integrity `ok`, and zero
 residue. It used 48.8 percent fewer database bytes per completed turn than the preserved schema-15
 release observation.

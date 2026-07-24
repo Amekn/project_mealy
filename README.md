@@ -37,8 +37,10 @@ chmod 0755 "$tmp/install-mealy-release.sh"
 
 After the attested install succeeds, this continues directly into the same guided onboarding used
 by packaged installs. An ordinary interactive fresh install also makes that transition by default;
-use `--no-onboard` for automation or to install without creating a Mealy home. No release is implied
-when the repository has not published and attested these assets.
+use `--no-onboard` for automation or to install without creating a Mealy home. These canonical
+signer arguments apply to new releases. Historical v0.1.0 attestations retain the repository's
+former `Amekn/project_mealy` identity. No release is implied when the repository has not published
+and attested these assets.
 
 Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and current x86-64 Arch.
 They include `.deb`, `.rpm`, and `.pkg.tar.zst` packages in addition to the generic x86-64/ARM64

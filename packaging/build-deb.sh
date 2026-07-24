@@ -71,6 +71,8 @@ release_documents=(
   benchmarks/2026-07-16-schema15-release-soak.json
   benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
+  benchmarks/2026-07-23-schema16-release-soak-subject.json
+  benchmarks/2026-07-23-schema16-release-soak.json
   benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md
   benchmarks/README.md
   benchmarks/release-soak.json
@@ -90,6 +92,9 @@ release_documents=(
   research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md
   research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
+  releases/README.md
+  releases/v0.1.0.md
+  releases/v0.1.1.md
 )
 
 for command in ar awk chmod cp date dirname find gzip install jq ln md5sum mkdir mktemp mv od \
