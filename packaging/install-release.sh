@@ -13,11 +13,13 @@ verifies its release-workflow provenance and complete checksum inventory, and
 installs it through the release's own owner-local manager. No Rust toolchain or
 root access or GitHub account is required. GitHub CLI performs offline-bundle
 verification; curl reads only the public release metadata and exact assets.
+The historical v0.1.0 tag predates the repository rename; select it only with
+--repository Amekn/project_mealy so its retained attestations verify exactly.
 USAGE
 }
 
 version=latest
-repository=Amekn/project_mealy
+repository=Amekn/mealy
 prefix=${HOME:+$HOME/.local}
 home=${MEALY_HOME:-${HOME:+$HOME/.mealy}}
 while [[ $# -gt 0 ]]; do

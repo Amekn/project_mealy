@@ -173,18 +173,23 @@ workflow signed it on a GitHub-hosted runner, and run it:
 tmp=$(mktemp -d)
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/install-mealy-release.sh" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/install-mealy-release.sh
+  https://github.com/Amekn/mealy/releases/latest/download/install-mealy-release.sh
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/ATTESTATION-installers.sigstore.json" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
+  https://github.com/Amekn/mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
 gh attestation verify "$tmp/install-mealy-release.sh" \
-  --repo Amekn/project_mealy \
-  --signer-workflow Amekn/project_mealy/.github/workflows/release.yml \
+  --repo Amekn/mealy \
+  --signer-workflow Amekn/mealy/.github/workflows/release.yml \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
 "$tmp/install-mealy-release.sh"
 ```
+
+The canonical signer identity for v0.1.1 and later is `Amekn/mealy`. Historical v0.1.0 bundles
+were issued before the repository rename and continue to verify only against
+`Amekn/project_mealy`; do not rewrite that retained evidence or use its legacy identity for a new
+release.
 
 The bootstrap resolves one exact stable tag from bounded public release metadata, downloads the
 matching native archive, checksum manifest, manager, a second copy of itself, and the architecture
@@ -199,7 +204,7 @@ empty directory:
 
 ```sh
 VERSION=vX.Y.Z
-REPOSITORY=Amekn/project_mealy
+REPOSITORY=Amekn/mealy
 case "$(uname -m)" in
   x86_64|amd64)
     TARGET=linux-x86_64-gnu
