@@ -53,6 +53,22 @@ client, and requires automatic rollback plus health, `doctor`, backup, and
 durable-task preservation. All newer work remains next-release source until
 protected installed-package and supported-distribution acceptance qualify it.
 
+Delivery-state recheck at 2026-07-24T15:03:19+12:00: Mealy v0.1.0 is a public,
+immutable stable GitHub release whose exact tag workflow passed native
+packaging, attestations, and public archive installation. That release predates
+the signed APT/DNF/Pacman repository and guided-onboarding stack audited here.
+GitHub Pages is enabled at `https://amekn.github.io/mealy/`, but the URL still
+returns HTTP 404 because no stable tag has yet deployed the new repository
+artifact. Exact main revision
+`8867c46774c693a335853625dd967fd3520976ff` has successful protected-main CI and
+reviewed free-model OpenRouter acceptance; those runs qualify that revision
+only, not the later evidence commit and onboarding release still required
+below. The protected signing Environment has the expected Pages URL and
+tag-only approval policy, but its production key export and fingerprint are not
+configured. These observations replace the stale pre-publication statements in
+the point-in-time matrix without rewriting what the competitor audit originally
+measured.
+
 ## Executive result
 
 Mealy's runtime and release controls are unusually strong for a pre-1.0 agent,
@@ -70,7 +86,8 @@ The largest gap is not core agent capability. It is orchestration:
 4. update, repair, uninstall, and shell-completion experiences are incomplete;
 5. the README and quickstart are comprehensive references, not a short first
    five-minute path; and
-6. no stable Mealy release has been published yet.
+6. the published v0.1.0 release predates the integrated onboarding and signed
+   Linux repository experience.
 
 OpenClaw, Hermes, OpenCode, Codex, Pi, and Claude Code all make the first useful
 conversation the organizing product outcome. Vercel AI SDK and Eve are
@@ -535,7 +552,7 @@ the ordinary user journey is incomplete; **No** = no comparable product path;
 | Version-matched bundled docs | Yes | Partial | Partial | Partial | Partial | Yes | Yes | Partial |
 | Clean-artifact onboarding test | Partial | Yes | Partial | Partial | Yes | Yes | Yes | Not publicly evidenced |
 | Public cross-platform/distro CI | Linux-focused | Yes | Yes | Yes | Yes | Partial | Partial | Not publicly evidenced |
-| Public staged/attested release | Yes, pending first publication | Partial | Partial | Partial | Partial | SLSA npm | Checksums/staged | Not publicly evidenced |
+| Public staged/attested release | Yes for v0.1.0; onboarding/repositories pending | Partial | Partial | Partial | Partial | SLSA npm | Checksums/staged | Not publicly evidenced |
 
 ## Prioritized Mealy remediation
 
