@@ -9,10 +9,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+release_workflow=$repository_root/.github/workflows/release.yml
+if grep -Eq \
+  'MEALY_INSTALLED_SMOKE_ROOT=(/tmp|/var/tmp)([[:space:]]|$)' \
+  "$release_workflow"; then
+  echo "release workflow places a persistent service smoke below a private temporary path" >&2
+  exit 1
+fi
+if [[ $(grep -Fc 'install -d -m 0700 /mealy-smoke' "$release_workflow") -ne 5 \
+  || $(grep -Fc 'MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke' "$release_workflow") -ne 5 ]]; then
+  echo "release workflow persistent native-package smoke roots are incomplete" >&2
+  exit 1
+fi
+
 public_bootstrap=$(
   sed -n \
     '/- name: Exercise the public rootless bootstrap through first chat/,/- name: Re-run exact downloaded archive and Debian lifecycle smokes/p' \
-    "$repository_root/.github/workflows/release.yml"
+    "$release_workflow"
 )
 if [[ -z $public_bootstrap ]]; then
   echo "release workflow is missing public rootless first-chat acceptance" >&2

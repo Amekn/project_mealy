@@ -397,7 +397,8 @@ jobs:
             --volume "$PWD/dist:/dist:ro" \
             "$FEDORA_IMAGE" sh -lc "
               dnf install --assumeyes bubblewrap ca-certificates jq libgcc
-              MEALY_INSTALLED_SMOKE_ROOT=/tmp \
+              install -d -m 0700 /mealy-smoke
+              MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke \
               MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true \
                 /workspace/scripts/installed-rpm-smoke.sh \
                 /dist/mealy-${version}-1.${rpm_architecture}.rpm
@@ -408,7 +409,8 @@ jobs:
               --volume "$PWD/dist:/dist:ro" \
               "$ARCH_IMAGE" sh -lc "
                 pacman -Syu --noconfirm bubblewrap jq
-                MEALY_INSTALLED_SMOKE_ROOT=/tmp \
+                install -d -m 0700 /mealy-smoke
+                MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke \
                 MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true \
                   /workspace/scripts/installed-arch-smoke.sh \
                   /dist/mealy-${version}-1-x86_64.pkg.tar.zst
@@ -1149,19 +1151,22 @@ jobs:
             deb)
               setup='apt-get update
                 DEBIAN_FRONTEND=noninteractive apt-get install --yes bubblewrap ca-certificates jq
-                export MEALY_INSTALLED_SMOKE_ROOT=/tmp
+                install -d -m 0700 /mealy-smoke
+                export MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke
                 export MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true
                 /source/scripts/installed-deb-smoke.sh "/assets/'"$MEALY_PUBLIC_PACKAGE"'"'
               ;;
             rpm)
               setup='dnf install --assumeyes bubblewrap ca-certificates jq libgcc
-                export MEALY_INSTALLED_SMOKE_ROOT=/tmp
+                install -d -m 0700 /mealy-smoke
+                export MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke
                 export MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true
                 /source/scripts/installed-rpm-smoke.sh "/assets/'"$MEALY_PUBLIC_PACKAGE"'"'
               ;;
             arch)
               setup='pacman -Syu --noconfirm bubblewrap ca-certificates jq
-                export MEALY_INSTALLED_SMOKE_ROOT=/tmp
+                install -d -m 0700 /mealy-smoke
+                export MEALY_INSTALLED_SMOKE_ROOT=/mealy-smoke
                 export MEALY_INSTALLED_SMOKE_REQUIRE_SANDBOX=true
                 /source/scripts/installed-arch-smoke.sh "/assets/'"$MEALY_PUBLIC_PACKAGE"'"'
               ;;
