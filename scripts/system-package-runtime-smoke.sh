@@ -27,6 +27,42 @@ schema_version=$(jq -er '.stateSchemaVersion' /usr/lib/mealy/release/BUILD-MANIF
 [[ $(/usr/bin/mealyd --version) == "mealyd $version" ]]
 [[ $(/usr/bin/mealyctl --version) == "mealyctl $version" ]]
 [[ $(/usr/bin/mealyd --print-supported-schema-version) == "$schema_version" ]]
+case $label in
+  RPM)
+    installation_kind=rpm-package
+    update_mode=dnf
+    ;;
+  Arch)
+    installation_kind=arch-package
+    update_mode=pacman
+    ;;
+  *)
+    echo "unsupported system-package smoke label: $label" >&2
+    exit 64
+    ;;
+esac
+install_status=$(/usr/bin/mealyctl install-status)
+jq -e --arg kind "$installation_kind" --arg mode "$update_mode" \
+  --arg version "$version" --argjson schema "$schema_version" '
+    .schemaVersion == "mealy.install-status.v1"
+    and .installationKind == $kind
+    and .integrity == "verified"
+    and .currentVersion == $version
+    and .stateSchemaVersion == $schema
+    and .updateMode == $mode
+    and .rollbackAvailable == false
+    and (.nativeUpdateCommand | type == "string" and length > 0)
+    and .issues == []
+  ' <<<"$install_status" >/dev/null
+uninstall_plan=$(/usr/bin/mealyctl uninstall)
+jq -e '
+  .schemaVersion == "mealy.maintenance-plan.v1"
+  and .operation == "uninstall"
+  and .actionRequired == true
+  and .applySupported == false
+  and .preservesHome == true
+  and (.nativeCommand | type == "string" and length > 0)
+' <<<"$uninstall_plan" >/dev/null
 
 chmod 0700 "$home" "$work"
 service=$(/usr/bin/mealyctl --home "$home" service install \

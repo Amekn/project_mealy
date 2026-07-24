@@ -320,102 +320,209 @@ fn provider_model_discovery_does_not_echo_failure_body_or_credential() {
 
 #[test]
 #[cfg(unix)]
-fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
+#[allow(clippy::too_many_lines)]
+fn openai_subscription_activation_pins_official_client_and_uses_safe_defaults() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let cases = [
-        (
-            "provider-subscription-openai",
-            "openai_subscription_cli",
-            "open_ai_codex",
-            "openai.subscription",
-            concat!(
-                "#!/bin/sh\n",
-                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
-                "cat >/dev/null\n",
-                "printf '%s\\n' ",
-                "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
-                "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
-                "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
-            ),
-        ),
-        (
+    let command = "provider-subscription-openai";
+    let onboarding_route = "chatgpt-subscription";
+    let protocol = "openai_subscription_cli";
+    let client = "open_ai_codex";
+    let provider_id = "openai.subscription";
+    let fixture_body = concat!(
+        "#!/bin/sh\n",
+        "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+        "if [ \"${1:-}\" = app-server ]; then\n",
+        "  while IFS= read -r line; do\n",
+        "    case \"$line\" in\n",
+        "      *'\"method\":\"initialize\"'*) printf '%s\\n' '{\"id\":1,\"result\":{\"userAgent\":\"fixture\",\"platformFamily\":\"linux\",\"platformOs\":\"linux\"}}' ;;\n",
+        "      *'\"method\":\"initialized\"'*) ;;\n",
+        "      *'\"method\":\"account/read\"'*) printf '%s\\n' '{\"id\":2,\"result\":{\"account\":{\"type\":\"chatgpt\",\"planType\":\"plus\"},\"requiresOpenaiAuth\":true}}' ;;\n",
+        "      *'\"method\":\"model/list\"'*) printf '%s\\n' '{\"id\":3,\"result\":{\"data\":[{\"id\":\"gpt-account-default\",\"model\":\"gpt-account-default\",\"displayName\":\"Account Default\",\"hidden\":false,\"isDefault\":true},{\"id\":\"gpt-account-other\",\"model\":\"gpt-account-other\",\"displayName\":\"Account Other\",\"hidden\":false,\"isDefault\":false}],\"nextCursor\":null}}' ;;\n",
+        "      *) exit 91 ;;\n",
+        "    esac\n",
+        "  done\n",
+        "  exit 0\n",
+        "fi\n",
+        "cat >/dev/null\n",
+        "printf '%s\\n' ",
+        "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
+        "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
+        "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
+    );
+    let home = tempfile::tempdir().expect("temporary subscription home");
+    fs::create_dir(home.path().join("config-history")).expect("configuration history");
+    fs::write(
+        home.path().join("config.json"),
+        serde_json::to_vec_pretty(&default_config()).expect("encode default config"),
+    )
+    .expect("write default config");
+    let executable = home.path().join(format!("{command}-fixture"));
+    fs::write(&executable, fixture_body).expect("write subscription fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make subscription fixture executable");
+    let executable = executable
+        .canonicalize()
+        .expect("canonical subscription fixture");
+    let executable_digest = sha256_digest(fixture_body.as_bytes());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(["config", command, "--executable-path"])
+        .arg(&executable)
+        .args(["--maximum-output-tokens", "64", "--approve"])
+        .env("OPENAI_API_KEY", "must-not-reach-official-client")
+        .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+        .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+        .env("LOCAL_API_KEY", "must-not-reach-official-client")
+        .output()
+        .expect("activate subscription provider");
+    assert!(
+        output.status.success(),
+        "{command} activation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("activation response");
+    assert_eq!(response["protocol"], protocol);
+    assert_eq!(response["providerId"], provider_id);
+    assert_eq!(response["connectivityTested"], true);
+    assert_eq!(response["secretId"], Value::Null);
+
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.path().join("config.json")).expect("subscription config"),
+    )
+    .expect("subscription config JSON");
+    assert_eq!(config["provider"]["kind"], "subscription_cli");
+    assert_eq!(config["provider"]["client"], client);
+    assert_eq!(
+        config["provider"]["executablePath"],
+        executable.to_str().expect("UTF-8 fixture path")
+    );
+    assert_eq!(config["provider"]["executableSha256"], executable_digest);
+    assert_eq!(config["provider"]["model"], "gpt-5.6");
+    assert_eq!(config["provider"]["contextTokens"], 128_000);
+    assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
+    assert!(!home.path().join("provider-secrets").exists());
+
+    let onboard_home = tempfile::tempdir().expect("temporary subscription onboarding home");
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(onboard_home.path())
+        .args(["onboard", "--route", onboarding_route, "--executable-path"])
+        .arg(&executable)
+        .args([
+            "--maximum-output-tokens",
+            "64",
+            "--configure-only",
+            "--approve",
+        ])
+        .env("OPENAI_API_KEY", "must-not-reach-official-client")
+        .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+        .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+        .env("LOCAL_API_KEY", "must-not-reach-official-client")
+        .output()
+        .expect("onboard subscription provider");
+    assert!(
+        output.status.success(),
+        "{onboarding_route} onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["protocol"], protocol);
+    assert_eq!(response["provider"]["providerId"], provider_id);
+    assert_eq!(response["provider"]["connectivityTested"], true);
+    assert_eq!(response["provider"]["secretId"], Value::Null);
+    assert_eq!(response["service"], Value::Null);
+    assert_eq!(response["serviceStarted"], false);
+    assert_eq!(response["chatStarted"], false);
+    let config: Value = serde_json::from_slice(
+        &fs::read(onboard_home.path().join("config.json")).expect("subscription onboarding config"),
+    )
+    .expect("subscription onboarding JSON");
+    assert_eq!(config["provider"]["client"], client);
+    assert_eq!(config["provider"]["model"], "gpt-account-default");
+    assert_eq!(config["provider"]["contextTokens"], 128_000);
+    assert_eq!(config["provider"]["executableSha256"], executable_digest);
+    assert!(!onboard_home.path().join("provider-secrets").exists());
+}
+
+#[test]
+fn chatgpt_onboarding_missing_codex_reports_official_help_without_mutation() {
+    let home = tempfile::tempdir().expect("missing Codex onboarding home");
+    let empty_path = tempfile::tempdir().expect("empty executable PATH");
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "chatgpt-subscription",
+            "--configure-only",
+            "--approve",
+        ])
+        .env("PATH", empty_path.path())
+        .output()
+        .expect("run onboarding without Codex");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("the official Codex CLI was not found"));
+    assert!(error.contains("https://learn.chatgpt.com/docs/codex/cli"));
+    assert!(error.contains("--executable-path /absolute/path/to/codex"));
+    assert!(!home.path().join("config.json").exists());
+    assert!(!home.path().join("provider-secrets").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn claude_subscription_routes_fail_before_home_mutation_or_client_execution() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::tempdir().expect("temporary retired-subscription root");
+    let marker = root.path().join("invoked");
+    let executable = root.path().join("claude-fixture");
+    fs::write(
+        &executable,
+        format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    )
+    .expect("write retired subscription fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make retired subscription fixture executable");
+
+    for arguments in [
+        vec![
+            "config",
             "provider-subscription-claude",
-            "claude_subscription_cli",
-            "anthropic_claude",
-            "claude.subscription",
-            concat!(
-                "#!/bin/sh\n",
-                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
-                "cat >/dev/null\n",
-                "printf '%s\\n' ",
-                "'{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\",\"session_id\":\"fixture-request\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5},\"modelUsage\":{\"fixture-model\":{}}}'\n",
-            ),
-        ),
-    ];
-
-    for (command, protocol, client, provider_id, fixture_body) in cases {
-        let home = tempfile::tempdir().expect("temporary subscription home");
-        fs::create_dir(home.path().join("config-history")).expect("configuration history");
-        fs::write(
-            home.path().join("config.json"),
-            serde_json::to_vec_pretty(&default_config()).expect("encode default config"),
-        )
-        .expect("write default config");
-        let executable = home.path().join(format!("{command}-fixture"));
-        fs::write(&executable, fixture_body).expect("write subscription fixture");
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
-            .expect("make subscription fixture executable");
-        let executable = executable
-            .canonicalize()
-            .expect("canonical subscription fixture");
-        let executable_digest = sha256_digest(fixture_body.as_bytes());
-
+            "--executable-path",
+            executable.to_str().expect("fixture path"),
+            "--model",
+            "claude",
+            "--context-tokens",
+            "32768",
+            "--approve",
+        ],
+        vec![
+            "onboard",
+            "--route",
+            "claude-subscription",
+            "--executable-path",
+            executable.to_str().expect("fixture path"),
+            "--configure-only",
+            "--approve",
+        ],
+    ] {
+        let home = tempfile::tempdir().expect("temporary retired-subscription home");
         let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
             .arg("--home")
             .arg(home.path())
-            .args(["config", command, "--executable-path"])
-            .arg(&executable)
-            .args([
-                "--model",
-                "fixture-model",
-                "--context-tokens",
-                "32768",
-                "--maximum-output-tokens",
-                "64",
-                "--approve",
-            ])
-            .env("OPENAI_API_KEY", "must-not-reach-official-client")
-            .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
-            .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
-            .env("LOCAL_API_KEY", "must-not-reach-official-client")
+            .args(arguments)
             .output()
-            .expect("activate subscription provider");
-        assert!(
-            output.status.success(),
-            "{command} activation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let response: Value = serde_json::from_slice(&output.stdout).expect("activation response");
-        assert_eq!(response["protocol"], protocol);
-        assert_eq!(response["providerId"], provider_id);
-        assert_eq!(response["connectivityTested"], true);
-        assert_eq!(response["secretId"], Value::Null);
-
-        let config: Value = serde_json::from_slice(
-            &fs::read(home.path().join("config.json")).expect("subscription config"),
-        )
-        .expect("subscription config JSON");
-        assert_eq!(config["provider"]["kind"], "subscription_cli");
-        assert_eq!(config["provider"]["client"], client);
-        assert_eq!(
-            config["provider"]["executablePath"],
-            executable.to_str().expect("UTF-8 fixture path")
-        );
-        assert_eq!(config["provider"]["executableSha256"], executable_digest);
-        assert_eq!(config["provider"]["model"], "fixture-model");
-        assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
-        assert!(!home.path().join("provider-secrets").exists());
+            .expect("run retired subscription route");
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("Claude subscription routing is unsupported"));
+        assert!(!home.path().join("config.json").exists());
+        assert!(!marker.exists());
     }
 }
 
@@ -575,6 +682,289 @@ fn guided_setup_interactively_selects_local_model_and_requires_exact_approval() 
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("was not approved"));
     assert!(!denied_home.path().join("config.json").exists());
+}
+
+#[test]
+fn onboarding_configures_a_clean_home_and_refuses_silent_replacement() {
+    let home = tempfile::tempdir().expect("clean onboarding home");
+    let arguments = [
+        "onboard",
+        "--route",
+        "local",
+        "--model",
+        "local-onboarding-model",
+        "--context-tokens",
+        "32768",
+        "--maximum-output-tokens",
+        "2048",
+        "--skip-connectivity-test",
+        "--configure-only",
+        "--approve",
+    ];
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(arguments)
+        .output()
+        .expect("run clean-home onboarding");
+    assert!(
+        output.status.success(),
+        "onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["providerId"], "local.responses");
+    assert_eq!(response["provider"]["model"], "local-onboarding-model");
+    assert_eq!(response["provider"]["connectivityTested"], false);
+    assert_eq!(response["service"], Value::Null);
+    assert_eq!(response["serviceStarted"], false);
+    assert_eq!(response["healthVerified"], false);
+    assert_eq!(response["chatStarted"], false);
+    assert!(
+        response["nextCommand"]
+            .as_str()
+            .is_some_and(|command| command.contains("service install"))
+    );
+    let prompt = String::from_utf8_lossy(&output.stderr);
+    assert!(prompt.contains("Review the exact non-secret onboarding plan"));
+    assert!(prompt.contains("Service installation was intentionally skipped"));
+
+    let configured = fs::read(home.path().join("config.json")).expect("configured home");
+    let second = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(arguments)
+        .output()
+        .expect("rerun onboarding without reconfigure");
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stderr).contains("already has configuration"));
+    assert_eq!(
+        fs::read(home.path().join("config.json")).expect("unchanged configuration"),
+        configured
+    );
+}
+
+#[test]
+fn implicit_home_survives_working_directory_changes_and_honors_overrides() {
+    let owner = tempfile::tempdir().expect("temporary owner home");
+    let first_directory = tempfile::tempdir().expect("first working directory");
+    let second_directory = tempfile::tempdir().expect("second working directory");
+    let arguments = [
+        "onboard",
+        "--route",
+        "local",
+        "--model",
+        "stable-home-model",
+        "--context-tokens",
+        "32768",
+        "--skip-connectivity-test",
+        "--configure-only",
+        "--approve",
+    ];
+    let configured = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(first_directory.path())
+        .env("HOME", owner.path())
+        .env_remove("MEALY_HOME")
+        .args(arguments)
+        .output()
+        .expect("configure implicit owner home");
+    assert!(
+        configured.status.success(),
+        "implicit-home onboarding failed: {}",
+        String::from_utf8_lossy(&configured.stderr)
+    );
+
+    let expected_home = owner.path().join(".mealy");
+    assert!(expected_home.join("config.json").is_file());
+    assert!(!first_directory.path().join(".mealy").exists());
+    assert!(!second_directory.path().join(".mealy").exists());
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env("HOME", owner.path())
+        .env_remove("MEALY_HOME")
+        .args(["config", "provider-list"])
+        .output()
+        .expect("read implicit owner home from another directory");
+    assert!(
+        listed.status.success(),
+        "cross-directory provider read failed: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let response: Value = serde_json::from_slice(&listed.stdout).expect("provider-list response");
+    assert_eq!(response["primary"]["model"], "stable-home-model");
+
+    let explicit_home = owner.path().join("alternate");
+    let explicit = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env_remove("HOME")
+        .env_remove("MEALY_HOME")
+        .arg("--home")
+        .arg(&explicit_home)
+        .args(arguments)
+        .output()
+        .expect("configure explicit home without HOME");
+    assert!(
+        explicit.status.success(),
+        "explicit-home onboarding failed: {}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    assert!(explicit_home.join("config.json").is_file());
+
+    let environment_home = owner.path().join("environment-override");
+    let environment = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env("HOME", owner.path())
+        .env("MEALY_HOME", &environment_home)
+        .args(arguments)
+        .output()
+        .expect("configure MEALY_HOME override");
+    assert!(
+        environment.status.success(),
+        "MEALY_HOME onboarding failed: {}",
+        String::from_utf8_lossy(&environment.stderr)
+    );
+    assert!(environment_home.join("config.json").is_file());
+
+    let missing_default = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .current_dir(second_directory.path())
+        .env_remove("HOME")
+        .env_remove("MEALY_HOME")
+        .args(["config", "provider-list"])
+        .output()
+        .expect("reject missing default home");
+    assert!(!missing_default.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_default.stderr)
+            .contains("could not determine the default Mealy home")
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn onboarding_openrouter_free_route_discovers_and_probes_only_exact_free_metadata() {
+    let home = tempfile::tempdir().expect("clean OpenRouter onboarding home");
+    let catalog = json!({
+        "data": [
+            {
+                "id": "vendor/tool-model:free",
+                "name": "Tool Model Free",
+                "created": 50,
+                "context_length": 32768,
+                "pricing": {
+                    "prompt": "0",
+                    "completion": "0",
+                    "request": "0",
+                    "image": "0",
+                    "web_search": "0",
+                    "internal_reasoning": "0",
+                    "input_cache_read": "0",
+                    "input_cache_write": "0"
+                },
+                "supported_parameters": ["max_tokens", "tools"],
+                "architecture": {"output_modalities": ["text"]},
+                "top_provider": {
+                    "context_length": 32768,
+                    "max_completion_tokens": 8192
+                }
+            },
+            {
+                "id": "vendor/paid-model",
+                "name": "Paid Model",
+                "created": 40,
+                "context_length": 32768,
+                "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+                "supported_parameters": ["max_tokens", "tools"],
+                "architecture": {"output_modalities": ["text"]},
+                "top_provider": {
+                    "context_length": 32768,
+                    "max_completion_tokens": 8192
+                }
+            }
+        ]
+    })
+    .to_string();
+    let completed = json!({
+        "id": "resp-openrouter-onboarding",
+        "object": "response",
+        "model": "vendor/tool-model:free",
+        "status": "completed",
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "OK"}]
+        }]
+    });
+    let event = json!({"type": "response.completed", "response": completed});
+    let probe = format!("event: response.completed\ndata: {event}\n\ndata: [DONE]\n\n");
+    let (base_url, capture, server) = serve_openrouter_onboarding(catalog, probe);
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "openrouter-free",
+            "--base-url",
+            &base_url,
+            "--model",
+            "vendor/tool-model:free",
+            "--credential-env",
+            "MEALY_TEST_ONBOARD_OPENROUTER_KEY",
+            "--configure-only",
+            "--approve",
+        ])
+        .env(
+            "MEALY_TEST_ONBOARD_OPENROUTER_KEY",
+            "openrouter-onboarding-secret",
+        )
+        .output()
+        .expect("run OpenRouter free onboarding");
+    assert!(
+        output.status.success(),
+        "OpenRouter onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("openrouter-onboarding-secret"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("openrouter-onboarding-secret"));
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["providerId"], "openrouter.responses");
+    assert_eq!(response["provider"]["model"], "vendor/tool-model:free");
+    assert_eq!(response["provider"]["connectivityTested"], true);
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.path().join("config.json")).expect("OpenRouter config"),
+    )
+    .expect("OpenRouter config JSON");
+    assert_eq!(config["provider"]["contextTokens"], 32768);
+    assert_eq!(config["provider"]["maximumOutputTokens"], 4096);
+    assert_eq!(config["provider"]["inputMicrounitsPerMillionTokens"], 0);
+    assert_eq!(config["provider"]["outputMicrounitsPerMillionTokens"], 0);
+    let requests = capture.recv().expect("captured onboarding requests");
+    assert!(
+        requests[0]
+            .0
+            .starts_with("GET /v1/models/user HTTP/1.1\r\n")
+    );
+    assert!(requests[1].0.starts_with("POST /v1/responses HTTP/1.1\r\n"));
+    assert_eq!(
+        requests[1].1.as_ref().expect("probe JSON")["model"],
+        "vendor/tool-model:free"
+    );
+    assert_eq!(
+        requests[1].1.as_ref().expect("probe JSON")["max_output_tokens"],
+        256
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|(headers, _)| headers.lines().any(|line| {
+                line.split_once(':').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("authorization")
+                        && value.trim() == "Bearer openrouter-onboarding-secret"
+                })
+            }))
+    );
+    server.join().expect("OpenRouter onboarding server");
 }
 
 #[test]
@@ -2223,6 +2613,74 @@ fn serve_probe(
             response_body.len()
         )
         .expect("write provider probe response");
+    });
+    (format!("http://{address}/v1"), receiver, handle)
+}
+
+type CapturedHttpRequest = (String, Option<Value>);
+
+fn serve_openrouter_onboarding(
+    catalog_body: String,
+    probe_body: String,
+) -> (
+    String,
+    mpsc::Receiver<Vec<CapturedHttpRequest>>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind onboarding server");
+    let address = listener.local_addr().expect("onboarding server address");
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for (index, response_body) in [catalog_body, probe_body].into_iter().enumerate() {
+            let (mut stream, _) = listener.accept().expect("accept onboarding request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("onboarding read timeout");
+            let mut raw = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            let header_end = loop {
+                let read = stream.read(&mut chunk).expect("read onboarding request");
+                assert!(read != 0, "onboarding request ended before headers");
+                raw.extend_from_slice(&chunk[..read]);
+                if let Some(position) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break position + 4;
+                }
+            };
+            let headers =
+                String::from_utf8(raw[..header_end].to_vec()).expect("onboarding headers");
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':').and_then(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().expect("content length"))
+                    })
+                })
+                .unwrap_or_default();
+            while raw.len().saturating_sub(header_end) < length {
+                let read = stream.read(&mut chunk).expect("read onboarding body");
+                assert!(read != 0, "onboarding body ended early");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            let body = (length != 0).then(|| {
+                serde_json::from_slice::<Value>(&raw[header_end..header_end + length])
+                    .expect("onboarding request JSON")
+            });
+            captured.push((headers, body));
+            let content_type = if index == 0 {
+                "application/json"
+            } else {
+                "text/event-stream"
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            )
+            .expect("write onboarding response");
+        }
+        sender.send(captured).expect("capture onboarding requests");
     });
     (format!("http://{address}/v1"), receiver, handle)
 }

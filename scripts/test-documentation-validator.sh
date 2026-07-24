@@ -27,6 +27,24 @@ rm "$temporary/package/crates/mealy-api/src/lib.rs"
 "$repository/scripts/validate-documentation.py" \
   --mode package --repository "$temporary/package" --cli "$cli"
 
+cp "$temporary/package/docs/GETTING_STARTED.md" "$temporary/GETTING_STARTED.md"
+for _ in {1..161}; do
+  printf 'deliberate first-run guide overflow\n' \
+    >>"$temporary/package/docs/GETTING_STARTED.md"
+done
+set +e
+guide_output=$("$repository/scripts/validate-documentation.py" \
+  --mode package --repository "$temporary/package" --cli "$cli" 2>&1)
+guide_status=$?
+set -e
+if [[ $guide_status -ne 65 ]] \
+  || ! grep -Fq 'docs/GETTING_STARTED.md exceeds the 160-line first-run bound' \
+    <<<"$guide_output"; then
+  echo "package documentation validator accepted an overlong first-run guide" >&2
+  exit 1
+fi
+mv "$temporary/GETTING_STARTED.md" "$temporary/package/docs/GETTING_STARTED.md"
+
 ln -s README.md "$temporary/package/symlink.md"
 set +e
 symlink_output=$("$repository/scripts/validate-documentation.py" \

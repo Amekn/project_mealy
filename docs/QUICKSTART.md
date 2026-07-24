@@ -18,7 +18,8 @@ A published stable release includes an attested rootless bootstrap. It selects t
 or ARM64 archive, resolves an exact stable tag, verifies the bootstrap, manager, target checksum
 manifest, and archive against that tag's release-workflow attestations, verifies the complete
 target checksum inventory, and installs beneath `$HOME/.local`. It never uses `sudo`,
-starts a service, creates a Mealy home, or requires Rust:
+requires Rust, or mutates a Mealy home before the verified installation completes. An interactive
+fresh install then continues into guided onboarding; `--no-onboard` keeps installation passive:
 
 ```sh
 tmp=$(mktemp -d)
@@ -34,7 +35,7 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
 The canonical signer identity above applies to v0.1.1 and later. Historical v0.1.0 bundles were
@@ -44,8 +45,15 @@ Use `--version vX.Y.Z` to select a particular stable release, or `--prefix`/`--h
 paths. Public release metadata/assets are fetched with bounded HTTPS requests, so no GitHub login
 or token is required. The bootstrap rejects drafts, prereleases, unsupported architectures, incomplete downloads,
 self-hosted provenance, a different signer workflow/ref, and any checksum or inventory mismatch.
-It prints the exact `mealyctl setup` and service-install commands after success. Continue with the
-prerequisites and first-run checks below before enabling governed tools.
+`--onboard` forces the guided handoff, while `--no-onboard` prints the exact
+`mealyctl onboard` command for automation. A pre-existing home is retained and receives
+`doctor`/`chat` handoffs instead of being silently reconfigured. Continue with the prerequisites
+and first-run checks below before enabling governed tools. Automation may pass existing non-secret
+onboarding flags after a separator, for example
+`install-mealy-release.sh --onboard -- --route openrouter-free`. Interactive onboarding uses the
+named environment variable when present and otherwise reads the credential through a hidden
+terminal prompt. Automation still uses the named environment variable; credentials never belong
+in an installer or process argument.
 
 ## Native Linux packages
 
@@ -203,6 +211,34 @@ install -Dm755 target/release/mealyctl "$HOME/.local/bin/mealyctl"
 Ensure `$HOME/.local/bin` is on `PATH`, or use the absolute paths below.
 
 ## Guided first run (recommended)
+
+The shortest supported-Linux path is:
+
+```sh
+mealyctl
+```
+
+On a terminal, a bare command enters onboarding when `$HOME/.mealy/config.json` does not exist and
+opens a new durable chat after configuration. Scripts must use the explicit `mealyctl onboard`
+command so a missing subcommand never creates state outside a terminal.
+
+The guided journey offers strictly free OpenRouter, authenticated custom, credentialless loopback,
+ChatGPT subscription, OpenAI API, and Anthropic API routes. The command discovers
+models where the provider supplies a bounded catalog, derives complete OpenRouter free-model
+limits and exact zero prices, shows one non-secret plan, performs the bounded live probe, installs
+and starts the owner service, waits for health, requires `doctor` to pass, and opens the first
+durable chat when all standard streams are attached to a terminal. `--no-chat` stops after
+verification and preserves the exact JSON/command handoff; `--chat` forces the transition for a
+deliberately scripted chat session. See
+[getting started](GETTING_STARTED.md) for the short route-specific examples.
+
+An existing configuration is never silently replaced. Diagnose a running home with `doctor`, or
+stop it and use `--reconfigure` only after intentionally reviewing the replacement. Use
+`--configure-only` when a foreground/test deployment deliberately should not install, start, or
+verify the service. `--skip-connectivity-test` requires `--configure-only`; the normal full
+onboarding path cannot claim an unprobed provider.
+
+## Provider-only setup for foreground and advanced workflows
 
 `mealyctl setup` initializes a clean owner-private home and activates one provider while the daemon
 is stopped. It prompts only for non-secret provider/model/limit/price choices. For a remote
@@ -390,10 +426,20 @@ without blocking the prompt while a task is running:
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" chat
 ```
 
-The REPL prints its session ID. Resume it later with `chat --session-id SESSION_ID`; the client
-scans up to 100,000 retained events, rediscovers the exact active turn and durable pending inbox
-entries, and resumes their local watchers before accepting more input. Plain text and `/queue TEXT`
-use normal FIFO delivery, `/steer TEXT` attaches at the next safe boundary, and
+The REPL prints its session ID. Return to the most recently updated local conversation without
+copying that ID:
+
+```sh
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" chat --continue
+```
+
+`--continue` (short form `-c`) fails with a direct new-chat instruction when this exact
+owner/channel binding has no prior session; it never creates one by surprise. Use `chat --pick` to
+choose one of the 20 newest exact-binding sessions from a terminal, or `chat --session-id
+SESSION_ID` when automation already has a specific older session. Every resume path scans up to
+100,000 retained events, rediscovers the exact active turn and durable pending inbox entries, and
+resumes their local watchers before accepting more input. Plain text and `/queue TEXT` use
+normal FIFO delivery, `/steer TEXT` attaches at the next safe boundary, and
 `/interrupt TEXT` records cancellation before durably queueing the replacement. These commands
 remain available while earlier provider or tool work is in flight. `/act TEXT` explicitly selects
 configured medium-risk create-file authority for that one task; `/edit TEXT` selects
@@ -439,7 +485,9 @@ Find recent sessions owned by this exact local channel binding, newest updated f
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" session list --limit 20
 ```
 
-Copy a returned `sessionId` into `chat --session-id SESSION_ID` to resume its active/pending work.
+The ordinary return path is `chat --continue`. Use `chat --pick` to choose an older conversation
+interactively. `session list` and `chat --session-id SESSION_ID` remain the bounded JSON/script
+path for selecting and resuming exact active/pending work.
 Telegram-owned sessions remain discoverable through `channel telegram-list`; exact channel-binding
 isolation prevents a general local session query from silently crossing transport identities.
 
@@ -642,41 +690,62 @@ and [model pricing schema](https://openrouter.ai/docs/guides/overview/models#mod
 Free-model availability and rate limits can change. Re-run account-filtered discovery before
 activation or acceptance; never remove the `:free` suffix or substitute a merely low-cost model.
 
-### OpenAI and Claude subscription sign-in
+### ChatGPT subscription sign-in and Claude alternatives
 
 A ChatGPT subscription is not an OpenAI Platform API key. Mealy supports that owner-local account
-only by launching the official Codex client that is already signed in with ChatGPT. It does not
-read, copy, refresh, or store the client's OAuth material:
+only through the installed official Codex client. It does not read, copy, refresh, or store the
+client's OAuth material, email, or account identifiers. The ordinary guided path is:
 
 ```sh
 codex login status
-"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-openai \
-  --model YOUR_EXACT_CODEX_SUBSCRIPTION_MODEL \
-  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
-  --maximum-output-tokens 4096 \
-  --approve
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" onboard \
+  --route chatgpt-subscription
 ```
 
-Claude subscription access uses the same boundary around an already signed-in official Claude
-client:
+If the first command reports signed out—or another Codex login mode is active—onboarding discloses
+the change and requires a separate `y/yes` before starting the official browser flow. For a
+headless Linux host, append `--chatgpt-login device-code`, then open the displayed HTTPS URL and
+enter the code on another device. The bounded wait is five minutes. A non-terminal caller cannot
+initiate login, and declining starts no login and changes no Mealy home. Completing login changes
+the shared Codex account before Mealy's final provider-plan approval; cancelling that later
+approval does not log Codex out.
+
+Onboarding queries the documented account-visible Codex model catalog and selects its unique
+default. `--model` is accepted only when it exactly matches a catalog entry. Mealy deliberately
+retains a conservative 128,000-token operational context ceiling because this catalog does not
+publish token limits; use `--context-tokens` only after intentionally reviewing an override. See
+OpenAI's [Codex authentication](https://learn.chatgpt.com/docs/auth),
+[Codex app-server](https://learn.chatgpt.com/docs/app-server), and
+[`model/list` contract](https://learn.chatgpt.com/docs/app-server#list-models-modellist).
+
+The lower-level stopped-home command is available for already authenticated automation:
 
 ```sh
-claude auth status
-"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-claude \
-  --model YOUR_EXACT_CLAUDE_SUBSCRIPTION_MODEL \
-  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
+"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-openai \
   --maximum-output-tokens 4096 \
   --approve
 ```
+
+Unlike guided onboarding, this command does not manage login or query the account catalog. It
+retains the maintained `gpt-5.6`/128,000-token defaults unless explicit overrides are supplied.
 
 If PATH lookup is ambiguous, add `--executable-path /absolute/path/to/the/official/client`. Mealy
 canonicalizes that path, records its SHA-256, and rechecks the bytes before every request. The
-official process receives no OpenAI, Anthropic, OpenRouter, or local API-key variables; client
+Codex process receives no OpenAI, Anthropic, OpenRouter, or local API-key variables; client
 tools, connectors, project instructions, session persistence, and writable execution are disabled.
 Only a bounded JSON conversation/tool envelope enters stdin, and only schema-valid decision and
 usage output is accepted. Updating the official client changes its digest and deliberately requires
 stopped-home reactivation. Expired or invalid client login fails the connectivity probe without
 replacing the previous provider.
+
+Mealy does not offer Claude.ai subscription login. Anthropic's current
+[legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance) says
+third-party developers may not route requests through Claude Free, Pro, or Max plan credentials.
+The retired `claude-subscription` onboarding alias and
+`config provider-subscription-claude` command fail before mutation or client execution. Use
+`anthropic-api`, `openrouter-free`, a custom endpoint, or Claude Code directly. An old Mealy config
+that names the Claude subscription client also fails validation until the stopped home is migrated
+to one of those supported routes.
 
 Activation raises the current per-provider deadline only when needed to cover the declared
 routing-latency estimate (60 seconds by default) and refuses to exceed the configured total run
@@ -685,8 +754,9 @@ tokens added by the official client outside the normalized conversation; the pro
 usage must still fit that durable reservation before settlement succeeds.
 
 The configured output-token value is an acceptance ceiling checked against client-reported usage;
-the subscription clients do not currently expose the same exact upstream `max_output_tokens`
-control as the direct APIs. Use the private llama-server or zero-price OpenRouter route for
+the Codex subscription client does not currently expose the same exact upstream
+`max_output_tokens` control as the direct API. Use the private llama-server or zero-price
+OpenRouter route for
 frequent, long-running, unattended, or release-acceptance work. Subscription availability, account
 limits, and official-client terms remain upstream constraints, and these commands are not a way to
 turn a personal subscription into a general API credential.
@@ -867,6 +937,19 @@ decision, or constraint, but must label it as a suggestion and cannot claim it w
 explicitly instructed to route credentials, identity numbers, health, financial, and third-party
 private content to the advanced categorized review workflow. The model never autonomously
 activates memories; every activation remains an explicit authenticated owner action.
+
+Inside `mealyctl chat`, use `/status` to refresh the live provider/model, health, locality,
+context/output limits, configured prices, and primary/fallback request pressure. The same concise
+status appears at chat startup. Every terminal turn also prints durable recorded input/output
+tokens, provider-neutral cost microunits, model/tool calls, and retries. These are exact local
+accounting facts, not an inferred bill or an estimate of unused context:
+
+```text
+/status
+```
+
+Switching providers remains a stopped-daemon `config provider` transaction so an active
+conversation cannot silently cross an unreviewed model, credential, price, or residency boundary.
 
 Use `mealyctl chat` or the lower-level session commands shown above. A real-provider turn makes one
 bounded request, commits the normalized response and usage, runs deterministic integrity

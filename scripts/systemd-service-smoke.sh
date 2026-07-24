@@ -14,7 +14,7 @@ if [[ $(uname -s) != Linux ]]; then
   echo "the systemd service smoke is Linux-only" >&2
   exit 69
 fi
-for command in awk dirname grep jq journalctl mktemp readlink realpath seq sleep systemctl timeout; do
+for command in awk dirname grep jq journalctl mkfifo mktemp readlink realpath seq sleep systemctl timeout; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "required command is unavailable: $command" >&2
     exit 69
@@ -75,11 +75,22 @@ unit_directory=$(mktemp -d "$HOME/.mealy systemd unit.XXXXXX")
 unit="$unit_directory/mealy.service"
 daemon_pid=
 service_pid=
+onboard_pid=
+onboard_input_fd=
 linked=false
+default_unit="$HOME/.config/systemd/user/mealy.service"
+default_unit_created=false
 
 cleanup() {
   status=$?
   set +e
+  if [[ -n $onboard_pid ]] && kill -0 "$onboard_pid" 2>/dev/null; then
+    kill "$onboard_pid" 2>/dev/null
+    wait "$onboard_pid" 2>/dev/null
+  fi
+  if [[ -n $onboard_input_fd ]]; then
+    exec {onboard_input_fd}>&-
+  fi
   if [[ $linked == true ]]; then
     link="$HOME/.config/systemd/user/mealy.service"
     if [[ -L $link && $(readlink -- "$link") == "$unit" ]]; then
@@ -104,6 +115,16 @@ cleanup() {
     timeout --foreground --signal=TERM --kill-after=2 5 \
       systemctl --user reset-failed mealy.service >/dev/null 2>&1
   fi
+  if [[ $default_unit_created == true && -f $default_unit ]] \
+    && grep -Fq "ExecStart=\"$mealyd\" --home \"$home\"" "$default_unit"; then
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user disable --now mealy.service >/dev/null 2>&1
+    rm -f -- "$default_unit"
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user daemon-reload >/dev/null 2>&1
+    timeout --foreground --signal=TERM --kill-after=2 5 \
+      systemctl --user reset-failed mealy.service >/dev/null 2>&1
+  fi
   if [[ -n $service_pid && -e /proc/$service_pid/exe \
     && $(readlink -f -- "/proc/$service_pid/exe" 2>/dev/null) == "$mealyd" \
     && -r /proc/$service_pid/cgroup \
@@ -122,6 +143,213 @@ cleanup() {
   rm -rf -- "$home" "$unit_directory"
 }
 trap cleanup EXIT
+
+# Prove the ordinary clean-home journey composes subscription probing, default service
+# installation/activation, authenticated health/doctor, and one durable useful turn. The fake
+# official client owns no credential and is never installed outside this disposable proof.
+subscription_fixture="$unit_directory/codex-subscription-fixture"
+cat >"$subscription_fixture" <<'EOF'
+#!/bin/sh
+test -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}" || exit 90
+if [ "${1:-}" = app-server ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      *'"method":"initialize"'*)
+        printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","platformFamily":"linux","platformOs":"linux"}}'
+        ;;
+      *'"method":"initialized"'*) ;;
+      *'"method":"account/read"'*)
+        printf '%s\n' '{"id":2,"result":{"account":{"type":"chatgpt","planType":"fixture"},"requiresOpenaiAuth":true}}'
+        ;;
+      *'"method":"model/list"'*)
+        printf '%s\n' '{"id":3,"result":{"data":[{"id":"fixture-model","model":"fixture-model","displayName":"Fixture Model","hidden":false,"isDefault":true}],"nextCursor":null}}'
+        ;;
+      *) exit 91 ;;
+    esac
+  done
+  exit 0
+fi
+cat >/dev/null
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"systemd-onboarding-fixture"}' \
+  '{"type":"item.completed","item":{"type":"agent_message","text":"{\"kind\":\"final\",\"text\":\"MEALYONBOARDINGOK\",\"toolId\":null,\"arguments\":null}"}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}'
+EOF
+chmod 0700 "$subscription_fixture"
+default_unit_created=true
+onboard_output="$unit_directory/onboard.stdout"
+onboard_errors="$unit_directory/onboard.stderr"
+onboard_input="$unit_directory/onboard.input"
+mkfifo -- "$onboard_input"
+exec {onboard_input_fd}<>"$onboard_input"
+OPENAI_API_KEY=must-not-reach-client \
+  ANTHROPIC_API_KEY=must-not-reach-client \
+  OPENROUTER_API_KEY=must-not-reach-client \
+  LOCAL_API_KEY=must-not-reach-client \
+    "$mealyctl" --home "$home" onboard \
+      --route chatgpt-subscription \
+      --executable-path "$subscription_fixture" \
+      --model fixture-model \
+      --context-tokens 32768 \
+      --maximum-output-tokens 64 \
+      --approve \
+      --chat \
+      <"$onboard_input" >"$onboard_output" 2>"$onboard_errors" &
+onboard_pid=$!
+printf '%s\n' "Complete the onboarding acceptance turn." >&"$onboard_input_fd"
+chat_completed=false
+for _ in $(seq 1 400); do
+  if grep -Fq 'mealy> MEALYONBOARDINGOK' "$onboard_output" 2>/dev/null; then
+    chat_completed=true
+    break
+  fi
+  if ! kill -0 "$onboard_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ $chat_completed != true ]]; then
+  echo "onboarding did not reach a first useful chat response" >&2
+  cat "$onboard_errors" >&2
+  exit 70
+fi
+printf '/quit\n' >&"$onboard_input_fd"
+wait "$onboard_pid"
+onboard_pid=
+exec {onboard_input_fd}>&-
+onboard_input_fd=
+rm -- "$onboard_input"
+onboard=$(awk '{print} $0 == "}" {exit}' "$onboard_output")
+jq -e \
+  --arg daemon "$mealyd" \
+  --arg home "$home" '
+    .provider.protocol == "openai_subscription_cli"
+    and .provider.providerId == "openai.subscription"
+    and .provider.connectivityTested == true
+    and .provider.secretId == null
+    and .service.daemonPath == $daemon
+    and .service.home == $home
+    and .serviceStarted == true
+    and .healthVerified == true
+    and .chatStarted == true
+    and .doctor.controlPlaneReady == true
+    and .doctor.sandboxAvailable == true
+    and (.nextCommand | contains(" chat"))
+  ' <<<"$onboard" >/dev/null
+grep -Fq 'Mealy chat session ' "$onboard_output"
+grep -Fq 'provider> openai.subscription | model fixture-model | health ' "$onboard_output"
+grep -Fq 'limits> context 32768 tokens (' "$onboard_output"
+grep -Fq 'mealy> MEALYONBOARDINGOK' "$onboard_output"
+grep -Fq \
+  'usage> 10 input + 5 output token(s) | 0 configured-cost microunit(s) | 1 model call(s) | 0 tool call(s) | 0 retries' \
+  "$onboard_output"
+"$mealyctl" --home "$home" health >/dev/null
+onboard_service_enabled=$(
+  systemctl_user is-enabled mealy.service 2>/dev/null || true
+)
+onboard_service_pid_before=$(
+  systemctl_user show mealy.service --property=MainPID --value
+)
+if [[ $onboard_service_enabled != enabled \
+  || ! $onboard_service_pid_before =~ ^[1-9][0-9]*$ \
+  || ! -e /proc/$onboard_service_pid_before/exe \
+  || $(readlink -f -- "/proc/$onboard_service_pid_before/exe") != "$mealyd" ]]; then
+  echo "onboarding did not leave an enabled owner service running the installed daemon" >&2
+  exit 70
+fi
+onboarding_session_id=$(awk '
+  $1 == "Mealy" && $2 == "chat" && $3 == "session" {print $4; exit}
+' "$onboard_output")
+if [[ -z $onboarding_session_id ]]; then
+  echo "onboarding did not print its durable session identity" >&2
+  exit 70
+fi
+sessions_before_continue=$("$mealyctl" --home "$home" session list --limit 100)
+
+# Exercise the reboot-relevant boundary rather than merely reopening the client against the same
+# daemon process. An enabled generated unit, a new healthy mealyd PID, passing doctor, and the
+# exact prior durable session together establish the parts of cold host recovery under Mealy's
+# control; distro qualification separately proves the unit's systemd contract.
+systemctl_user restart mealy.service
+restart_ready=false
+for _ in $(seq 1 400); do
+  if "$mealyctl" --home "$home" health >/dev/null 2>&1; then
+    restart_ready=true
+    break
+  fi
+  sleep 0.05
+done
+if [[ $restart_ready != true ]]; then
+  echo "the restarted onboarding service did not recover bounded control-plane health" >&2
+  exit 70
+fi
+onboard_service_pid_after=$(
+  systemctl_user show mealy.service --property=MainPID --value
+)
+if [[ ! $onboard_service_pid_after =~ ^[1-9][0-9]*$ \
+  || $onboard_service_pid_after == "$onboard_service_pid_before" \
+  || ! -e /proc/$onboard_service_pid_after/exe \
+  || $(readlink -f -- "/proc/$onboard_service_pid_after/exe") != "$mealyd" ]]; then
+  echo "systemd restart did not activate a distinct installed daemon process" >&2
+  exit 70
+fi
+restart_doctor=$("$mealyctl" --home "$home" doctor)
+jq -e '
+  .controlPlaneReady == true
+  and .sandboxAvailable == true
+  and (.checks.sqlite | startswith("ok:"))
+  and any(.sandboxProfiles[]; .profile == "observe" and .status == "enforceable")
+  and any(.sandboxProfiles[];
+    .profile == "workspace_write" and .status == "enforceable")
+' <<<"$restart_doctor" >/dev/null
+
+continued_output="$unit_directory/continued.stdout"
+printf '/quit\n' \
+  | "$mealyctl" --home "$home" chat --continue >"$continued_output"
+grep -Fqx "Mealy chat session $onboarding_session_id" "$continued_output"
+sessions_after_continue=$("$mealyctl" --home "$home" session list --limit 100)
+jq -e --arg session_id "$onboarding_session_id" '
+  (.sessions | length) == 1
+  and .sessions[0].sessionId == $session_id
+' <<<"$sessions_before_continue" >/dev/null
+jq -e --arg session_id "$onboarding_session_id" '
+  (.sessions | length) == 1
+  and .sessions[0].sessionId == $session_id
+' <<<"$sessions_after_continue" >/dev/null
+search=$("$mealyctl" --home "$home" session search MEALYONBOARDINGOK)
+onboarding_task_id=$(jq -er '
+  [.hits[] | select(
+    .assistantExcerpt // "" | contains("MEALYONBOARDINGOK")
+  )] | if length == 1 then .[0].taskId else empty end
+' <<<"$search" 2>/dev/null || true)
+if [[ -z $onboarding_task_id ]]; then
+  echo "onboarding service did not complete the first durable model turn" >&2
+  exit 70
+fi
+onboarding_task=$("$mealyctl" --home "$home" task status "$onboarding_task_id")
+jq -e '.status == "succeeded"' <<<"$onboarding_task" >/dev/null
+"$mealyctl" --home "$home" drain >/dev/null
+for _ in $(seq 1 400); do
+  state=$(systemctl_user show mealy.service --property=ActiveState --value)
+  if [[ $state != active && $state != deactivating ]]; then
+    break
+  fi
+  sleep 0.05
+done
+systemctl_user disable --now mealy.service >/dev/null
+if [[ ! -f $default_unit ]] \
+  || ! grep -Fq "ExecStart=\"$mealyd\" --home \"$home\"" "$default_unit"; then
+  echo "onboarding did not install the expected default owner unit" >&2
+  exit 70
+fi
+# The bounded drain above already proved the service inactive. `disable --now`
+# may garbage-collect that clean unit immediately, so there is no failed state
+# to reset and a named reset would incorrectly fail with "unit not loaded".
+rm -- "$default_unit"
+default_unit_created=false
+systemctl_user daemon-reload
+rm -rf -- "$home"
+mkdir -m 0700 -- "$home"
 
 # Initialize a complete default home and prove the same binaries work before
 # adding systemd supervision. The daemon never receives a credential.
@@ -304,6 +532,55 @@ done
 state=$(systemctl_user show mealy.service --property=ActiveState --value)
 if [[ $state != inactive ]]; then
   echo "generated service ended in unexpected state $state after bounded drain" >&2
+  exit 70
+fi
+
+removal_plan=$(
+  "$mealyctl" --home "$home" service remove --destination "$unit"
+)
+jq -e \
+  --arg home "$home" \
+  --arg unit "$unit" \
+  --arg fragment "$default_unit" \
+  --arg daemon "$mealyd" '
+    .schemaVersion == "mealy.service-removal.v1"
+    and .home == $home
+    and .serviceDefinition == $unit
+    and .loadedFragment == $fragment
+    and .daemonPath == $daemon
+    and .installed == true
+    and .definitionVerified == true
+    and .loaded == true
+    and .active == false
+    and .actionRequired == true
+    and .applySupported == true
+    and .preservesHome == true
+    and .removed == false
+  ' <<<"$removal_plan" >/dev/null
+removal=$(
+  "$mealyctl" --home "$home" service remove --destination "$unit" --approve
+)
+jq -e \
+  --arg home "$home" \
+  --arg unit "$unit" \
+  --arg daemon "$mealyd" '
+    .home == $home
+    and .serviceDefinition == $unit
+    and .loadedFragment == null
+    and .daemonPath == $daemon
+    and .installed == false
+    and .loaded == false
+    and .active == false
+    and .actionRequired == false
+    and .applySupported == true
+    and .preservesHome == true
+    and .removed == true
+  ' <<<"$removal" >/dev/null
+linked=false
+service_pid=
+[[ ! -e $unit && ! -e $default_unit && ! -L $default_unit && -d $home ]]
+if systemctl_user cat mealy.service >/dev/null 2>&1; then
+  echo "approved service removal left mealy.service discoverable" >&2
   exit 70
 fi
 

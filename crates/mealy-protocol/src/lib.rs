@@ -2009,6 +2009,16 @@ pub struct AdminStatusResponse {
     pub provider_id: String,
     /// Effective model identity selected for this daemon lifetime.
     pub provider_model_id: String,
+    /// Maximum normalized context tokens accepted by the effective provider.
+    pub provider_context_tokens: u64,
+    /// Maximum normalized generated tokens accepted by the effective provider.
+    pub provider_maximum_output_tokens: u64,
+    /// Conservative provider-owned input tokens added outside normalized Mealy context.
+    pub provider_input_token_overhead: u64,
+    /// Effective input price in configured currency microunits per million tokens.
+    pub provider_input_microunits_per_million_tokens: u64,
+    /// Effective output price in configured currency microunits per million tokens.
+    pub provider_output_microunits_per_million_tokens: u64,
     /// Effective provider residency label used by routing policy.
     pub provider_residency: String,
     /// Whether the effective provider endpoint is local to this host.

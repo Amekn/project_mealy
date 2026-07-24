@@ -42,7 +42,9 @@ release_documents=(
   CI_CD.md
   CLI.md
   DOMAIN_MODEL.md
+  GETTING_STARTED.md
   IMPLEMENTATION_PLAN.md
+  LINUX_REPOSITORIES.md
   LINUX_SUPPORT.md
   OPERATIONS.md
   PRODUCTION_READINESS.md
@@ -71,6 +73,7 @@ release_documents=(
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
   benchmarks/2026-07-23-schema16-release-soak-subject.json
   benchmarks/2026-07-23-schema16-release-soak.json
+  benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md
   benchmarks/README.md
   benchmarks/release-soak.json
   benchmarks/release-soak-subject.json
@@ -83,12 +86,16 @@ release_documents=(
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
   decisions/0009-sqlite-writer-and-snapshot-readers.md
+  decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md
+  research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
   releases/README.md
   releases/v0.1.0.md
   releases/v0.1.1.md
+  releases/v0.2.0.md
 )
 
 for command in ar awk chmod cp date dirname find gzip install jq ln md5sum mkdir mktemp mv od \
@@ -172,6 +179,7 @@ expected_files=(
   bin/mealyd
   bin/mealyctl
   install.sh
+  install-release.sh
   fetch-browser-runtime.sh
   BUILD-MANIFEST.json
   SBOM.cdx.json
@@ -190,7 +198,8 @@ expected_payload=$(printf '%s\n' "${expected_files[@]}" | sort)
 if [[ $actual_inventory != "$expected_inventory" || $payload_inventory != "$expected_payload" ]] \
   || ! (cd "$package" && sha256sum --check --strict PAYLOAD-SHA256SUMS >/dev/null) \
   || [[ ! -x $package/bin/mealyd || ! -x $package/bin/mealyctl \
-    || ! -x $package/install.sh || ! -x $package/fetch-browser-runtime.sh ]]; then
+    || ! -x $package/install.sh || ! -x $package/install-release.sh \
+    || ! -x $package/fetch-browser-runtime.sh ]]; then
   echo "release payload is incomplete or failed integrity verification" >&2
   exit 65
 fi
@@ -247,7 +256,8 @@ install -d -m 0755 "$release_root" "$data_root/usr/bin" "$documentation" "$manua
 cp -a "$package/." "$release_root/"
 find "$release_root" -type f -exec chmod 0644 {} +
 chmod 0755 "$release_root/bin/mealyd" "$release_root/bin/mealyctl" \
-  "$release_root/install.sh" "$release_root/fetch-browser-runtime.sh"
+  "$release_root/install.sh" "$release_root/install-release.sh" \
+  "$release_root/fetch-browser-runtime.sh"
 ln -s ../lib/mealy/release/bin/mealyd "$data_root/usr/bin/mealyd"
 ln -s ../lib/mealy/release/bin/mealyctl "$data_root/usr/bin/mealyctl"
 printf '%s\n' \
@@ -309,9 +319,9 @@ printf '%s\n' \
   '.B mealyctl' \
   '[\fB--home\fR \fIPATH\fR] \fICOMMAND\fR [\fIARGS\fR]' \
   '.SH DESCRIPTION' \
-  'Authenticates to mealyd for setup, chat, approvals, governed tools, status, backup, recovery, service generation, and administration.' \
+  'Authenticates to mealyd for onboarding, setup, chat, approvals, governed tools, status, backup, recovery, service generation, and administration.' \
   '.SH COMMON COMMANDS' \
-  '.BR setup , " doctor" , " chat" , " dashboard" , " status" , " backup" , " drain" , " service"' \
+  '.BR onboard , " setup" , " doctor" , " chat" , " dashboard" , " status" , " backup" , " drain" , " service"' \
   '.SH FILES' \
   '.I ~/.mealy' \
   'is the default owner-private state directory.' \
@@ -340,7 +350,7 @@ printf '%s\n' \
   'Description: local-first durable personal agent runtime' \
   ' Mealy runs a single-owner local daemon with durable sessions, recovery,' \
   ' governed tools, approvals, memory, channels, scheduling, and replay.' \
-  ' The companion client provides setup, chat, operations, and administration.' \
+  ' The companion client provides onboarding, setup, chat, operations, and administration.' \
   >"$control_root/control"
 while IFS= read -r relative; do
   (cd "$data_root" && md5sum "$relative")

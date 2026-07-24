@@ -93,6 +93,7 @@ jobs:
             packaging/build-deb.sh
             packaging/build-rpm.sh
             packaging/build-release.sh
+            packaging/build-signed-linux-repositories.sh
             packaging/install.sh
             packaging/install-release.sh
             packaging/normalize-sbom.sh
@@ -100,6 +101,8 @@ jobs:
             packaging/test-packaging.sh
             packaging/test-deb-packaging.sh
             packaging/test-rpm-packaging.sh
+            packaging/test-signed-linux-repositories.sh
+            packaging/validate-signed-linux-repositories.sh
             packaging/verify-release-payload.sh
             scripts/dashboard-smoke.sh
             scripts/build-release-binaries.sh
@@ -108,9 +111,11 @@ jobs:
             scripts/fetch-zizmor.sh
             scripts/generate-third-party-licenses.sh
             scripts/installed-package-smoke.sh
+            scripts/installed-update-rollback-smoke.sh
             scripts/installed-arch-smoke.sh
             scripts/installed-deb-smoke.sh
             scripts/installed-rpm-smoke.sh
+            scripts/preflight-release-environments.sh
             scripts/render-release-notes.sh
             scripts/run-soak.sh
             scripts/select-live-provider-acceptance.sh
@@ -121,6 +126,7 @@ jobs:
             scripts/test-documentation-validator.sh
             scripts/test-protected-ci-run-selector.sh
             scripts/test-public-license-validator.sh
+            scripts/test-release-environment-preflight.sh
             scripts/test-release-notes.sh
             scripts/test-release-soak-validator.sh
             scripts/test-release-tag-validator.sh
@@ -143,6 +149,8 @@ jobs:
         run: scripts/test-live-provider-acceptance-selector.sh
       - name: Verify exact protected-main CI gate
         run: scripts/test-protected-ci-run-selector.sh
+      - name: Verify production release-environment preflight
+        run: scripts/test-release-environment-preflight.sh
       - name: Verify public-release license gate
         run: scripts/test-public-license-validator.sh
       - name: Verify deterministic release notes
@@ -250,17 +258,29 @@ jobs:
             runuser -u builder -- /workspace/packaging/test-arch-packaging.sh
           '
 
+  linux-repository-trust:
+    name: Linux repository trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, verify, and clean-install signed repositories
+        run: packaging/test-signed-linux-repositories.sh
+
   linux-distribution-compatibility:
     name: Linux distribution compatibility
     if: ${{ always() }}
-    needs: linux-distro-packages
+    needs: [linux-distro-packages, linux-repository-trust]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every qualified distribution lane
+      - name: Require every qualified distribution and repository lane
         env:
-          RESULT: ${{ needs.linux-distro-packages.result }}
-        run: test "$RESULT" = success
+          PACKAGE_RESULT: ${{ needs.linux-distro-packages.result }}
+          REPOSITORY_RESULT: ${{ needs.linux-repository-trust.result }}
+        run: test "$PACKAGE_RESULT" = success && test "$REPOSITORY_RESULT" = success
 
   linux-sandbox-conformance:
     name: Linux sandbox conformance
@@ -303,6 +323,15 @@ jobs:
           test "$guard_status" -eq 73
           grep -Fq 'refusing to mutate a non-isolated systemd user manager' <<<"$guard_output"
           scripts/systemd-service-smoke.sh target/debug/mealyd target/debug/mealyctl
+      - name: Verify installed update failure restores the prior release
+        env:
+          MEALY_UPDATE_ROLLBACK_SMOKE_ALLOW_HOST: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/build-release-binaries.sh
+          scripts/installed-update-rollback-smoke.sh \
+            target/release/mealyd target/release/mealyctl
 
   linux-browser-conformance:
     name: Linux rendered-browser conformance

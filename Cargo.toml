@@ -12,11 +12,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.96"
 license-file = "LICENSE"
-repository = "https://github.com/Amekn/project_mealy"
+repository = "https://github.com/Amekn/mealy"
 publish = false
 
 [workspace.dependencies]
@@ -28,6 +28,7 @@ chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.42", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+clap_complete = "4.6.1"
 croner = "=3.0.1"
 dunce = "1.0.5"
 eventsource-stream = "0.2.3"
@@ -36,16 +37,16 @@ futures-util = "0.3.32"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 jsonschema = { version = "0.47.0", default-features = false }
-mealy-api = { path = "crates/mealy-api", version = "=0.1.1" }
-mealy-application = { path = "crates/mealy-application", version = "=0.1.1" }
-mealy-domain = { path = "crates/mealy-domain", version = "=0.1.1" }
-mealy-infrastructure = { path = "crates/mealy-infrastructure", version = "=0.1.1" }
-mealy-protocol = { path = "crates/mealy-protocol", version = "=0.1.1" }
-mealy-testkit = { path = "crates/mealy-testkit", version = "=0.1.1" }
+mealy-api = { path = "crates/mealy-api", version = "=0.2.0" }
+mealy-application = { path = "crates/mealy-application", version = "=0.2.0" }
+mealy-domain = { path = "crates/mealy-domain", version = "=0.2.0" }
+mealy-infrastructure = { path = "crates/mealy-infrastructure", version = "=0.2.0" }
+mealy-protocol = { path = "crates/mealy-protocol", version = "=0.2.0" }
+mealy-testkit = { path = "crates/mealy-testkit", version = "=0.2.0" }
 proptest = "1.7.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "query", "rustls", "stream"] }
 rusqlite = { version = "0.40.1", features = ["backup", "bundled"] }
-rustix = { version = "1.1.4", features = ["fs", "process"] }
+rustix = { version = "1.1.4", features = ["fs", "process", "termios"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11.0"

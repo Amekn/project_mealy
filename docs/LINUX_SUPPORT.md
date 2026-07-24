@@ -46,13 +46,12 @@ supervisor requires a separate security review.
 After installation, this is the authoritative host decision:
 
 ```sh
-mealyctl --home "$HOME/.mealy" setup
-mealyd --home "$HOME/.mealy" &
-mealyctl --home "$HOME/.mealy" doctor
+mealyctl onboard
+mealyctl doctor
 ```
 
 Do not enable tools if `doctor` reports that `observe` or `workspace_write` is not `enforceable`.
-Stop the daemon with `mealyctl --home "$HOME/.mealy" drain` before changing stopped-home
+Stop the daemon with `mealyctl drain` before changing stopped-home
 configuration.
 
 ## Derivative distributions
@@ -82,6 +81,9 @@ All native packages install immutable program material beneath `/usr/lib/mealy/r
 `/usr/bin/mealyd` and `/usr/bin/mealyctl`, and place offline documentation beneath
 `/usr/share/doc/mealy`. They contain no maintainer script, install hook, service activation, user
 creation, or home-directory mutation. Removing a package never deletes `$HOME/.mealy`.
+Stable releases publish those same artifacts through signed APT, DNF, and Pacman repositories;
+the complete setup and first-trust procedure is in
+[LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md).
 
 The owner-local archive installs beneath `$HOME/.local` by default and is the portability and
 rollback fallback across every qualified distribution. The optional browser remains x86-64-only;

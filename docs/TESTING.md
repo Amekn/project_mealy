@@ -96,7 +96,23 @@ onboarding. Clean-home setup scenarios drive the interactive provider/model/limi
 exact `APPROVE` phrase, verify denial creates no provider state, and prove a fully flagged remote
 setup initializes the shared default, performs a real bounded streaming probe, brokers the key,
 keeps secret bytes out of stdout/stderr/config, retains rollback history, and prints exact
-daemon/doctor/chat handoff commands. The suite also proves atomic credential brokering and protocol-specific activation probes, plus
+daemon/doctor/chat handoff commands. Composition-level onboarding scenarios prove a clean
+`--configure-only` transaction, reject a second run without `--reconfigure` while preserving exact
+configuration bytes, and prove the implicit `$HOME/.mealy` remains the exact same state after a
+working-directory change while `--home` and `MEALY_HOME` overrides remain exact (including an
+explicit home without `HOME`). They also discover a live OpenRouter account catalog, exclude
+paid/incomplete models,
+derive exact zero prices and limits for an eligible `:free` model, perform its bounded streaming
+probe, and keep the credential out of all output/config. The official Codex subscription-client
+fixtures exercise `onboard` through signed-in account reuse, browser and device-code challenges,
+challenge-bound completion, account-catalog default/override selection, executable digest pinning,
+and API-key environment exclusion. PTY/non-terminal proofs show login requires separate owner
+consent and that signed-out automation or explicit decline starts no login and mutates no Mealy
+home. A model-call-free live acceptance also reads the installed Codex Plus account and its
+recommended model without retaining identity or token material. A missing-client process proof
+requires actionable official installation guidance and zero Mealy mutation. Separate negative process coverage
+proves the retired Claude subscription route fails before configuration mutation or client invocation. The
+suite also proves atomic credential brokering and protocol-specific activation probes, plus
 read-only live OpenAI/Anthropic model discovery with exact authentication headers, filtering,
 Anthropic cursor pagination, token-limit normalization, and local record/response bounds. Its
 probe validators require the terminal protocol discriminator, bounded safe identity, and exact
@@ -352,6 +368,23 @@ The packaging fixture also modifies an installed threat model and proves slot ve
 an upgrade before either binary changes; `SECURITY.md` and the threat model are mandatory exact
 payload inventory rather than unverified side documentation. A checksum-mismatched installer is
 rejected before the installed-package smoke creates a prefix or home.
+The public bootstrap fixture additionally proves the final user-journey boundary: a pseudo-terminal
+fresh install automatically invokes the exact verified installed `mealyctl --home ... onboard`;
+`--onboard` forces the same composition for an explicit caller and preserves separated
+non-secret onboarding arguments exactly, while non-interactive and
+`--no-onboard` installs print one exact handoff, `--check --onboard` is rejected before mutation,
+and an existing home receives only `doctor` and `chat` handoffs. The independently installed
+systemd smoke below exercises the real onboarding/service/health/doctor/first-turn transaction, so
+the bootstrap test does not substitute a fake client for that behavior.
+The Linux pseudo-terminal suite additionally invokes the real client with no subcommand. It
+requires a clean home to display the onboarding route chooser without creating configuration,
+requires a configured home to create and open a real durable chat, and proves non-terminal use
+fails without mutation while naming the explicit automation commands.
+The same suite removes the normal OpenRouter/custom variables, enters distinct sentinel
+credentials through the real echo-disabled prompt, verifies the sentinel never reaches terminal
+output or `config.json`, requires the expected bearer on catalog/probe requests and exact private
+broker bytes, and proves normal echo returns for the next model-selection prompt. A non-terminal
+missing-credential case must fail before creating any home state.
 The release builder also requires its explicit inventory to equal the complete regular-file-only
 `docs/` tree. Archive and Debian install smokes verify that documentation indexes, requirements
 coverage, testing guidance, decisions, research, benchmarks, and negative evidence survive the
@@ -385,7 +418,18 @@ same tests reject a volatile service home, assert a private umask and forced-dra
 inhibition, and require a custom unit's activation command to link its exact safe path.
 `scripts/systemd-service-smoke.sh` then starts the generated unit in the explicitly opted-in
 GitHub-hosted runner or disposable container's user manager,
-requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
+first drives full subscription-backed `onboard` through provider probing, default service
+installation/start, authenticated health/doctor, the composed chat handoff, and one visible plus
+searchable successful durable model turn with the expected provider/model status, context boundary,
+and exact terminal token/cost/call accounting before leaving chat cleanly. The journey then
+requires that the generated unit is enabled and running the exact installed daemon, restarts it
+across a distinct main process, rechecks bounded health plus sandbox-conformant `doctor`, and
+resumes the exact original durable session through `chat --continue` without creating a duplicate.
+The pseudo-terminal client suite also renders two bounded recent-session choices, selects the
+non-latest entry through `chat --pick`, verifies exact-session resume, and proves browsing creates
+no session.
+It removes that exact default unit and home before the existing independent service proof.
+That proof requires both sandbox profiles to remain enforceable, resolves one exact approval, and requires
 the effect itself—not merely its reporting task—to create the expected bytes before bounded drain.
 It rejects both an outer Bubblewrap wrapper (which Ubuntu's reviewed profile makes incompatible
 with nested per-tool namespaces) and systemd-user namespace directives that hardened Ubuntu cannot
@@ -402,6 +446,18 @@ sets that opt-in only on the exact service-proof steps. The hosted CI step first
 variable and requires the guard to exit 73 with its exact refusal before running the opted-in proof.
 An opted-in manager with more than 1,024 failed units is also refused before link or reload; the
 script never clears unrelated diagnostic state on the operator's behalf.
+
+`scripts/installed-update-rollback-smoke.sh` follows that clean user-manager proof with two real
+managed archive slots. It packages and installs the already-built release binaries, creates a
+durable successful turn and verified pre-update backup, then activates a checksum-valid synthetic
+next patch whose daemon remains active but never becomes ready and whose client cannot service any
+command. The private old helper must inspect manifests and every payload digest itself without
+executing that candidate client, time out candidate qualification, stop it, exchange the verified
+slots through the stable manager, restart and qualify the old service, and retire its helper copy.
+The process gate requires a `rolled-back` durable transaction, exact old version/commit, green
+health and `doctor`, searchable pre-update task, restorable backup, preserved home, and explicit
+service cleanup. Remote GitHub acquisition/provenance is intentionally outside this failure
+fixture and remains covered by the update trust tests and tag publication workflow.
 
 Release binaries must be built through `scripts/build-release-binaries.sh`; `--auditable` is the
 tag-workflow mode. The helper rejects inherited Rust flags, remaps account, Cargo, repository, and
@@ -479,9 +535,12 @@ rejection of malformed or oversized envelopes. The public validation and Phase 2
 then cross restart and zero-live-call replay using the same storage path.
 
 `apps/mealyctl/tests/chat_pty.rs` runs the actual chat binary on a Linux pseudo-terminal against a
-control endpoint that deliberately holds admission open. It proves a second prompt is available
-while that request remains in flight and `/quit` promptly aborts only local tracking. This guards
-the concurrent REPL behavior at a real terminal boundary instead of only testing its parser.
+control endpoint that deliberately holds admission open. It proves the startup and refreshed
+`/status` views use the authenticated provider/model and token limits, a subsequent prompt is
+available while admission remains in flight, and `/quit` promptly aborts only local tracking. This
+guards the concurrent REPL behavior at a real terminal boundary instead of only testing its
+parser. The same binary/PTY boundary covers the bare-command journey, recent-session picker, and
+hidden OpenRouter/custom onboarding credential prompts.
 
 Replay reports evidence as incomplete when an excluded artifact-backed context item cannot be
 byte-for-byte reconstructed inside the SQLite-only verifier. The artifact adapter still verifies

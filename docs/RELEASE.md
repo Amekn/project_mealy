@@ -12,7 +12,9 @@ source paths to stable virtual identities; the packager independently rejects co
 paths. Each runner scans both `Cargo.lock` and the resulting binaries against RustSec and generates
 a bounded CycloneDX SBOM with pinned Syft. Each architecture creates and attests a reproducible
 archive, root-owned Debian package, RPM, target checksum manifest, and SBOM; x86-64 also creates
-the official Arch package.
+the official Arch package. One separate owner-reviewed job then signs those exact native packages
+and their APT, DNF, and Pacman metadata, validates a complete signed inventory, and creates the
+exact Pages artifact.
 A tag's native x86-64 job also rejects publication unless the checked
 `docs/benchmarks/release-soak.json` is a clean, retained-disk, external-release-binary report for
 at least 86,400 seconds, has the exact SHA-256/version of the newly built auditable daemon, and
@@ -34,10 +36,13 @@ isolated restore verification, clean drain, and state-preserving removal. Clean 
 then reproduce package construction on every supported distribution/architecture pair. Only after
 both architecture jobs pass and the separate x86-64 pinned real-browser
 process/CLI/model/replay job passes does one dependent job validate the complete merged inventory,
-add and attest the common installer, retain all assets, and create the GitHub release. Public
-acceptance downloads those immutable packages and repeats lifecycle smokes on clean Ubuntu,
-Debian, Fedora, and Arch environments. Third-party actions are pinned by commit and supply-chain
-tools by version. macOS and Windows are outside the active production and release contract.
+add and attest the common installer, retain all assets, and create the GitHub release. Only after
+that immutable release exists does the workflow deploy the prebuilt signed repository artifact.
+Public acceptance downloads those immutable packages and repeats lifecycle smokes on clean Ubuntu,
+Debian, Fedora, and Arch environments; separate native x86-64/ARM64 lanes verify the signed and
+GitHub-attested public manifest, then install through APT, DNF, and Pacman over HTTPS. Third-party
+actions are pinned by commit and supply-chain tools by version. macOS and Windows are outside the
+active production and release contract.
 
 ## Repository release controls
 
@@ -46,6 +51,15 @@ changes entering it. Configure the `live-provider-smoke` GitHub Environment with
 reviewers, then add only the provider secret needed for the reviewed manual probe (and the Brave
 secret only when that independent option will run). Never place those credentials in repository,
 workflow, or command-line configuration.
+
+Also complete the checked
+[signed-repository activation](LINUX_REPOSITORIES.md#maintainer-activation): enable Pages, protect
+the signing and `github-pages` Environments, set the exact Pages URL and primary fingerprint, and
+store only the base64 secret-subkey export. The repository build accepts no unsigned mode. APT
+receives signed Release metadata and by-hash indexes; Fedora receives signed RPMs and repository
+metadata with both checks enabled; Arch receives signed packages and a signed database. The
+release retains `ATTESTATION-linux-repositories.sigstore.json`, while the public Pages site retains
+the OpenPGP-signed complete manifest and minimal public certificate.
 
 The copyright holder selected Apache-2.0 on 2026-07-15. The repository now carries the canonical
 Apache License 2.0 text through the existing exact `license-file = "LICENSE"` inheritance, so the
@@ -76,15 +90,19 @@ That exact v0.1.0 daemon completed the preserved clean
 [promotion manifest](benchmarks/2026-07-23-schema16-release-soak-subject.json) remains checked
 historical evidence.
 
-The current v0.1.1 release subject is the retained `mealyd` from protected revision `8867c467`,
+The most recently qualified release subject is the retained v0.1.1 `mealyd` from protected
+revision `8867c467`,
 SHA-256 `78591cafdbe79691805d651ecc03e3383313fec8bfeb6ed3428a051fa23f69a7`. It completed the
 canonical clean [release soak](benchmarks/release-soak.json) for 86,415.473 seconds, 19,208 turns,
 and 48 hard restarts. It recovered 52 interrupted-provider turns, resumed one undispatched
 read-tool turn, retained complete recorded-only replay and SQLite integrity `ok`, drained cleanly,
 and left zero residue. The report names an ancestor of this report-bearing tree directly, so no
-current lineage proof is required.
-The remaining release gates are protected report CI, reviewed free-model OpenRouter acceptance,
-native package/public-download verification, and attested publication.
+current lineage proof is required. Its protected report CI and reviewed free-model OpenRouter
+acceptance passed, but the
+[`v0.1.1` tag workflow](benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md)
+failed before publication on a temporary-home package fixture. The tag is retained and will not be
+moved or reused. The v0.2.0 candidate changes source and package inputs, so it requires a new exact
+24-hour subject before native public-package verification and attested publication.
 
 The soak host and GitHub's Linux runner are different native link environments. A hosted-runner
 rebuild is therefore audited as a source build but is not mislabeled as the byte-identical soak
@@ -166,9 +184,17 @@ state and verifies release integrity, asset integrity, provenance, checksums, an
 on native Linux x86-64/ARM64 runners. It repeats the tokenless bootstrap plus archive and Debian
 lifecycle smokes on Ubuntu 24.04, then repeats each public native package lifecycle on clean pinned
 Ubuntu 26.04, Debian 13, Fedora 44, and Arch Linux environments. A release workflow is green only
-after every public Linux delivery check passes.
+after every public Linux delivery check passes. It also waits for the Pages deployment, verifies
+the public manifest's OpenPGP signature and exact tagged identity, verifies its retained GitHub
+attestation bundle, and clean-installs the public repository package on Ubuntu, Debian ARM64,
+Fedora x86-64/ARM64, and Arch x86-64.
 
 ## Verify and install a published release
+
+For the shortest native package-manager route, follow
+[LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md). That path is supported only when the exact release
+workflow's signed-repository deployment and public repository acceptance jobs are green. The
+rootless attested bootstrap below remains the portability and no-root path.
 
 Install GitHub CLI, Bubblewrap, `jq`, GNU tar/coreutils, `flock` (normally from `util-linux`), glibc
 2.39 or newer, and
@@ -190,21 +216,26 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
-The canonical signer identity for v0.1.1 and later is `Amekn/mealy`. Historical v0.1.0 bundles
-were issued before the repository rename and continue to verify only against
-`Amekn/project_mealy`; do not rewrite that retained evidence or use its legacy identity for a new
-release.
+The canonical signer identity for new releases is `Amekn/mealy`. Historical v0.1.0 bundles were
+issued before the repository rename and continue to verify only against `Amekn/project_mealy`;
+do not rewrite that retained evidence or use its legacy identity for a newly published tag.
 
 The bootstrap resolves one exact stable tag from bounded public release metadata, downloads the
 matching native archive, checksum manifest, manager, a second copy of itself, and the architecture
 plus common-installer Sigstore bundles. It verifies all four executable/checksum inputs offline
 against the exact tag ref and release workflow before checking the complete target inventory. No
 GitHub login or token is required. It delegates the actual atomic
-install to that verified release manager and prints setup/service commands. Pass
+install to that verified release manager and composes the first-run handoff described below. Pass
 `--version vX.Y.Z`, `--prefix DIR`, or `--home DIR` when the defaults are not appropriate.
+An interactive fresh install continues into the verified client’s guided onboarding by default;
+`--onboard` forces that handoff and `--no-onboard` keeps automation passive and prints the exact
+next command. A pre-existing home is never silently reconfigured: the bootstrap retains it and
+prints `doctor` and `chat` handoffs. With `--onboard`, a `--` separator may carry non-secret
+onboarding arguments directly to the verified installed client; credential values remain
+environment-only.
 
 For manual package selection or independent inspection, download one exact release into a new
 empty directory:
@@ -348,6 +379,7 @@ scripts/installed-package-smoke.sh \
   "dist/mealy-v${VERSION#v}-${TARGET}.tar.gz" dist/SHA256SUMS dist/install-mealy.sh
 scripts/installed-deb-smoke.sh "dist/mealy_${DEB_VERSION}_${DEB_ARCH}.deb"
 scripts/systemd-service-smoke.sh target/release/mealyd target/release/mealyctl
+scripts/installed-update-rollback-smoke.sh target/release/mealyd target/release/mealyctl
 ```
 
 Run the systemd proof in a disposable container with its own user manager when possible. Every
@@ -356,6 +388,14 @@ sets `MEALY_SYSTEMD_SMOKE_ALLOW_HOST=true`; the GitHub-hosted workflow sets that
 on its reviewed steps. It permits temporary unit linking, manager reload, enablement, and removal in
 the current user's manager. Even with opt-in, the proof refuses a manager carrying more than 1,024
 failed units before requesting reload. It is a test-maintainer command, not an installation step.
+
+The installed update proof uses the same disposable user manager. It creates a real current
+managed archive and a checksum-valid synthetic next patch whose daemon never becomes ready and
+whose client deliberately cannot report installation state. The preserved current helper must
+verify both slots without executing candidate code, automatically restore the prior package, pass
+health and `doctor`, retain the pre-update task and backup, and leave a durable `rolled-back`
+transaction. It tests post-activation recovery; remote release acquisition and GitHub provenance
+remain separate mandatory trust gates.
 
 The archive script first proves the exact release installer matches its unique checksum entry, then uses
 only that installer and the installed package binaries. It verifies the installed CLI generates a
@@ -380,9 +420,16 @@ service restriction that can pass startup/`doctor` yet block a secure nested wor
 standalone command requires a reachable systemd user manager, refuses to replace an existing
 `mealy.service`, and requires explicit opt-in outside a disposable container.
 
-Run `mealyctl --home "$HOME/.mealy" setup`, then `mealyctl service install` and the quickstart's
-first-run checks after a clean install. Setup does not start the daemon; it reviews and probes one
-provider before publishing the secret reference and prints the exact operational handoff. A
+Run `mealyctl --home "$HOME/.mealy" onboard` and the quickstart's first-chat check after a clean
+install. Onboarding reviews and probes one provider before publishing the secret reference, then
+installs/starts the Linux owner service and requires bounded health plus `doctor` verification.
+After publication, native public-acceptance runners use the tokenless release bootstrap without a
+repository override and repeat that complete journey against the downloaded binaries with a
+credentialless official-client fixture. The gate requires the visible first response, enabled
+service restart, passing `doctor`, exact durable-session continuation, and clean uninstall; a
+source-tree or pre-publication package result cannot substitute for it.
+The provider-only `setup` and `service install` commands remain available for foreground,
+automation, and recovery workflows. A
 checksum detects accidental corruption; the GitHub attestation ties the bytes to this repository
 and release workflow. Keep the active home on a persistent local filesystem outside `/tmp` and
 `/var/tmp`; Linux service installation rejects private-temporary paths and volatile
@@ -390,21 +437,45 @@ and release workflow. Keep the active home on a persistent local filesystem outs
 
 ## Upgrade an existing installation
 
-Never replace a running daemon. First inspect pending approvals and unknown effects, take a
-verified backup, then drain:
+First inspect the installation, pending approvals, and unknown effects, then obtain a no-mutation,
+fully attested update plan:
 
 ```sh
+mealyctl install-status
+mealyctl --home "$HOME/.mealy" update
 mealyctl --home "$HOME/.mealy" status
-mealyctl --home "$HOME/.mealy" backup "pre-upgrade-$VERSION"
-mealyctl --home "$HOME/.mealy" restore-verify "pre-upgrade-$VERSION"
-mealyctl --home "$HOME/.mealy" drain
 ```
 
-Download, verify, and install the new release as above. For a native system-package installation,
-the distribution package manager replaces the root-owned program files but never restarts the
-owner service; for an archive installation, the stable manager replaces its verified slots.
-Reinstall the user service definition so
-its reviewed canonical executable path and rollback copy are current, then start and validate:
+For an owner-local archive whose plan says `updateAvailable`, `stateSchemaCompatible`, and
+`applySupported` are all true, apply the exact pinned target:
+
+```sh
+mealyctl --home "$HOME/.mealy" update --approve
+```
+
+The client pins `latest` to the exact verified candidate before the second download; the bootstrap
+and stable manager independently verify hosted-workflow provenance, the outer inventory, the
+archive, and complete active slots. Apply verifies the exact active owner service, records and
+prints a durable transaction UUID, then launches an independent restart-on-failure user-service
+helper. The helper repeats candidate verification, creates an immutable secret-free backup, drains
+to a stopped home, activates the slot, restarts, and requires liveness, readiness, `doctor`, exact
+version/commit, and installed integrity. A failed target is stopped and the prior verified
+same-schema slot is automatically restored, restarted, and qualified. The helper continues after a
+terminal disconnect:
+
+```sh
+mealyctl --home "$HOME/.mealy" update-status TRANSACTION_UUID
+```
+
+A rolled-back transaction is a failed update even when recovery succeeds. Preserve a
+`recovery-failed` transaction, its backup, both release slots, and the named user-service journal
+before repair. This convenience update refuses state-schema changes. Use the manual verified
+release and migration path below when `stateSchemaCompatible` is false.
+
+For a native system-package installation, take and verify a backup, drain the daemon, then run the
+plan's exact `nativeUpdateCommand`. The distribution package manager replaces the root-owned
+program files but never restarts the owner service. Reinstall the user service definition so its
+reviewed canonical executable path and rollback copy are current, then start and validate:
 
 ```sh
 mealyctl --home "$HOME/.mealy" service install
@@ -431,8 +502,8 @@ For a binary regression where both releases support the same state schema, drain
 swap the complete active/previous slots through the installed manager:
 
 ```sh
-"$HOME/.local/share/mealy-manager.sh" rollback \
-  --prefix "$HOME/.local" --home "$HOME/.mealy"
+mealyctl --home "$HOME/.mealy" rollback
+mealyctl --home "$HOME/.mealy" rollback --approve
 ```
 
 The operation verifies both slots, holds the daemon and installer locks, swaps both binaries and
@@ -483,30 +554,42 @@ delete or edit the transaction directory by hand.
 
 ## Uninstall program files without deleting state
 
-Drain Mealy and disable/remove its user service first. Then run the installed manager:
+Retain and verify a backup. Inspect the plan, then explicitly apply it:
 
 ```sh
-"$HOME/.local/share/mealy-manager.sh" uninstall \
-  --prefix "$HOME/.local" --home "$HOME/.mealy"
+mealyctl --home "$HOME/.mealy" uninstall
+mealyctl --home "$HOME/.mealy" uninstall --approve
 ```
 
-Uninstall verifies the managed active and previous slots plus the stable manager, refuses a live
-home or modified binary, and removes only the two binaries, rollback copies, stable manager, and
-package-owned metadata/documents. It never deletes `$HOME/.mealy`, provider/Telegram/Discord credentials,
-SQLite, artifacts, backups, or exports. Retain and verify a complete backup before any separate
-deliberate state deletion.
+Uninstall verifies the managed active and previous slots plus the stable manager. If an exact
+generated owner service is loaded or present at the default destination, approved owner-local
+uninstall first disables and stops it, proves the home lock is free, re-verifies and removes its
+definition, and reloads the user manager. A mismatched unit fails closed. An installed but unlinked
+custom destination remains an explicit `service remove --destination ...` step. Uninstall then
+removes only the two binaries, rollback copies, stable manager, and package-owned
+metadata/documents. It never deletes `$HOME/.mealy`, provider/Telegram/Discord credentials, SQLite,
+artifacts, backups, or exports.
 
-For a Debian installation, use `sudo apt remove mealy` instead. The package owns only `/usr`
-program/metadata paths and has no maintainer scripts, so removal cannot delete `$HOME/.mealy`; the
-native package smoke proves this. The user-created systemd unit is not package-owned, so disable and
-remove it before uninstalling.
+For Debian, RPM, and Arch installations, the plan returns the exact native removal command instead
+of mutating `/usr`. Each package owns only root program/metadata paths and has no maintainer
+scripts, so removal cannot delete `$HOME/.mealy`; the native package smokes prove this. The
+user-created systemd unit is not package-owned, so run `mealyctl --home "$HOME/.mealy" service
+remove` and repeat it with `--approve` before the printed native package command.
+
+If `install-status` reports that only the owner-local stable manager is missing or modified,
+`mealyctl repair` previews the bounded action and `mealyctl repair --approve` reconstructs it from
+the complete checksum-verified active metadata copy. Any binary, manifest, bootstrap, SBOM,
+license, or documentation mismatch remains a hard failure requiring a verified reinstall.
 
 ## Maintainer release checklist
 
 1. Confirm the copyright-holder-selected canonical Apache-2.0 `LICENSE` remains inherited by every
    workspace package and run `scripts/validate-public-license.sh .`. Then make the workspace version
    and intended stable `vMAJOR.MINOR.PATCH` tag identical. The production workflow deliberately
-   rejects prerelease/build metadata and leading-zero version components.
+   rejects prerelease/build metadata and leading-zero version components. From the canonical source
+   checkout, run `scripts/preflight-release-environments.sh Amekn/mealy`; do not tag until its
+   read-only Pages, tag-policy, owner-review, fingerprint, signing-secret-name, and protected
+   free-OpenRouter checks all pass.
 2. Compare the pinned Headless Shell version with the official
    [Chrome for Testing stable metadata](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json).
    If the reviewed stable patch changed, update its exact archive byte count/SHA-256 and product

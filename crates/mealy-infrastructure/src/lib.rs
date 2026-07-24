@@ -4,6 +4,7 @@ mod artifact;
 mod browser;
 mod browser_bundle;
 mod channel_secret;
+mod codex_app_server;
 mod extension_host;
 mod fixture;
 mod maintenance;
@@ -28,6 +29,10 @@ pub use browser_bundle::{
     publish_browser_bundle,
 };
 pub use channel_secret::{ChannelSecretStoreError, FileChannelSecretStore};
+pub use codex_app_server::{
+    CodexAccountKind, CodexAccountState, CodexAppServerClient, CodexAppServerError,
+    CodexChatgptLoginChallenge, CodexChatgptLoginFlow, CodexSubscriptionModel,
+};
 pub use extension_host::{
     InstalledExtensionPackage, LinuxBubblewrapExtensionHost, inspect_extension_package,
 };

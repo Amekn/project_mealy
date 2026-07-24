@@ -103,6 +103,7 @@ package() {
     "$pkgdir/usr/lib/mealy/release/bin/mealyd" \
     "$pkgdir/usr/lib/mealy/release/bin/mealyctl" \
     "$pkgdir/usr/lib/mealy/release/install.sh" \
+    "$pkgdir/usr/lib/mealy/release/install-release.sh" \
     "$pkgdir/usr/lib/mealy/release/fetch-browser-runtime.sh"
   install -d -m 0755 "$pkgdir/usr/bin" "$pkgdir/usr/share/doc/mealy"
   ln -s ../lib/mealy/release/bin/mealyd "$pkgdir/usr/bin/mealyd"

@@ -1,30 +1,35 @@
 //! Local administrative and scripting client for Mealy.
 
+mod chat_picker;
 mod dashboard;
+mod lifecycle;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory as _, Parser, Subcommand, ValueEnum};
+use clap_complete::{Shell, generate};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::StreamExt;
 use mealy_application::{
-    BrowserConfig, CancellationProbe, McpServerConfig, McpServerDiscovery, McpToolGrant,
-    MessageRole, ModelProvider, NormalizedMessage, ProviderConfig, ProviderCredentialReference,
-    ProviderRequest, ProviderResponse, SubscriptionCliClient, WebAccessConfig, WebSearchConfig,
-    default_daemon_config_document, is_sha256_digest, sha256_digest, valid_provider_secret_id,
-    validate_discord_snowflake, validate_mcp_server_set, validate_provider_base_url,
-    validate_provider_chain,
+    BrowserConfig, CancellationProbe, MAXIMUM_PROVIDER_CREDENTIAL_BYTES, McpServerConfig,
+    McpServerDiscovery, McpToolGrant, MessageRole, ModelProvider, NormalizedMessage,
+    ProviderConfig, ProviderCredentialReference, ProviderRequest, ProviderResponse,
+    SubscriptionCliClient, WebAccessConfig, WebSearchConfig, default_daemon_config_document,
+    is_sha256_digest, sha256_digest, valid_provider_secret_id, validate_discord_snowflake,
+    validate_mcp_server_set, validate_provider_base_url, validate_provider_chain,
 };
 use mealy_domain::{
     AttemptId, ContextManifestId, RunId, ScheduleId, SkillAsset, SkillToolRequirement,
 };
 use mealy_infrastructure::{
-    BrowserBundleError, BrowserHostError, FileProviderSecretStore, InspectedSkillPackage,
-    MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES, MAXIMUM_ACTIVE_SKILL_RESOURCE_BYTES, McpHostError,
-    ProviderSecretStoreError, SubscriptionCliProvider, SubscriptionCliSettings, activate_backup,
-    activate_migration_backup, browser_worker_main, discover_mcp_stdio_server,
-    inspect_browser_bundle, inspect_skill_package, inspect_subscription_cli_executable,
-    is_trusted_system_executable, mcp_stdio_launcher_main, probe_browser_bundle_product,
-    publish_browser_bundle, publish_skill_package, verify_browser_runtime_installation,
+    BrowserBundleError, BrowserHostError, CodexAccountKind, CodexAppServerClient,
+    CodexChatgptLoginChallenge, CodexChatgptLoginFlow, CodexSubscriptionModel,
+    FileProviderSecretStore, InspectedSkillPackage, MAXIMUM_ACTIVE_SKILL_INSTRUCTION_BYTES,
+    MAXIMUM_ACTIVE_SKILL_RESOURCE_BYTES, McpHostError, ProviderSecretStoreError,
+    SubscriptionCliProvider, SubscriptionCliSettings, activate_backup, activate_migration_backup,
+    browser_worker_main, discover_mcp_stdio_server, inspect_browser_bundle, inspect_skill_package,
+    inspect_subscription_cli_executable, is_trusted_system_executable, mcp_stdio_launcher_main,
+    probe_browser_bundle_product, publish_browser_bundle, publish_skill_package,
+    verify_browser_runtime_installation,
 };
 use mealy_protocol::{
     API_VERSION, AdminMetricsResponse, AdminStatusResponse, AdminUsageReportResponse,
@@ -44,14 +49,14 @@ use mealy_protocol::{
     MemoryLifecycleRequest, MemoryPromotionAuthorizationCommand, MemoryResponse,
     MemoryRetentionCommand, MemorySearchResponse, MemorySensitivityCommand, MemorySourceCommand,
     MemoryStatusResponse, MigrationBackupActivationResponse, MissedRunPolicyCommand,
-    PendingApprovalsResponse, PromoteMemoryRequest, ProposeMemoryRequest,
+    PendingApprovalsResponse, PromoteMemoryRequest, ProposeMemoryRequest, ReadinessResponse,
     RebuildMemoryIndexRequest, ReconcileEffectRequest, ReconciliationOutcomeCommand,
     ResolveApprovalRequest, RevokeDiscordChannelRequest, RevokeTelegramChannelRequest,
     RevokeWebhookChannelRequest, RunGarbageCollectionRequest, ScheduleLifecycleRequest,
     ScheduleOverlapPolicyCommand, ScheduleResponse, ScheduleRunsResponse, SchedulesResponse,
     SessionSearchResponse, SessionStatusResponse, SessionsResponse, SetMemoryPinRequest,
-    StageExtensionManifestRequest, SubmitInputRequest, TaskCancellationReceipt, TaskControlReceipt,
-    TaskReplayResponse, TaskResponse, TaskStatus, TelegramChannelResponse,
+    StageExtensionManifestRequest, SubmitInputRequest, TaskBudgetUsage, TaskCancellationReceipt,
+    TaskControlReceipt, TaskReplayResponse, TaskResponse, TaskStatus, TelegramChannelResponse,
     TelegramChannelsResponse, TimelineEvent, TimelinePageResponse, VerifyBackupRequest,
     WebhookChannelResponse, WebhookChannelsResponse,
 };
@@ -61,16 +66,19 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
     fs::{self, File, OpenOptions},
-    io::{BufRead, Read, Write},
+    io::{BufRead, IsTerminal as _, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command as ProcessCommand, ExitCode, Stdio},
     time::{Duration, SystemTime},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::io::AsFd as _;
 use thiserror::Error;
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -116,6 +124,12 @@ const PROVIDER_PROBE_MAXIMUM_TEXT_BYTES: usize = 64 * 1024;
 // against `max_output_tokens` before emitting the requested visible text.
 const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
 const SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
+// OpenAI's maintained Codex guidance currently maps the stable `gpt-5.6` alias to the
+// recommended Sol model. Mealy deliberately accepts only a conservative 128k slice of the
+// documented 1,050,000-token window so the owner-local bridge remains safe across plan/catalog
+// changes. Both values remain explicit CLI overrides for pinned deployments.
+const OPENAI_SUBSCRIPTION_DEFAULT_MODEL: &str = "gpt-5.6";
+const OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS: u64 = 128_000;
 const SETUP_PROVIDER_ESTIMATED_LATENCY_MS: u64 = 30_000;
 const PROVIDER_DISPATCH_SAFETY_MARGIN_MS: u64 = 5_000;
 const PROVIDER_DISCOVERY_MAXIMUM_MODELS: usize = 500;
@@ -139,22 +153,95 @@ const CHAT_LOCAL_ATTACHMENT_PROMPT: &str =
 #[command(version, about = "Mealy local client and administration CLI")]
 struct Arguments {
     /// Private Mealy state directory containing `connection.json`.
-    #[arg(long, env = "MEALY_HOME", default_value = ".mealy")]
+    #[arg(long, env = "MEALY_HOME", default_value = "~/.mealy")]
     home: PathBuf,
     /// Operation to execute.
     #[command(subcommand)]
     command: Command,
 }
 
+#[derive(Debug, Parser)]
+#[command(version, about = "Mealy local client and administration CLI")]
+struct LifecycleArguments {
+    /// Private Mealy state directory containing `connection.json`.
+    #[arg(long, env = "MEALY_HOME", default_value = "~/.mealy")]
+    home: PathBuf,
+    /// Installed-program lifecycle operation to execute.
+    #[command(subcommand)]
+    command: LifecycleCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum LifecycleCommand {
+    /// Inspect install provenance, release integrity, rollback availability, and update ownership.
+    InstallStatus,
+    /// Verify a stable release target and optionally apply a schema-compatible archive update.
+    Update {
+        /// Stable release tag such as v1.2.3, or the latest stable release.
+        #[arg(long, default_value = "latest")]
+        version: String,
+        /// Apply the verified plan; omission performs a no-mutation check.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Inspect one durable disconnect-resistant update transaction.
+    UpdateStatus {
+        /// Exact transaction UUID printed by `update --approve`.
+        transaction_id: String,
+    },
+    /// Verify and optionally restore bounded installation-management evidence.
+    Repair {
+        /// Apply the verified repair plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Verify and optionally exchange same-schema owner-local release slots.
+    Rollback {
+        /// Apply the verified rollback plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Verify and optionally remove program files while preserving the durable home.
+    Uninstall {
+        /// Apply the verified uninstall plan.
+        #[arg(long)]
+        approve: bool,
+    },
+    /// Generate a native completion script for one supported shell.
+    Completion {
+        /// Shell whose completion syntax should be generated.
+        #[arg(value_enum)]
+        shell: CompletionShellArgument,
+    },
+    /// Internal restartable update helper owned by a transient user service.
+    #[command(hide = true)]
+    UpdateTransaction {
+        /// Exact durable transaction UUID prepared by the foreground client.
+        transaction_id: String,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Configure a provider, start the owner service, and verify a first usable Linux install.
+    Onboard(OnboardOptions),
     /// Initialize a clean home and guide one bounded provider activation while the daemon is stopped.
     Setup(SetupOptions),
     /// Start or resume a friendly line-oriented durable chat session.
     Chat {
         /// Existing session to resume; a new session is created when omitted.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["continue_latest", "pick"])]
         session_id: Option<String>,
+        /// Resume the most recently updated session for this exact owner/channel binding.
+        #[arg(
+            short = 'c',
+            long = "continue",
+            conflicts_with_all = ["session_id", "pick"]
+        )]
+        continue_latest: bool,
+        /// Interactively choose one of the 20 most recently updated exact-binding sessions.
+        #[arg(long, conflicts_with_all = ["session_id", "continue_latest"])]
+        pick: bool,
     },
     /// Session creation, submission, timeline, and status operations.
     Session {
@@ -320,6 +407,89 @@ enum Command {
     },
 }
 
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, clap::Args)]
+struct OnboardOptions {
+    /// Authentication/provider route; prompted when omitted.
+    #[arg(long, value_enum)]
+    route: Option<OnboardRouteArgument>,
+    /// Override the route's official, custom, or literal-loopback API version base.
+    #[arg(long)]
+    base_url: Option<String>,
+    /// Exact model ID; discovered or prompted when omitted.
+    #[arg(long)]
+    model: Option<String>,
+    /// Conservative context-token limit; derived from trusted catalog metadata when possible.
+    #[arg(long)]
+    context_tokens: Option<u64>,
+    /// Maximum output tokens Mealy may request or accept.
+    #[arg(long, default_value_t = 4_096)]
+    maximum_output_tokens: u64,
+    /// Named one-shot API credential variable; terminal onboarding prompts when it is absent.
+    #[arg(long)]
+    credential_env: Option<String>,
+    /// Input price in currency microunits per million tokens.
+    #[arg(long)]
+    input_microunits_per_million_tokens: Option<u64>,
+    /// Output price in currency microunits per million tokens.
+    #[arg(long)]
+    output_microunits_per_million_tokens: Option<u64>,
+    /// Installed official subscription client; PATH lookup is used when omitted.
+    #[arg(long)]
+    executable_path: Option<PathBuf>,
+    /// Managed `ChatGPT` login ceremony when Codex is not already signed in.
+    #[arg(long, value_enum)]
+    chatgpt_login: Option<ChatgptLoginArgument>,
+    /// Use terminal-only JSON when an HTTP endpoint does not support provider streaming.
+    #[arg(long)]
+    disable_streaming: bool,
+    /// Stage configuration without the default bounded live connectivity/model probe.
+    #[arg(long, requires = "configure_only")]
+    skip_connectivity_test: bool,
+    /// Stop after provider configuration instead of installing and starting the Linux service.
+    #[arg(long)]
+    configure_only: bool,
+    /// Explicitly allow replacing the provider configuration in an existing stopped home.
+    #[arg(long)]
+    reconfigure: bool,
+    /// Confirm the reviewed onboarding plan non-interactively.
+    #[arg(long)]
+    approve: bool,
+    /// Open the first interactive chat after service and doctor verification.
+    #[arg(long, conflicts_with_all = ["no_chat", "configure_only"])]
+    chat: bool,
+    /// Stop after verified onboarding and print the exact chat command.
+    #[arg(long, conflicts_with = "chat")]
+    no_chat: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OnboardRouteArgument {
+    /// Discover and admit only an exact zero-price, tool-capable `OpenRouter` `:free` model.
+    OpenrouterFree,
+    /// Authenticated custom `OpenAI` Responses-compatible HTTPS endpoint.
+    Custom,
+    /// Credentialless literal-loopback `OpenAI` Responses-compatible endpoint.
+    Local,
+    /// Official Codex account with an existing or separately consented `ChatGPT` sign-in.
+    ChatgptSubscription,
+    /// Retired compatibility name; always rejected under Anthropic's third-party terms.
+    #[value(hide = true)]
+    ClaudeSubscription,
+    /// Official `OpenAI` Responses API credential.
+    OpenaiApi,
+    /// Official Anthropic Messages API credential.
+    AnthropicApi,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ChatgptLoginArgument {
+    /// Open a local-callback `ChatGPT` authorization URL.
+    Browser,
+    /// Show a verification URL and user code for a remote or headless Linux terminal.
+    DeviceCode,
+}
+
 #[derive(Debug, clap::Args)]
 struct SetupOptions {
     /// Provider family; prompted when omitted.
@@ -369,6 +539,26 @@ enum SetupProviderArgument {
     Local,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CompletionShellArgument {
+    /// Bourne Again Shell.
+    Bash,
+    /// Z shell.
+    Zsh,
+    /// Friendly Interactive Shell.
+    Fish,
+}
+
+impl From<CompletionShellArgument> for Shell {
+    fn from(value: CompletionShellArgument) -> Self {
+        match value {
+            CompletionShellArgument::Bash => Self::Bash,
+            CompletionShellArgument::Zsh => Self::Zsh,
+            CompletionShellArgument::Fish => Self::Fish,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
     /// Atomically install the current platform's owner-level service definition.
@@ -379,6 +569,15 @@ enum ServiceCommand {
         /// Testable/custom service-definition path; platform user location by default.
         #[arg(long)]
         destination: Option<PathBuf>,
+    },
+    /// Plan or remove only the exact generated owner-level service definition.
+    Remove {
+        /// Exact custom service-definition path; loaded/default definition when omitted.
+        #[arg(long)]
+        destination: Option<PathBuf>,
+        /// Stop, disable, and remove the verified service definition.
+        #[arg(long)]
+        approve: bool,
     },
 }
 
@@ -484,14 +683,17 @@ enum ConfigCommand {
         /// Installed Codex executable; PATH lookup is used when omitted.
         #[arg(long)]
         executable_path: Option<PathBuf>,
-        /// Exact subscription-accessible Codex model name.
-        #[arg(long)]
+        /// Codex model name or maintained alias.
+        #[arg(long, default_value = OPENAI_SUBSCRIPTION_DEFAULT_MODEL)]
         model: String,
         /// Remote residency/trust label used by routing policy.
         #[arg(long, default_value = "openai-subscription")]
         residency: String,
-        /// Conservative context limit for this exact model.
-        #[arg(long)]
+        /// Conservative accepted context limit.
+        #[arg(
+            long,
+            default_value_t = OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS
+        )]
         context_tokens: u64,
         /// Maximum output tokens Mealy accepts from the official client.
         #[arg(long, default_value_t = 4_096)]
@@ -506,7 +708,8 @@ enum ConfigCommand {
         #[arg(long)]
         approve: bool,
     },
-    /// Configure official Claude Code access using its existing Claude subscription sign-in.
+    /// Retired: Anthropic forbids third-party routing through Claude subscription credentials.
+    #[command(hide = true)]
     ProviderSubscriptionClaude {
         /// Stable provider identity retained in routing evidence.
         #[arg(long, default_value = "claude.subscription")]
@@ -1946,9 +2149,1011 @@ fn main() -> ExitCode {
     }
 }
 
+fn combined_cli_command() -> clap::Command {
+    <LifecycleCommand as clap::Subcommand>::augment_subcommands(Arguments::command())
+        .subcommand_required(false)
+        .after_help(
+            "On an interactive terminal, run without a subcommand to onboard an unconfigured \
+             home or open a new chat for a configured home. Automation must name an explicit \
+             subcommand.",
+        )
+}
+
+fn stable_default_mealy_home(user_home: Option<OsString>) -> Option<PathBuf> {
+    user_home
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".mealy"))
+}
+
+fn cli_home_override_supplied(arguments: &[OsString]) -> bool {
+    std::env::var_os("MEALY_HOME").is_some()
+        || arguments.iter().skip(1).any(|argument| {
+            argument == "--home"
+                || argument
+                    .to_str()
+                    .is_some_and(|value| value.starts_with("--home="))
+        })
+}
+
+fn resolve_cli_home(parsed: PathBuf, override_supplied: bool) -> Result<PathBuf, CliError> {
+    if override_supplied {
+        return (!parsed.as_os_str().is_empty())
+            .then_some(parsed)
+            .ok_or(CliError::InvalidHome);
+    }
+    stable_default_mealy_home(std::env::var_os("HOME")).ok_or(CliError::DefaultHomeUnavailable)
+}
+
+fn lifecycle_invocation(arguments: &[OsString]) -> bool {
+    let mut index = 1;
+    while let Some(argument) = arguments.get(index) {
+        if argument == "--home" {
+            index += 2;
+            continue;
+        }
+        if argument
+            .to_str()
+            .is_some_and(|value| value.starts_with("--home="))
+        {
+            index += 1;
+            continue;
+        }
+        if argument
+            .to_str()
+            .is_some_and(|value| value.starts_with('-'))
+        {
+            return false;
+        }
+        return argument.to_str().is_some_and(|value| {
+            matches!(
+                value,
+                "install-status"
+                    | "update"
+                    | "update-status"
+                    | "repair"
+                    | "rollback"
+                    | "uninstall"
+                    | "completion"
+                    | "update-transaction"
+            )
+        });
+    }
+    false
+}
+
+fn parse_operational_arguments(arguments: Vec<OsString>) -> Arguments {
+    let mut matches = combined_cli_command().get_matches_from(arguments);
+    <Arguments as clap::FromArgMatches>::from_arg_matches_mut(&mut matches)
+        .unwrap_or_else(|error| error.exit())
+}
+
+fn resolve_default_operational_subcommand(
+    home: &Path,
+    interactive_terminal: bool,
+) -> Result<&'static str, CliError> {
+    if !interactive_terminal {
+        return Err(CliError::DefaultJourneyRequiresTerminal);
+    }
+    match fs::symlink_metadata(home.join("config.json")) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(CliError::InvalidProviderConfiguration)
+        }
+        Ok(_) => Ok("chat"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("onboard"),
+        Err(error) => Err(CliError::Io(error)),
+    }
+}
+
+enum BareOperationalInvocation {
+    NotBare,
+    Bare { explicit_home: Option<PathBuf> },
+}
+
+fn bare_operational_invocation(arguments: &[OsString]) -> BareOperationalInvocation {
+    let mut index = 1;
+    let mut home = None;
+    while let Some(argument) = arguments.get(index) {
+        if argument == "--home" {
+            let Some(value) = arguments.get(index + 1) else {
+                return BareOperationalInvocation::NotBare;
+            };
+            home = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = argument
+            .to_str()
+            .and_then(|value| value.strip_prefix("--home="))
+        {
+            home = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        return BareOperationalInvocation::NotBare;
+    }
+    BareOperationalInvocation::Bare {
+        explicit_home: home,
+    }
+}
+
+fn apply_default_operational_subcommand(
+    mut arguments: Vec<OsString>,
+) -> Result<Vec<OsString>, CliError> {
+    let BareOperationalInvocation::Bare { explicit_home } = bare_operational_invocation(&arguments)
+    else {
+        return Ok(arguments);
+    };
+    let home = explicit_home
+        .or_else(|| std::env::var_os("MEALY_HOME").map(PathBuf::from))
+        .or_else(|| stable_default_mealy_home(std::env::var_os("HOME")))
+        .ok_or(CliError::DefaultHomeUnavailable)?;
+    if home.as_os_str().is_empty() {
+        return Err(CliError::InvalidHome);
+    }
+    let subcommand = resolve_default_operational_subcommand(
+        &home,
+        std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && std::io::stderr().is_terminal(),
+    )?;
+    arguments.push(OsString::from(subcommand));
+    Ok(arguments)
+}
+
+async fn run_lifecycle(arguments: LifecycleArguments) -> Result<(), CliError> {
+    match arguments.command {
+        LifecycleCommand::InstallStatus => print_json(lifecycle::inspect_current_installation()?),
+        LifecycleCommand::Update { version, approve } => {
+            let plan = lifecycle::plan_update(&arguments.home, &version)?;
+            if !approve || !plan.update_available {
+                return print_json(plan);
+            }
+            if !plan.state_schema_compatible {
+                return Err(CliError::UpdateSchemaChange {
+                    current: plan.installation.state_schema_version.unwrap_or_default(),
+                    target: plan.candidate.state_schema_version,
+                });
+            }
+            if !plan.apply_supported {
+                print_json(&plan)?;
+                return Err(CliError::NativePackageUpdate);
+            }
+            launch_update_transaction(&arguments.home, &plan).await
+        }
+        LifecycleCommand::UpdateStatus { transaction_id } => print_json(
+            lifecycle::load_update_transaction(&arguments.home, &transaction_id)?,
+        ),
+        LifecycleCommand::Repair { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Repair,
+            approve,
+        ),
+        LifecycleCommand::Rollback { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Rollback,
+            approve,
+        ),
+        LifecycleCommand::Uninstall { approve } => run_maintenance(
+            &arguments.home,
+            lifecycle::MaintenanceOperation::Uninstall,
+            approve,
+        ),
+        LifecycleCommand::Completion { shell } => {
+            let mut output = Vec::new();
+            generate(
+                Shell::from(shell),
+                &mut combined_cli_command(),
+                "mealyctl",
+                &mut output,
+            );
+            if output.len() > 4 * 1024 * 1024 {
+                return Err(CliError::Protocol(
+                    "generated completion script exceeds its output bound".to_owned(),
+                ));
+            }
+            std::io::stdout().write_all(&output)?;
+            Ok(())
+        }
+        LifecycleCommand::UpdateTransaction { transaction_id } => {
+            run_update_transaction(&arguments.home, &transaction_id).await
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct VerifiedOwnerService {
+    fragment: PathBuf,
+}
+
+async fn launch_update_transaction(
+    home: &Path,
+    plan: &lifecycle::UpdatePlan,
+) -> Result<(), CliError> {
+    let service = verify_owner_service(home, plan, true)?;
+    let mut transaction = lifecycle::prepare_update_transaction(home, plan, &service.fragment)?;
+    eprintln!("{}", terminal_safe_pretty_json(&transaction)?);
+    if let Err(error) = launch_update_helper(&transaction) {
+        transaction.failure = Some("update-helper-scheduling-failed".to_owned());
+        transaction.phase = lifecycle::UpdateTransactionPhase::Aborted;
+        lifecycle::persist_update_transaction(&transaction)?;
+        return Err(error);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_mins(35);
+    loop {
+        let record =
+            lifecycle::load_update_transaction(&transaction.home, &transaction.transaction_id)?;
+        if record.phase.is_terminal() {
+            print_json(&record)?;
+            return match record.phase {
+                lifecycle::UpdateTransactionPhase::Committed => Ok(()),
+                lifecycle::UpdateTransactionPhase::Aborted => Err(CliError::UpdateAborted),
+                lifecycle::UpdateTransactionPhase::RolledBack => Err(CliError::UpdateRolledBack),
+                lifecycle::UpdateTransactionPhase::RecoveryFailed => {
+                    Err(CliError::UpdateRecoveryFailed)
+                }
+                _ => unreachable!("terminal update phase is exhaustive"),
+            };
+        }
+        if tokio::time::Instant::now() >= deadline {
+            print_json(&record)?;
+            return Err(CliError::UpdateHelperPending(record.transaction_id));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn launch_update_helper(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = transaction;
+        return Err(CliError::UnsupportedPlatform(
+            "disconnect-resistant update apply is supported only by the Linux user service"
+                .to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let systemd_run = Path::new("/usr/bin/systemd-run");
+        if !systemd_run.is_file() || !is_trusted_system_executable(systemd_run) {
+            return Err(CliError::InvalidService(
+                "update apply requires trusted /usr/bin/systemd-run".to_owned(),
+            ));
+        }
+        let executable = &transaction.helper_executable;
+        let unit = format!(
+            "mealy-update-{}.service",
+            transaction.transaction_id.replace('-', "")
+        );
+        let output = ProcessCommand::new(systemd_run)
+            .arg("--user")
+            .arg("--quiet")
+            .arg("--collect")
+            .arg(format!("--unit={unit}"))
+            .arg("--property=Type=exec")
+            .arg("--property=Restart=on-failure")
+            .arg("--property=RestartSec=2s")
+            .arg("--property=StartLimitIntervalSec=60s")
+            .arg("--property=StartLimitBurst=5")
+            .arg("--property=NoNewPrivileges=yes")
+            .arg("--property=PrivateTmp=yes")
+            .arg("--property=UMask=0077")
+            .arg("--property=TasksMax=64")
+            .arg("--property=MemoryMax=1G")
+            .arg("--property=TimeoutStartSec=30min")
+            .arg(executable)
+            .arg("--home")
+            .arg(&transaction.home)
+            .arg("update-transaction")
+            .arg(&transaction.transaction_id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.stdout.len() > 64 * 1024 || output.stderr.len() > 64 * 1024 {
+            return Err(CliError::InvalidService(
+                "systemd update-helper response exceeded its bound".to_owned(),
+            ));
+        }
+        if !output.status.success() {
+            return Err(CliError::InvalidService(format!(
+                "could not schedule the independent update helper: {}",
+                terminal_safe_single_line(String::from_utf8_lossy(&output.stderr).trim())
+            )));
+        }
+        Ok(())
+    }
+}
+
+async fn run_update_transaction(home: &Path, transaction_id: &str) -> Result<(), CliError> {
+    let mut transaction = lifecycle::load_update_transaction(home, transaction_id)?;
+    lifecycle::verify_update_helper_identity(&transaction, &std::env::current_exe()?)?;
+    let _update_lock = lock_update_transactions(&transaction.home)?;
+    if transaction.phase.is_terminal() {
+        return finish_update_helper(&transaction);
+    }
+    if let Err(failure) = resume_update_transaction(&mut transaction).await {
+        recover_failed_update_transaction(&mut transaction, failure).await?;
+    }
+    finish_update_helper(&transaction)
+}
+
+fn lock_update_transactions(home: &Path) -> Result<File, CliError> {
+    let lock = open_private_home_lock(&home.join("update-transactions/update.lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn finish_update_helper(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    print_json(transaction)?;
+    if matches!(
+        transaction.phase,
+        lifecycle::UpdateTransactionPhase::Committed
+            | lifecycle::UpdateTransactionPhase::Aborted
+            | lifecycle::UpdateTransactionPhase::RolledBack
+    ) {
+        let _ = lifecycle::retire_update_helper(transaction);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UpdateTransactionFailure {
+    ServiceIdentity,
+    CandidateVerification,
+    Backup,
+    Drain,
+    Activation,
+    ServiceStart,
+    Qualification,
+    Rollback,
+}
+
+impl UpdateTransactionFailure {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ServiceIdentity => "owner-service-identity-failed",
+            Self::CandidateVerification => "candidate-reverification-failed",
+            Self::Backup => "pre-update-backup-failed",
+            Self::Drain => "daemon-drain-failed",
+            Self::Activation => "candidate-activation-failed",
+            Self::ServiceStart => "updated-service-start-failed",
+            Self::Qualification => "updated-service-qualification-failed",
+            Self::Rollback => "automatic-rollback-failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdateRecoveryRoute {
+    AbortUntouched,
+    RestorePrevious,
+    FailClosed,
+}
+
+fn update_recovery_route(
+    phase: lifecycle::UpdateTransactionPhase,
+    slot: Option<lifecycle::ActiveTransactionSlot>,
+    backup_available: bool,
+    service_identity_trusted: bool,
+) -> UpdateRecoveryRoute {
+    if phase.is_terminal() {
+        return UpdateRecoveryRoute::FailClosed;
+    }
+    if phase == lifecycle::UpdateTransactionPhase::Scheduled
+        && slot == Some(lifecycle::ActiveTransactionSlot::Previous)
+        && service_identity_trusted
+    {
+        return UpdateRecoveryRoute::AbortUntouched;
+    }
+    if backup_available
+        && (slot.is_some()
+            || matches!(
+                phase,
+                lifecycle::UpdateTransactionPhase::Activated
+                    | lifecycle::UpdateTransactionPhase::Starting
+                    | lifecycle::UpdateTransactionPhase::Verifying
+                    | lifecycle::UpdateTransactionPhase::RollingBack
+            ))
+    {
+        return UpdateRecoveryRoute::RestorePrevious;
+    }
+    UpdateRecoveryRoute::FailClosed
+}
+
+fn require_transaction_service(
+    transaction: &lifecycle::UpdateTransaction,
+    active: bool,
+) -> Result<(), UpdateTransactionFailure> {
+    verify_transaction_service(transaction, active)
+        .map(|_| ())
+        .map_err(|_| UpdateTransactionFailure::ServiceIdentity)
+}
+
+async fn resume_update_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+) -> Result<(), UpdateTransactionFailure> {
+    loop {
+        match transaction.phase {
+            lifecycle::UpdateTransactionPhase::Scheduled => {
+                require_transaction_service(transaction, false)?;
+                let plan = reverify_transaction_candidate(transaction)
+                    .map_err(|_| UpdateTransactionFailure::CandidateVerification)?;
+                if lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::CandidateVerification)?
+                    != lifecycle::ActiveTransactionSlot::Previous
+                {
+                    return Err(UpdateTransactionFailure::CandidateVerification);
+                }
+                let backup = create_update_backup(transaction)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Backup)?;
+                transaction.backup = Some(backup);
+                transaction.phase = lifecycle::UpdateTransactionPhase::Prepared;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Backup)?;
+                drop(plan);
+            }
+            lifecycle::UpdateTransactionPhase::Prepared => {
+                require_transaction_service(transaction, false)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Draining;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+            }
+            lifecycle::UpdateTransactionPhase::Draining => {
+                require_transaction_service(transaction, false)?;
+                drain_owner_service(transaction)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Stopped;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Drain)?;
+            }
+            lifecycle::UpdateTransactionPhase::Stopped => {
+                require_transaction_service(transaction, false)?;
+                match lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?
+                {
+                    lifecycle::ActiveTransactionSlot::Previous => {
+                        let plan = reverify_transaction_candidate(transaction)
+                            .map_err(|_| UpdateTransactionFailure::CandidateVerification)?;
+                        lifecycle::apply_archive_update(&transaction.home, &plan)
+                            .map_err(|_| UpdateTransactionFailure::Activation)?;
+                    }
+                    lifecycle::ActiveTransactionSlot::Candidate => {}
+                }
+                if lifecycle::active_transaction_slot(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?
+                    != lifecycle::ActiveTransactionSlot::Candidate
+                {
+                    return Err(UpdateTransactionFailure::Activation);
+                }
+                transaction.phase = lifecycle::UpdateTransactionPhase::Activated;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Activation)?;
+            }
+            lifecycle::UpdateTransactionPhase::Activated => {
+                require_transaction_service(transaction, false)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Starting;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+            }
+            lifecycle::UpdateTransactionPhase::Starting => {
+                require_transaction_service(transaction, false)?;
+                start_owner_service().map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Verifying;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::ServiceStart)?;
+            }
+            lifecycle::UpdateTransactionPhase::Verifying => {
+                require_transaction_service(transaction, true)?;
+                qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Candidate)
+                    .await
+                    .map_err(|_| UpdateTransactionFailure::Qualification)?;
+                transaction.phase = lifecycle::UpdateTransactionPhase::Committed;
+                lifecycle::persist_update_transaction(transaction)
+                    .map_err(|_| UpdateTransactionFailure::Qualification)?;
+                return Ok(());
+            }
+            lifecycle::UpdateTransactionPhase::RollingBack => {
+                resume_rollback_transaction(transaction).await?;
+                return Ok(());
+            }
+            lifecycle::UpdateTransactionPhase::Committed
+            | lifecycle::UpdateTransactionPhase::Aborted
+            | lifecycle::UpdateTransactionPhase::RolledBack
+            | lifecycle::UpdateTransactionPhase::RecoveryFailed => return Ok(()),
+        }
+    }
+}
+
+async fn resume_rollback_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+) -> Result<(), UpdateTransactionFailure> {
+    stop_owner_service(&transaction.home)
+        .await
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    lifecycle::rollback_update_transaction(transaction)
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    require_transaction_service(transaction, false)?;
+    start_owner_service().map_err(|_| UpdateTransactionFailure::Rollback)?;
+    qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Previous)
+        .await
+        .map_err(|_| UpdateTransactionFailure::Rollback)?;
+    transaction.phase = lifecycle::UpdateTransactionPhase::RolledBack;
+    lifecycle::persist_update_transaction(transaction)
+        .map_err(|_| UpdateTransactionFailure::Rollback)
+}
+
+async fn recover_failed_update_transaction(
+    transaction: &mut lifecycle::UpdateTransaction,
+    failure: UpdateTransactionFailure,
+) -> Result<(), CliError> {
+    transaction.failure = Some(failure.code().to_owned());
+    let slot = lifecycle::active_transaction_slot(transaction).ok();
+    let recovery = update_recovery_route(
+        transaction.phase,
+        slot,
+        transaction.backup.is_some(),
+        !matches!(failure, UpdateTransactionFailure::ServiceIdentity),
+    );
+    if recovery == UpdateRecoveryRoute::AbortUntouched {
+        let service_available = match owner_service_active() {
+            Ok(true) => true,
+            Ok(false) => start_owner_service().is_ok(),
+            Err(_) => false,
+        };
+        if service_available
+            && qualify_update_slot(transaction, lifecycle::ActiveTransactionSlot::Previous)
+                .await
+                .is_ok()
+        {
+            transaction.phase = lifecycle::UpdateTransactionPhase::Aborted;
+            lifecycle::persist_update_transaction(transaction)?;
+            return Ok(());
+        }
+    }
+    if recovery == UpdateRecoveryRoute::RestorePrevious {
+        transaction.phase = lifecycle::UpdateTransactionPhase::RollingBack;
+        transaction.rollback_attempted = true;
+        lifecycle::persist_update_transaction(transaction)?;
+        if resume_update_transaction(transaction).await.is_ok() {
+            return Ok(());
+        }
+        transaction.failure = Some(UpdateTransactionFailure::Rollback.code().to_owned());
+    } else {
+        let _ = start_owner_service();
+    }
+    transaction.phase = lifecycle::UpdateTransactionPhase::RecoveryFailed;
+    lifecycle::persist_update_transaction(transaction)?;
+    Ok(())
+}
+
+fn reverify_transaction_candidate(
+    transaction: &lifecycle::UpdateTransaction,
+) -> Result<lifecycle::UpdatePlan, CliError> {
+    let plan = lifecycle::plan_update_for_managed_prefix(
+        &transaction.home,
+        &format!("v{}", transaction.candidate.version),
+        &transaction.prefix,
+    )?;
+    if plan.candidate != transaction.candidate
+        || plan.installation.current_version != transaction.previous_version
+        || plan.installation.current_commit.as_deref() != Some(transaction.previous_commit.as_str())
+        || !plan.update_available
+        || !plan.state_schema_compatible
+        || !plan.apply_supported
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(plan)
+}
+
+async fn create_update_backup(
+    transaction: &lifecycle::UpdateTransaction,
+) -> Result<lifecycle::UpdateBackupEvidence, CliError> {
+    let connection = load_connection(&transaction.home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let client = control_plane_client()?;
+    let name = format!("pre-update-{}", transaction.transaction_id);
+    let response = authorized_long(
+        client.post(format!("{}/v1/admin/backups", connection.base_url)),
+        &connection,
+    )
+    .json(&CreateBackupRequest {
+        api_version: API_VERSION.to_owned(),
+        name: name.clone(),
+        include_secrets: false,
+        secret_passphrase: None,
+    })
+    .send()
+    .await?;
+    let backup = if response.status().is_success() {
+        decode::<BackupResponse>(response).await?
+    } else {
+        let response = authorized_long(
+            client.post(format!(
+                "{}/v1/admin/backup-verifications",
+                connection.base_url
+            )),
+            &connection,
+        )
+        .json(&VerifyBackupRequest {
+            api_version: API_VERSION.to_owned(),
+            name: name.clone(),
+            secret_passphrase: None,
+        })
+        .send()
+        .await?;
+        let verified = decode::<BackupVerificationResponse>(response).await?;
+        BackupResponse {
+            api_version: verified.api_version,
+            name: verified.name,
+            path: verified.path,
+            manifest_digest: verified.manifest_digest,
+            file_count: verified.file_count,
+            total_bytes: verified.total_bytes,
+            schema_version: verified.schema_version,
+            artifact_count: verified.artifact_count,
+            secrets_included: verified.secrets_included,
+        }
+    };
+    if backup.api_version != API_VERSION
+        || backup.name != name
+        || backup.secrets_included
+        || backup.schema_version != transaction.candidate.state_schema_version
+        || backup.file_count == 0
+        || backup.manifest_digest.len() != 64
+        || !backup
+            .manifest_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(lifecycle::UpdateBackupEvidence {
+        name: backup.name,
+        manifest_digest: backup.manifest_digest,
+        state_schema_version: backup.schema_version,
+    })
+}
+
+async fn drain_owner_service(transaction: &lifecycle::UpdateTransaction) -> Result<(), CliError> {
+    if !owner_service_active()? {
+        let (_home, lock) = lock_stopped_home(&transaction.home)?;
+        drop(lock);
+        return Ok(());
+    }
+    let connection = load_connection(&transaction.home)?;
+    let client = control_plane_client()?;
+    let response = authorized_long(
+        client.post(format!("{}/v1/admin/drain", connection.base_url)),
+        &connection,
+    )
+    .json(&DrainDaemonRequest {
+        api_version: API_VERSION.to_owned(),
+    })
+    .send()
+    .await?;
+    let drain = decode::<DrainDaemonResponse>(response).await?;
+    if drain.api_version != API_VERSION
+        || drain.start_id.is_empty()
+        || drain.start_id.len() > 128
+        || drain.deadline_ms > 300_000
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_millis(drain.deadline_ms.saturating_add(30_000));
+    loop {
+        if !owner_service_active()? && !transaction.home.join("connection.json").exists() {
+            let (_home, lock) = lock_stopped_home(&transaction.home)?;
+            drop(lock);
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn stop_owner_service(home: &Path) -> Result<(), CliError> {
+    run_systemctl(&["--user", "stop", "--no-block", "mealy.service"], true)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_mins(2);
+    loop {
+        if !owner_service_active()? {
+            let (_home, lock) = lock_stopped_home(home)?;
+            drop(lock);
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn start_owner_service() -> Result<(), CliError> {
+    run_systemctl(&["--user", "start", "--no-block", "mealy.service"], true)
+}
+
+async fn qualify_update_slot(
+    transaction: &lifecycle::UpdateTransaction,
+    expected: lifecycle::ActiveTransactionSlot,
+) -> Result<(), CliError> {
+    let doctor = wait_for_onboard_readiness(&transaction.home).await?;
+    if doctor.api_version != API_VERSION || !doctor.control_plane_ready || !doctor.sandbox_available
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    let connection = load_connection(&transaction.home)?;
+    let client = control_plane_client()?;
+    let readiness = authorized(
+        client.get(format!("{}/health/ready", connection.base_url)),
+        &connection,
+    )
+    .send()
+    .await?;
+    let readiness = decode::<ReadinessResponse>(readiness).await?;
+    if readiness.api_version != API_VERSION || !readiness.ready {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    if !owner_service_active()? || lifecycle::active_transaction_slot(transaction)? != expected {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(())
+}
+
+fn control_plane_client() -> Result<Client, CliError> {
+    Ok(Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(2))
+        .build()?)
+}
+
+fn verify_transaction_service(
+    transaction: &lifecycle::UpdateTransaction,
+    require_active: bool,
+) -> Result<VerifiedOwnerService, CliError> {
+    let plan = lifecycle::UpdatePlan {
+        schema_version: "mealy.update-plan.v1",
+        installation: lifecycle::inspect_managed_prefix(&transaction.prefix)?,
+        requested_version: format!("v{}", transaction.candidate.version),
+        candidate: transaction.candidate.clone(),
+        update_available: false,
+        state_schema_compatible: true,
+        apply_supported: true,
+        native_update_command: None,
+    };
+    let service = verify_owner_service(&transaction.home, &plan, require_active)?;
+    if service.fragment != transaction.service_fragment {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(service)
+}
+
+fn verify_owner_service(
+    home: &Path,
+    plan: &lifecycle::UpdatePlan,
+    require_active: bool,
+) -> Result<VerifiedOwnerService, CliError> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (home, plan, require_active);
+        return Err(CliError::UnsupportedPlatform(
+            "managed update apply requires the Linux user service".to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if plan.installation.installation_kind != lifecycle::InstallationKind::ManagedArchive
+            || plan.installation.integrity != lifecycle::IntegrityStatus::Verified
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        let home = fs::canonicalize(home)?;
+        let daemon = plan
+            .installation
+            .managed_prefix
+            .as_ref()
+            .ok_or(CliError::UpdateTransactionInconsistent)?
+            .join("bin/mealyd")
+            .canonicalize()?;
+        let paths = service_read_write_paths(&home)?;
+        let (_, _, expected, _) = service_definition(&daemon, &home, &paths)?;
+        let output = run_systemctl_output(&[
+            "--user",
+            "show",
+            "--property=FragmentPath",
+            "--value",
+            "mealy.service",
+        ])?;
+        let fragment_text = std::str::from_utf8(&output)
+            .map_err(|_| CliError::UpdateTransactionInconsistent)?
+            .trim_end_matches('\n');
+        if fragment_text.is_empty()
+            || fragment_text.contains('\n')
+            || fragment_text.chars().any(char::is_control)
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        let fragment = PathBuf::from(fragment_text);
+        let metadata = fs::symlink_metadata(&fragment)?;
+        let canonical = fragment.canonicalize()?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || canonical != fragment
+            || lifecycle::read_bounded_regular_file(&fragment, 64 * 1024)? != expected.as_bytes()
+        {
+            return Err(CliError::UpdateTransactionInconsistent);
+        }
+        if require_active && !owner_service_active()? {
+            return Err(CliError::InvalidService(
+                "managed update apply requires the active verified mealy.service; the no-mutation plan remains valid"
+                    .to_owned(),
+            ));
+        }
+        Ok(VerifiedOwnerService { fragment })
+    }
+}
+
+fn owner_service_active() -> Result<bool, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let status = ProcessCommand::new(systemctl)
+        .args(["--user", "is-active", "--quiet", "mealy.service"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(3) => Ok(false),
+        _ => Err(CliError::UpdateTransactionInconsistent),
+    }
+}
+
+fn run_systemctl(arguments: &[&str], require_success: bool) -> Result<(), CliError> {
+    let systemctl = trusted_systemctl()?;
+    let output = ProcessCommand::new(systemctl)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.stdout.len() > 64 * 1024 || output.stderr.len() > 64 * 1024 {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    if require_success && !output.status.success() {
+        return Err(CliError::InvalidService(format!(
+            "systemctl {} failed: {}",
+            arguments.join(" "),
+            terminal_safe_single_line(String::from_utf8_lossy(&output.stderr).trim())
+        )));
+    }
+    Ok(())
+}
+
+fn run_systemctl_output(arguments: &[&str]) -> Result<Vec<u8>, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let output = ProcessCommand::new(systemctl)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !output.status.success()
+        || output.stdout.len() > 64 * 1024
+        || output.stderr.len() > 64 * 1024
+    {
+        return Err(CliError::UpdateTransactionInconsistent);
+    }
+    Ok(output.stdout)
+}
+
+fn trusted_systemctl() -> Result<&'static Path, CliError> {
+    let systemctl = Path::new("/usr/bin/systemctl");
+    if !systemctl.is_file() || !is_trusted_system_executable(systemctl) {
+        return Err(CliError::InvalidService(
+            "managed update apply requires trusted /usr/bin/systemctl".to_owned(),
+        ));
+    }
+    Ok(systemctl)
+}
+
+fn run_maintenance(
+    home: &Path,
+    operation: lifecycle::MaintenanceOperation,
+    approve: bool,
+) -> Result<(), CliError> {
+    let plan = lifecycle::plan_maintenance(operation)?;
+    if !approve || !plan.action_required {
+        return print_json(plan);
+    }
+    if !plan.apply_supported {
+        print_json(&plan)?;
+        return Err(if plan.native_command.is_some() {
+            CliError::NativeMaintenance
+        } else {
+            CliError::MaintenanceUnavailable
+        });
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    match operation {
+        lifecycle::MaintenanceOperation::Repair => {
+            lifecycle::repair_archive_manager(&plan.installation)?;
+            print_json(lifecycle::inspect_current_installation()?)
+        }
+        lifecycle::MaintenanceOperation::Rollback => lifecycle::run_archive_manager(
+            &plan.installation,
+            home,
+            lifecycle::ArchiveManagerAction::Rollback,
+        )
+        .map_err(CliError::from),
+        lifecycle::MaintenanceOperation::Uninstall => {
+            remove_verified_owner_service_if_present(home)?;
+            lifecycle::run_archive_manager(
+                &plan.installation,
+                home,
+                lifecycle::ArchiveManagerAction::Uninstall,
+            )
+            .map_err(CliError::from)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn remove_verified_owner_service_if_present(home: &Path) -> Result<(), CliError> {
+    let default = linux_default_service_destination()?;
+    let default_present = match fs::symlink_metadata(&default) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(CliError::Io(error)),
+    };
+    let loaded = match loaded_owner_service_fragment() {
+        Ok(value) => value,
+        Err(_) if !default_present => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !default_present && loaded.is_none() {
+        return Ok(());
+    }
+    let plan = plan_service_removal(
+        home,
+        loaded.as_ref().map(|service| service.definition.as_path()),
+    )?;
+    if !plan.action_required || !plan.apply_supported {
+        return Err(CliError::InvalidService(
+            "installed owner service could not be verified for safe uninstall".to_owned(),
+        ));
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    apply_service_removal(&plan)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn remove_verified_owner_service_if_present(_home: &Path) -> Result<(), CliError> {
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), CliError> {
-    let arguments = Arguments::parse();
+    let raw_arguments = apply_default_operational_subcommand(std::env::args_os().collect())?;
+    let home_override_supplied = cli_home_override_supplied(&raw_arguments);
+    if lifecycle_invocation(&raw_arguments) {
+        let mut arguments = LifecycleArguments::parse_from(raw_arguments);
+        arguments.home = resolve_cli_home(arguments.home, home_override_supplied)?;
+        return run_lifecycle(arguments).await;
+    }
+    let mut arguments = parse_operational_arguments(raw_arguments);
+    arguments.home = resolve_cli_home(arguments.home, home_override_supplied)?;
+    if let Command::Onboard(options) = &arguments.command {
+        return run_onboard(&arguments.home, options).await;
+    }
     if let Command::Setup(options) = &arguments.command {
         return run_setup(&arguments.home, options);
     }
@@ -2009,15 +3214,27 @@ async fn run() -> Result<(), CliError> {
             connection.api_version
         )));
     }
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(2))
-        .build()?;
+    let client = control_plane_client()?;
     match arguments.command {
+        Command::Onboard(_) => {
+            unreachable!("offline onboarding returned before ordinary API initialization")
+        }
         Command::Setup(_) => unreachable!("offline setup returned before API initialization"),
-        Command::Chat { session_id } => {
-            run_chat(&client, &arguments.home, &connection, session_id.as_deref()).await?;
+        Command::Chat {
+            session_id,
+            continue_latest,
+            pick,
+        } => {
+            let selection = if pick {
+                ChatSessionSelection::Pick
+            } else if continue_latest {
+                ChatSessionSelection::Latest
+            } else if let Some(session_id) = session_id {
+                ChatSessionSelection::Exact(session_id)
+            } else {
+                ChatSessionSelection::New
+            };
+            run_chat(&client, &arguments.home, &connection, selection).await?;
         }
         Command::Session { command } => {
             run_session(&client, &arguments.home, &connection, command).await?;
@@ -2232,6 +3449,7 @@ enum ChatLine {
     History(String),
     Help,
     Session,
+    Status,
     Exit,
     Empty,
 }
@@ -2271,6 +3489,14 @@ enum ChatInput {
     Line(String),
     EndOfFile,
     Failed(String),
+}
+
+#[derive(Debug)]
+enum ChatSessionSelection {
+    New,
+    Exact(String),
+    Latest,
+    Pick,
 }
 
 #[derive(Debug)]
@@ -2360,6 +3586,9 @@ fn parse_chat_line(line: &str) -> ChatLine {
     }
     if line == "/session" {
         return ChatLine::Session;
+    }
+    if line == "/status" {
+        return ChatLine::Status;
     }
     if let Some(path) = line.strip_prefix("/attach ") {
         let path = path.trim();
@@ -2562,35 +3791,60 @@ async fn run_chat(
     client: &Client,
     home: &Path,
     connection: &LocalConnectionInfo,
-    existing_session_id: Option<&str>,
+    selection: ChatSessionSelection,
 ) -> Result<(), CliError> {
-    let mut memory_workspace = default_chat_memory_workspace(client, connection).await?;
-    let (session_id, resume_status) = if let Some(session_id) = existing_session_id {
-        let response = authorized(
-            client.get(format!(
-                "{}/v1/sessions/{session_id}/status",
-                connection.base_url
-            )),
-            connection,
-        )
-        .send()
-        .await?;
-        let status = decode::<SessionStatusResponse>(response).await?;
-        (status.session_id.clone(), Some(status))
-    } else {
-        let response = authorized(
-            client.post(format!("{}/v1/sessions", connection.base_url)),
-            connection,
-        )
-        .json(&CreateSessionRequest {
-            api_version: API_VERSION.to_owned(),
-        })
-        .send()
-        .await?;
-        (
-            decode::<CreateSessionResponse>(response).await?.session_id,
-            None,
-        )
+    let provider_status = fetch_chat_status(client, connection).await?;
+    let mut memory_workspace = default_chat_memory_workspace(&provider_status);
+    let (session_id, resume_status) = match selection {
+        ChatSessionSelection::Exact(session_id) => {
+            let status = fetch_chat_session_status(client, connection, &session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::Latest => {
+            let response = authorized(
+                client.get(format!("{}/v1/sessions?limit=1", connection.base_url)),
+                connection,
+            )
+            .send()
+            .await?;
+            let sessions = decode::<SessionsResponse>(response).await?;
+            if sessions.sessions.len() > 1 {
+                return Err(CliError::Protocol(
+                    "latest-session query exceeded its one-session response bound".to_owned(),
+                ));
+            }
+            let latest = sessions
+                .sessions
+                .into_iter()
+                .next()
+                .ok_or(CliError::NoRecentSession)?;
+            let status = fetch_chat_session_status(client, connection, &latest.session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::Pick => {
+            let Some(session_id) =
+                chat_picker::pick_recent_chat_session(client, connection).await?
+            else {
+                return Ok(());
+            };
+            let status = fetch_chat_session_status(client, connection, &session_id).await?;
+            (status.session_id.clone(), Some(status))
+        }
+        ChatSessionSelection::New => {
+            let response = authorized(
+                client.post(format!("{}/v1/sessions", connection.base_url)),
+                connection,
+            )
+            .json(&CreateSessionRequest {
+                api_version: API_VERSION.to_owned(),
+            })
+            .send()
+            .await?;
+            (
+                decode::<CreateSessionResponse>(response).await?.session_id,
+                None,
+            )
+        }
     };
     println!(
         "Mealy chat session {}",
@@ -2600,8 +3854,9 @@ async fn run_chat(
         "Governed memory namespace {}",
         terminal_safe_single_line(&memory_workspace)
     );
+    render_chat_status(&provider_status);
     println!(
-        "Type /help for concurrent delivery and approval controls, /session to print the durable session ID, or /quit."
+        "Type /help for controls, /status for live model and provider limits, /session for the durable session ID, or /quit."
     );
     let (input_sender, mut input_receiver) =
         tokio::sync::mpsc::channel(CHAT_INPUT_CHANNEL_CAPACITY);
@@ -2752,6 +4007,13 @@ async fn run_chat(
                     ChatLine::Send { .. } | ChatLine::LocalAttachment { .. } | ChatLine::Empty => {}
                     ChatLine::Help => print_chat_help(),
                     ChatLine::Session => println!("{}", terminal_safe_single_line(&session_id)),
+                    ChatLine::Status => match fetch_current_chat_status(client, home).await {
+                        Ok(status) => render_chat_status(&status),
+                        Err(error) => eprintln!(
+                            "chat status is unavailable: {}; retry /status or run `mealyctl doctor`",
+                            terminal_safe_single_line(&error.to_string())
+                        ),
+                    },
                     ChatLine::Exit => {
                         stop_chat_watchers(&mut watchers).await;
                         return Ok(());
@@ -2775,18 +4037,58 @@ async fn run_chat(
     }
 }
 
-async fn default_chat_memory_workspace(
+async fn fetch_chat_status(
     client: &Client,
     connection: &LocalConnectionInfo,
-) -> Result<String, CliError> {
+) -> Result<AdminStatusResponse, CliError> {
     let response = authorized(
         client.get(format!("{}/v1/admin/status", connection.base_url)),
         connection,
     )
     .send()
     .await?;
-    let status = decode::<AdminStatusResponse>(response).await?;
-    Ok(if status
+    decode::<AdminStatusResponse>(response).await
+}
+
+async fn fetch_chat_session_status(
+    client: &Client,
+    connection: &LocalConnectionInfo,
+    session_id: &str,
+) -> Result<SessionStatusResponse, CliError> {
+    let response = authorized(
+        client.get(format!(
+            "{}/v1/sessions/{session_id}/status",
+            connection.base_url
+        )),
+        connection,
+    )
+    .send()
+    .await?;
+    let status = decode::<SessionStatusResponse>(response).await?;
+    if status.session_id != session_id {
+        return Err(CliError::Protocol(
+            "session-status response did not match the requested session".to_owned(),
+        ));
+    }
+    Ok(status)
+}
+
+async fn fetch_current_chat_status(
+    client: &Client,
+    home: &Path,
+) -> Result<AdminStatusResponse, CliError> {
+    let connection = load_connection(home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::Protocol(format!(
+            "connection descriptor uses unsupported API version {:?}",
+            connection.api_version
+        )));
+    }
+    fetch_chat_status(client, &connection).await
+}
+
+fn default_chat_memory_workspace(status: &AdminStatusResponse) -> String {
+    if status
         .enabled_read_tools
         .iter()
         .any(|tool| tool.starts_with("workspace."))
@@ -2795,7 +4097,7 @@ async fn default_chat_memory_workspace(
     } else {
         CHAT_MEMORY_NO_WORKSPACE
     }
-    .to_owned())
+    .to_owned()
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2996,7 +4298,8 @@ fn print_chat_help() {
          APPROVAL_ID SUBJECT_DIGEST resolve an exact rendered subject; /act TEXT selects the \
          create-new-file tool; /edit TEXT selects digest-preconditioned atomic replacement; \
          /manage TEXT selects directory creation, exact file move/removal, or empty-directory \
-         removal; /run TEXT selects configured direct-process authority; /session; \
+         removal; /run TEXT selects configured direct-process authority; /status prints live \
+         provider/model/limit/price/pressure state; /session prints the durable session ID; \
          /quit"
     );
     println!(
@@ -3012,6 +4315,56 @@ fn print_chat_help() {
          expire only removes active retrieval. Advanced category/sensitivity control remains in \
          the top-level `memory` commands."
     );
+}
+
+fn render_chat_status(status: &AdminStatusResponse) {
+    println!(
+        "provider> {} | model {} | health {} | {} ({})",
+        terminal_safe_single_line(&status.provider_id),
+        terminal_safe_single_line(&status.provider_model_id),
+        terminal_safe_single_line(&status.provider_health),
+        if status.provider_local {
+            "local"
+        } else {
+            "remote"
+        },
+        terminal_safe_single_line(&status.provider_residency)
+    );
+    println!(
+        "limits> context {} tokens ({} provider overhead) | max response {} tokens",
+        status.provider_context_tokens,
+        status.provider_input_token_overhead,
+        status.provider_maximum_output_tokens
+    );
+    println!(
+        "pricing> input {} | output {} configured-cost microunits per million tokens",
+        status.provider_input_microunits_per_million_tokens,
+        status.provider_output_microunits_per_million_tokens
+    );
+    println!(
+        "runtime> admission {} | safe mode {} | {} pending input(s) | {} nonterminal run(s)",
+        if status.admission_open {
+            "open"
+        } else {
+            "closed"
+        },
+        if status.safe_mode { "on" } else { "off" },
+        status.pending_inputs,
+        status.nonterminal_runs
+    );
+    for (index, endpoint) in status.provider_endpoints.iter().enumerate() {
+        println!(
+            "route {}> {} / {} | {} | {}/{} in flight | {}/{} this UTC minute",
+            index + 1,
+            terminal_safe_single_line(&endpoint.provider_id),
+            terminal_safe_single_line(&endpoint.model_id),
+            terminal_safe_single_line(&endpoint.health),
+            endpoint.in_flight_requests,
+            endpoint.maximum_concurrent_requests,
+            endpoint.requests_in_current_minute,
+            endpoint.requests_per_minute
+        );
+    }
 }
 
 fn start_chat_input_reader(sender: tokio::sync::mpsc::Sender<ChatInput>) -> Result<(), CliError> {
@@ -3833,7 +5186,21 @@ fn render_finished_chat_task(task: &TaskResponse) -> Result<(), CliError> {
             ));
         }
     }
+    println!("{}", chat_usage_line(task.usage));
     Ok(())
+}
+
+fn chat_usage_line(usage: TaskBudgetUsage) -> String {
+    format!(
+        "usage> {} input + {} output token(s) | {} configured-cost microunit(s) | {} model call(s) | {} tool call(s) | {} retr{}",
+        usage.used_input_tokens,
+        usage.used_output_tokens,
+        usage.used_cost_microunits,
+        usage.used_model_calls,
+        usage.used_tool_calls,
+        usage.used_retries,
+        if usage.used_retries == 1 { "y" } else { "ies" },
+    )
 }
 
 fn terminal_safe_text(value: &str) -> String {
@@ -5532,7 +6899,7 @@ async fn discord_pair_request(
         .header(
             reqwest::header::USER_AGENT,
             concat!(
-                "DiscordBot (https://github.com/Amekn/project_mealy, ",
+                "DiscordBot (https://github.com/Amekn/mealy, ",
                 env!("CARGO_PKG_VERSION"),
                 ")"
             ),
@@ -6546,6 +7913,1118 @@ struct ResolvedSetup {
     skip_connectivity_test: bool,
 }
 
+struct ResolvedOnboard {
+    route: OnboardRouteArgument,
+    provider: ProviderConfig,
+    secret_id: Option<String>,
+    credential: Option<ResolvedOnboardCredential>,
+}
+
+struct ResolvedOnboardCredential {
+    value: Zeroizing<String>,
+    environment: String,
+    source: OnboardCredentialSource,
+}
+
+#[derive(Clone, Copy)]
+enum OnboardCredentialSource {
+    Environment,
+    HiddenTerminalPrompt,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OnboardChatMode {
+    Auto,
+    Force,
+    Suppress,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnboardResponse {
+    provider: ProviderConfigurationResponse,
+    service: Option<ServiceInstallationResponse>,
+    service_started: bool,
+    health_verified: bool,
+    doctor: Option<DoctorResponse>,
+    chat_started: bool,
+    next_command: String,
+}
+
+impl OnboardRouteArgument {
+    const fn display_name(self) -> &'static str {
+        match self {
+            Self::OpenrouterFree => "OpenRouter free model",
+            Self::Custom => "custom authenticated OpenAI-compatible endpoint",
+            Self::Local => "local credentialless OpenAI-compatible endpoint",
+            Self::ChatgptSubscription => "ChatGPT subscription through official Codex CLI",
+            Self::ClaudeSubscription => "Claude subscription through official Claude Code",
+            Self::OpenaiApi => "OpenAI API",
+            Self::AnthropicApi => "Anthropic API",
+        }
+    }
+
+    const fn default_base_url(self) -> Option<&'static str> {
+        match self {
+            Self::OpenrouterFree => Some("https://openrouter.ai/api/v1"),
+            Self::Local => Some("http://127.0.0.1:11434/v1"),
+            Self::OpenaiApi => Some("https://api.openai.com/v1"),
+            Self::AnthropicApi => Some("https://api.anthropic.com/v1"),
+            Self::Custom | Self::ChatgptSubscription | Self::ClaudeSubscription => None,
+        }
+    }
+
+    const fn default_credential_environment(self) -> Option<&'static str> {
+        match self {
+            Self::OpenrouterFree => Some("OPENROUTER_API_KEY"),
+            Self::Custom => Some("CUSTOM_API_KEY"),
+            Self::OpenaiApi => Some("OPENAI_API_KEY"),
+            Self::AnthropicApi => Some("ANTHROPIC_API_KEY"),
+            Self::Local | Self::ChatgptSubscription | Self::ClaudeSubscription => None,
+        }
+    }
+
+    const fn uses_subscription_client(self) -> bool {
+        matches!(self, Self::ChatgptSubscription | Self::ClaudeSubscription)
+    }
+}
+
+async fn run_onboard(home: &Path, options: &OnboardOptions) -> Result<(), CliError> {
+    if options.skip_connectivity_test && !options.configure_only
+        || options.chat && options.configure_only
+        || options.chat && options.no_chat
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    validate_onboard_home_target(home, options.reconfigure)?;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let stdin_is_terminal = stdin.is_terminal();
+    let stdout_is_terminal = stdout.is_terminal();
+    let stderr_is_terminal = stderr.is_terminal();
+    let open_chat = should_open_onboard_chat(
+        onboard_chat_mode(options),
+        options.configure_only,
+        stdin_is_terminal && stdout_is_terminal && stderr_is_terminal,
+    );
+    let mut input = stdin.lock();
+    let mut prompt = stderr.lock();
+    let resolved = resolve_onboard_from_terminal(
+        options,
+        &mut input,
+        &mut prompt,
+        stdin_is_terminal && stderr_is_terminal,
+    )?;
+    render_onboard_summary(&resolved, options, &mut prompt)?;
+    if !options.approve
+        && prompt_line(
+            &mut input,
+            &mut prompt,
+            "Type APPROVE to perform this exact onboarding plan: ",
+        )? != "APPROVE"
+    {
+        return Err(CliError::SetupNotApproved);
+    }
+
+    initialize_setup_home(home)?;
+    let provider =
+        activate_resolved_onboard_provider(home, resolved, options.skip_connectivity_test)?;
+    let home = absolute_service_path(home)?;
+    let next_command = format!(
+        "mealyctl --home {} chat",
+        setup_shell_argument(&home.display().to_string())
+    );
+
+    if options.configure_only {
+        writeln!(
+            prompt,
+            "\nProvider configuration is active. Service installation was intentionally skipped."
+        )?;
+        return print_json(OnboardResponse {
+            provider,
+            service: None,
+            service_started: false,
+            health_verified: false,
+            doctor: None,
+            chat_started: false,
+            next_command: format!(
+                "mealyctl --home {} service install",
+                setup_shell_argument(&home.display().to_string())
+            ),
+        });
+    }
+
+    let (service, doctor) = provision_onboard_service(&home).await?;
+    writeln!(
+        prompt,
+        "\nOnboarding complete. The verified owner service is running."
+    )?;
+    if open_chat {
+        writeln!(
+            prompt,
+            "Opening the first durable chat. Type /quit to leave."
+        )?;
+    } else {
+        writeln!(prompt, "Start chatting with:\n  {next_command}")?;
+    }
+    let response = OnboardResponse {
+        provider,
+        service: Some(service),
+        service_started: true,
+        health_verified: true,
+        doctor: Some(doctor),
+        chat_started: open_chat,
+        next_command,
+    };
+    print_json(response)?;
+    if !open_chat {
+        return Ok(());
+    }
+    drop(input);
+    drop(prompt);
+    open_first_onboard_chat(&home).await
+}
+
+fn activate_resolved_onboard_provider(
+    home: &Path,
+    resolved: ResolvedOnboard,
+    skip_connectivity_test: bool,
+) -> Result<ProviderConfigurationResponse, CliError> {
+    let ResolvedOnboard {
+        provider,
+        secret_id,
+        credential,
+        ..
+    } = resolved;
+    let credential_import =
+        secret_id
+            .as_deref()
+            .zip(credential.as_ref())
+            .map(|(secret_id, credential)| ProviderCredentialImport {
+                secret_id,
+                source: ProviderCredentialImportSource::Resolved(credential.value.as_str()),
+            });
+    let provider = activate_provider(
+        home,
+        provider,
+        credential_import,
+        true,
+        skip_connectivity_test,
+    )?;
+    Ok(provider)
+}
+
+async fn provision_onboard_service(
+    home: &Path,
+) -> Result<(ServiceInstallationResponse, DoctorResponse), CliError> {
+    let service = install_service_definition(home, None, None).map_err(|error| {
+        CliError::OnboardService(format!("service installation failed: {error}"))
+    })?;
+    activate_owner_service()
+        .map_err(|error| CliError::OnboardService(format!("service activation failed: {error}")))?;
+    let doctor = wait_for_onboard_readiness(home).await.map_err(|error| {
+        CliError::OnboardService(format!(
+            "service started but did not pass bounded health and doctor verification: {error}"
+        ))
+    })?;
+    Ok((service, doctor))
+}
+
+async fn open_first_onboard_chat(home: &Path) -> Result<(), CliError> {
+    let connection = load_connection(home)?;
+    if connection.api_version != API_VERSION {
+        return Err(CliError::Protocol(format!(
+            "connection descriptor uses unsupported API version {:?}",
+            connection.api_version
+        )));
+    }
+    let client = control_plane_client()?;
+    run_chat(&client, home, &connection, ChatSessionSelection::New).await
+}
+
+const fn onboard_chat_mode(options: &OnboardOptions) -> OnboardChatMode {
+    if options.chat {
+        OnboardChatMode::Force
+    } else if options.no_chat {
+        OnboardChatMode::Suppress
+    } else {
+        OnboardChatMode::Auto
+    }
+}
+
+const fn should_open_onboard_chat(
+    mode: OnboardChatMode,
+    configure_only: bool,
+    interactive_terminal: bool,
+) -> bool {
+    match mode {
+        OnboardChatMode::Force => true,
+        OnboardChatMode::Suppress => false,
+        OnboardChatMode::Auto => !configure_only && interactive_terminal,
+    }
+}
+
+fn validate_onboard_home_target(home: &Path, reconfigure: bool) -> Result<(), CliError> {
+    let requested = absolute_service_path(home)?;
+    let config = requested.join("config.json");
+    match fs::symlink_metadata(&config) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(CliError::InvalidProviderConfiguration)
+        }
+        Ok(_) if !reconfigure => Err(CliError::OnboardExistingHome),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CliError::Io(error)),
+    }
+}
+
+fn resolve_onboard_from_terminal(
+    options: &OnboardOptions,
+    input: &mut std::io::StdinLock<'_>,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<ResolvedOnboard, CliError> {
+    let route = options
+        .route
+        .map_or_else(|| prompt_onboard_route(input, prompt), Ok)?;
+    let base_url = resolve_onboard_base_url(route, options, input, prompt)?;
+    let credential =
+        resolve_onboard_credential(route, options, input, prompt, secure_terminal_boundary)?;
+    resolve_onboard(
+        route,
+        options,
+        input,
+        prompt,
+        base_url,
+        credential,
+        secure_terminal_boundary,
+    )
+}
+
+fn resolve_onboard_credential(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut std::io::StdinLock<'_>,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<Option<ResolvedOnboardCredential>, CliError> {
+    let Some(default_environment) = route.default_credential_environment() else {
+        return Ok(None);
+    };
+    let environment = options
+        .credential_env
+        .clone()
+        .unwrap_or_else(|| default_environment.to_owned());
+    if !valid_provider_credential_environment_name(&environment) {
+        return Err(CliError::InvalidSetupInput);
+    }
+    match std::env::var(&environment) {
+        Ok(value) => {
+            if !valid_onboard_provider_credential(&value) {
+                return Err(CliError::InvalidOnboardCredential);
+            }
+            Ok(Some(ResolvedOnboardCredential {
+                value: Zeroizing::new(value),
+                environment,
+                source: OnboardCredentialSource::Environment,
+            }))
+        }
+        Err(std::env::VarError::NotPresent) if secure_terminal_boundary => {
+            let label = format!("{} API credential (input hidden): ", route.display_name());
+            let value = prompt_hidden_onboard_credential(input, prompt, &label)?;
+            Ok(Some(ResolvedOnboardCredential {
+                value,
+                environment,
+                source: OnboardCredentialSource::HiddenTerminalPrompt,
+            }))
+        }
+        Err(std::env::VarError::NotPresent) => {
+            Err(CliError::OnboardCredentialRequiresTerminal(environment))
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(CliError::MissingProviderCredential(environment))
+        }
+    }
+}
+
+fn resolve_onboard_base_url(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<Option<String>, CliError> {
+    if route.uses_subscription_client() {
+        return Ok(None);
+    }
+    if options.executable_path.is_some() || options.chatgpt_login.is_some() {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let base_url = options.base_url.clone().map_or_else(
+        || match route.default_base_url() {
+            Some(default) => Ok(default.to_owned()),
+            None => prompt_line(input, prompt, "OpenAI-compatible HTTPS API base URL: "),
+        },
+        Ok,
+    )?;
+    let local_endpoint =
+        validate_provider_base_url(&base_url).map_err(|_| CliError::InvalidSetupInput)?;
+    if matches!(route, OnboardRouteArgument::Local) && !local_endpoint {
+        return Err(CliError::InvalidSetupInput);
+    }
+    Ok(Some(base_url))
+}
+
+fn valid_onboard_provider_credential(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAXIMUM_PROVIDER_CREDENTIAL_BYTES
+        && !value.chars().any(char::is_control)
+}
+
+fn resolve_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    base_url: Option<String>,
+    credential: Option<ResolvedOnboardCredential>,
+    secure_terminal_boundary: bool,
+) -> Result<ResolvedOnboard, CliError> {
+    if route.uses_subscription_client() {
+        if base_url.is_some() || credential.is_some() {
+            return Err(CliError::InvalidSetupInput);
+        }
+        return resolve_subscription_onboard(
+            route,
+            options,
+            input,
+            prompt,
+            secure_terminal_boundary,
+        );
+    }
+    resolve_http_onboard(
+        route,
+        options,
+        input,
+        prompt,
+        base_url.ok_or(CliError::InvalidSetupInput)?,
+        credential,
+    )
+}
+
+fn prompt_onboard_route(
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<OnboardRouteArgument, CliError> {
+    writeln!(prompt, "How should Mealy access a model?")?;
+    writeln!(
+        prompt,
+        "  1. OpenRouter free model (recommended without paid API credit)"
+    )?;
+    writeln!(
+        prompt,
+        "  2. Custom authenticated OpenAI-compatible endpoint"
+    )?;
+    writeln!(
+        prompt,
+        "  3. Local credentialless OpenAI-compatible endpoint"
+    )?;
+    writeln!(
+        prompt,
+        "  4. ChatGPT subscription through official Codex CLI"
+    )?;
+    writeln!(prompt, "  5. OpenAI API")?;
+    writeln!(prompt, "  6. Anthropic API")?;
+    match prompt_line(input, prompt, "Route [1-6]: ")?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "openrouter" | "openrouter-free" => Ok(OnboardRouteArgument::OpenrouterFree),
+        "2" | "custom" => Ok(OnboardRouteArgument::Custom),
+        "3" | "local" => Ok(OnboardRouteArgument::Local),
+        "4" | "chatgpt" | "chatgpt-subscription" => Ok(OnboardRouteArgument::ChatgptSubscription),
+        "claude" | "claude-subscription" => Ok(OnboardRouteArgument::ClaudeSubscription),
+        "5" | "openai" | "openai-api" => Ok(OnboardRouteArgument::OpenaiApi),
+        "6" | "anthropic" | "anthropic-api" => Ok(OnboardRouteArgument::AnthropicApi),
+        _ => Err(CliError::InvalidSetupInput),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn resolve_http_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    base_url: String,
+    credential: Option<ResolvedOnboardCredential>,
+) -> Result<ResolvedOnboard, CliError> {
+    if matches!(route, OnboardRouteArgument::Local)
+        && (options.credential_env.is_some()
+            || options
+                .input_microunits_per_million_tokens
+                .is_some_and(|value| value != 0)
+            || options
+                .output_microunits_per_million_tokens
+                .is_some_and(|value| value != 0))
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let discovered = discover_onboard_models(
+        route,
+        &base_url,
+        credential
+            .as_ref()
+            .map(|credential| credential.value.as_str()),
+        options.model.as_deref(),
+    )?;
+    let selected =
+        select_onboard_model(route, discovered, options.model.as_deref(), input, prompt)?;
+    let model = selected
+        .as_ref()
+        .map(|item| item.id.clone())
+        .or_else(|| options.model.clone())
+        .map_or_else(|| prompt_line(input, prompt, "Exact model ID: "), Ok)?;
+    let context_tokens = resolve_onboard_context(
+        options.context_tokens,
+        selected.as_ref().and_then(|item| item.context_tokens),
+        input,
+        prompt,
+    )?;
+    let maximum_output_tokens = selected
+        .as_ref()
+        .and_then(|item| item.maximum_output_tokens)
+        .map_or(options.maximum_output_tokens, |advertised| {
+            advertised.min(options.maximum_output_tokens)
+        });
+
+    let (input_price, output_price) = if matches!(route, OnboardRouteArgument::OpenrouterFree) {
+        if options
+            .input_microunits_per_million_tokens
+            .is_some_and(|value| value != 0)
+            || options
+                .output_microunits_per_million_tokens
+                .is_some_and(|value| value != 0)
+        {
+            return Err(CliError::InvalidSetupInput);
+        }
+        (0, 0)
+    } else if matches!(route, OnboardRouteArgument::Local) {
+        (0, 0)
+    } else {
+        (
+            options.input_microunits_per_million_tokens.map_or_else(
+                || {
+                    prompt_u64(
+                        input,
+                        prompt,
+                        "Input price in currency microunits per million tokens (zero only for a verified free route): ",
+                        true,
+                    )
+                },
+                Ok,
+            )?,
+            options.output_microunits_per_million_tokens.map_or_else(
+                || {
+                    prompt_u64(
+                        input,
+                        prompt,
+                        "Output price in currency microunits per million tokens (zero only for a verified free route): ",
+                        true,
+                    )
+                },
+                Ok,
+            )?,
+        )
+    };
+
+    let common = (
+        base_url,
+        model,
+        context_tokens,
+        maximum_output_tokens,
+        !options.disable_streaming,
+        input_price,
+        output_price,
+    );
+    let (provider, secret_id) = match route {
+        OnboardRouteArgument::AnthropicApi => (
+            ProviderConfig::AnthropicMessages {
+                provider_id: "anthropic.messages".to_owned(),
+                base_url: common.0,
+                model: common.1,
+                credential: Some(ProviderCredentialReference::Broker {
+                    secret_id: "anthropic-primary".to_owned(),
+                }),
+                residency: "anthropic-api".to_owned(),
+                context_tokens: common.2,
+                maximum_output_tokens: common.3,
+                streaming: common.4,
+                input_microunits_per_million_tokens: common.5,
+                output_microunits_per_million_tokens: common.6,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+            },
+            Some("anthropic-primary".to_owned()),
+        ),
+        OnboardRouteArgument::Local => (
+            ProviderConfig::OpenAiResponses {
+                provider_id: "local.responses".to_owned(),
+                base_url: common.0,
+                model: common.1,
+                credential: None,
+                residency: "local".to_owned(),
+                context_tokens: common.2,
+                maximum_output_tokens: common.3,
+                streaming: common.4,
+                input_microunits_per_million_tokens: 0,
+                output_microunits_per_million_tokens: 0,
+                estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+            },
+            None,
+        ),
+        OnboardRouteArgument::OpenrouterFree
+        | OnboardRouteArgument::Custom
+        | OnboardRouteArgument::OpenaiApi => {
+            let (provider_id, secret_id, residency) = match route {
+                OnboardRouteArgument::OpenrouterFree => (
+                    "openrouter.responses",
+                    "openrouter-primary",
+                    "openrouter-api",
+                ),
+                OnboardRouteArgument::Custom => {
+                    ("custom.responses", "custom-primary", "custom-api")
+                }
+                OnboardRouteArgument::OpenaiApi => {
+                    ("openai.responses", "openai-primary", "openai-api")
+                }
+                _ => unreachable!("covered Responses route"),
+            };
+            (
+                ProviderConfig::OpenAiResponses {
+                    provider_id: provider_id.to_owned(),
+                    base_url: common.0,
+                    model: common.1,
+                    credential: Some(ProviderCredentialReference::Broker {
+                        secret_id: secret_id.to_owned(),
+                    }),
+                    residency: residency.to_owned(),
+                    context_tokens: common.2,
+                    maximum_output_tokens: common.3,
+                    streaming: common.4,
+                    input_microunits_per_million_tokens: common.5,
+                    output_microunits_per_million_tokens: common.6,
+                    estimated_latency_ms: SETUP_PROVIDER_ESTIMATED_LATENCY_MS,
+                },
+                Some(secret_id.to_owned()),
+            )
+        }
+        OnboardRouteArgument::ChatgptSubscription | OnboardRouteArgument::ClaudeSubscription => {
+            unreachable!("subscription routes were resolved separately")
+        }
+    };
+    provider
+        .validate()
+        .map_err(|_| CliError::InvalidSetupInput)?;
+    Ok(ResolvedOnboard {
+        route,
+        provider,
+        secret_id,
+        credential,
+    })
+}
+
+fn discover_onboard_models(
+    route: OnboardRouteArgument,
+    base_url: &str,
+    credential: Option<&str>,
+    requested_model: Option<&str>,
+) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                discover_onboard_models_blocking(route, base_url, credential, requested_model)
+            })
+            .join()
+            .map_err(|_| {
+                CliError::ProviderDiscovery("onboarding model-discovery worker failed".to_owned())
+            })?
+    })
+}
+
+fn discover_onboard_models_blocking(
+    route: OnboardRouteArgument,
+    base_url: &str,
+    credential: Option<&str>,
+    requested_model: Option<&str>,
+) -> Result<Option<Vec<ProviderModelDiscoveryItem>>, CliError> {
+    let discover = match route {
+        OnboardRouteArgument::OpenrouterFree => {
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
+            let result = discover_openrouter_models_blocking(
+                base_url,
+                credential,
+                None,
+                PROVIDER_DISCOVERY_MAXIMUM_MODELS,
+            )?;
+            Some(
+                result
+                    .models
+                    .into_iter()
+                    .filter(openrouter_model_is_strictly_free)
+                    .collect::<Vec<_>>(),
+            )
+        }
+        OnboardRouteArgument::Custom | OnboardRouteArgument::OpenaiApi
+            if requested_model.is_none() =>
+        {
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
+            let result =
+                discover_openai_models_blocking(base_url, Some(credential), None, 100, false)?;
+            Some(result.models)
+        }
+        OnboardRouteArgument::Local if requested_model.is_none() => {
+            Some(discover_openai_models_blocking(base_url, None, None, 100, true)?.models)
+        }
+        OnboardRouteArgument::AnthropicApi if requested_model.is_none() => {
+            let credential = credential.ok_or(CliError::InvalidSetupInput)?;
+            let result = discover_anthropic_models_blocking(base_url, credential, None, 100, None)?;
+            Some(result.models)
+        }
+        OnboardRouteArgument::Custom
+        | OnboardRouteArgument::Local
+        | OnboardRouteArgument::OpenaiApi
+        | OnboardRouteArgument::AnthropicApi => None,
+        OnboardRouteArgument::ChatgptSubscription | OnboardRouteArgument::ClaudeSubscription => {
+            None
+        }
+    };
+    Ok(discover)
+}
+
+fn openrouter_model_is_strictly_free(model: &ProviderModelDiscoveryItem) -> bool {
+    model.id.ends_with(":free")
+        && model.tool_capable == Some(true)
+        && model.token_limits_complete
+        && model.context_tokens.is_some_and(|value| value > 0)
+        && model.maximum_output_tokens.is_some_and(|value| value > 0)
+        && model.pricing_complete
+        && model.input_microunits_per_million_tokens == Some(0)
+        && model.output_microunits_per_million_tokens == Some(0)
+        && model.unsupported_pricing_axes.is_empty()
+}
+
+fn select_onboard_model(
+    route: OnboardRouteArgument,
+    discovered: Option<Vec<ProviderModelDiscoveryItem>>,
+    requested: Option<&str>,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<Option<ProviderModelDiscoveryItem>, CliError> {
+    let Some(mut models) = discovered else {
+        return Ok(None);
+    };
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    if models.is_empty() {
+        return Err(CliError::OnboardNoEligibleModel(route.display_name()));
+    }
+    if let Some(requested) = requested {
+        return models
+            .into_iter()
+            .find(|model| model.id == requested)
+            .map(Some)
+            .ok_or(CliError::OnboardNoEligibleModel(route.display_name()));
+    }
+    writeln!(
+        prompt,
+        "Eligible models (live account catalog; exact zero posted token price):"
+    )?;
+    for (index, model) in models.iter().take(20).enumerate() {
+        match (model.context_tokens, model.maximum_output_tokens) {
+            (Some(context), Some(output)) => writeln!(
+                prompt,
+                "  {}. {} (context {context}, output {output})",
+                index + 1,
+                model.id
+            )?,
+            _ => writeln!(prompt, "  {}. {}", index + 1, model.id)?,
+        }
+    }
+    let selected = prompt_line(input, prompt, "Model number: ")?
+        .parse::<usize>()
+        .ok()
+        .filter(|index| (1..=models.len().min(20)).contains(index))
+        .ok_or(CliError::InvalidSetupInput)?;
+    Ok(Some(models.remove(selected - 1)))
+}
+
+fn resolve_onboard_context(
+    requested: Option<u64>,
+    advertised: Option<u64>,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<u64, CliError> {
+    match (requested, advertised) {
+        (Some(requested), Some(advertised)) if requested == 0 || requested > advertised => {
+            Err(CliError::InvalidSetupInput)
+        }
+        (Some(requested), _) if requested > 0 => Ok(requested),
+        (None, Some(advertised)) if advertised > 0 => Ok(advertised),
+        (None, _) => prompt_u64(input, prompt, "Conservative context-token limit: ", false),
+        _ => Err(CliError::InvalidSetupInput),
+    }
+}
+
+fn resolve_subscription_onboard(
+    route: OnboardRouteArgument,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<ResolvedOnboard, CliError> {
+    if matches!(route, OnboardRouteArgument::ClaudeSubscription) {
+        return Err(CliError::ClaudeSubscriptionUnsupported);
+    }
+    if options.base_url.is_some()
+        || options.credential_env.is_some()
+        || options.input_microunits_per_million_tokens.is_some()
+        || options.output_microunits_per_million_tokens.is_some()
+        || options.disable_streaming
+    {
+        return Err(CliError::InvalidSetupInput);
+    }
+    let context_tokens = options
+        .context_tokens
+        .unwrap_or(OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS);
+    let (client, executable_name, provider_id, residency) = match route {
+        OnboardRouteArgument::ChatgptSubscription => (
+            SubscriptionCliClient::OpenAiCodex,
+            "codex",
+            "openai.subscription",
+            "openai-subscription",
+        ),
+        OnboardRouteArgument::ClaudeSubscription => {
+            return Err(CliError::ClaudeSubscriptionUnsupported);
+        }
+        _ => return Err(CliError::InvalidSetupInput),
+    };
+    let selected = options
+        .executable_path
+        .clone()
+        .or_else(|| find_executable_on_path(executable_name))
+        .ok_or(CliError::ChatgptCodexUnavailable)?;
+    let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
+        .map_err(|_| CliError::ChatgptCodexUnavailable)?;
+    let mut app_server = CodexAppServerClient::start(&canonical, &executable_sha256)
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    ensure_codex_chatgpt_account(
+        &mut app_server,
+        options,
+        input,
+        prompt,
+        secure_terminal_boundary,
+    )?;
+    let catalog = app_server
+        .list_models(options.model.is_some())
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    let selected_model = select_codex_subscription_model(&catalog, options.model.as_deref())?;
+    writeln!(
+        prompt,
+        "Using Codex account-catalog model {} ({}).",
+        selected_model.display_name, selected_model.model
+    )?;
+    let model = selected_model.model.clone();
+    let canonical = canonical
+        .to_str()
+        .ok_or(CliError::InvalidProviderConfiguration)?;
+    let provider = ProviderConfig::SubscriptionCli {
+        provider_id: provider_id.to_owned(),
+        client,
+        executable_path: canonical.to_owned(),
+        executable_sha256,
+        model,
+        residency: residency.to_owned(),
+        context_tokens,
+        maximum_output_tokens: options.maximum_output_tokens,
+        estimated_latency_ms: 60_000,
+    };
+    provider
+        .validate()
+        .map_err(|_| CliError::InvalidSetupInput)?;
+    Ok(ResolvedOnboard {
+        route,
+        provider,
+        secret_id: None,
+        credential: None,
+    })
+}
+
+fn ensure_codex_chatgpt_account(
+    app_server: &mut CodexAppServerClient,
+    options: &OnboardOptions,
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+    secure_terminal_boundary: bool,
+) -> Result<(), CliError> {
+    let account = app_server
+        .account_state()
+        .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+    if account.kind != CodexAccountKind::Chatgpt {
+        if !secure_terminal_boundary {
+            return Err(CliError::ChatgptLoginRequiresTerminal);
+        }
+        match account.kind {
+            CodexAccountKind::SignedOut => writeln!(
+                prompt,
+                "The official Codex client is not signed in with ChatGPT."
+            )?,
+            CodexAccountKind::Other => writeln!(
+                prompt,
+                "The official Codex client is using another login mode. Continuing will replace that shared Codex login with ChatGPT."
+            )?,
+            CodexAccountKind::Chatgpt => unreachable!("non-ChatGPT account branch"),
+        }
+        if !matches!(
+            prompt_line(
+                input,
+                prompt,
+                "Start an official managed ChatGPT sign-in now? [y/N]: ",
+            )?
+            .to_ascii_lowercase()
+            .as_str(),
+            "y" | "yes"
+        ) {
+            return Err(CliError::ChatgptLoginDeclined);
+        }
+        let flow = match options
+            .chatgpt_login
+            .unwrap_or(ChatgptLoginArgument::Browser)
+        {
+            ChatgptLoginArgument::Browser => CodexChatgptLoginFlow::Browser,
+            ChatgptLoginArgument::DeviceCode => CodexChatgptLoginFlow::DeviceCode,
+        };
+        let challenge = app_server
+            .start_chatgpt_login(flow)
+            .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+        match &challenge {
+            CodexChatgptLoginChallenge::Browser { auth_url, .. } => writeln!(
+                prompt,
+                "Open this official ChatGPT authorization URL in your browser:\n  {auth_url}\nWaiting up to five minutes for sign-in..."
+            )?,
+            CodexChatgptLoginChallenge::DeviceCode {
+                verification_url,
+                user_code,
+                ..
+            } => writeln!(
+                prompt,
+                "Open this official verification URL:\n  {verification_url}\nEnter code: {user_code}\nWaiting up to five minutes for sign-in..."
+            )?,
+        }
+        let account = app_server
+            .finish_chatgpt_login(&challenge)
+            .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
+        let plan = account.plan_type.as_deref().map_or("ChatGPT", |plan| plan);
+        writeln!(prompt, "Official Codex sign-in completed ({plan}).")?;
+    } else if let Some(plan) = account.plan_type.as_deref() {
+        writeln!(
+            prompt,
+            "Using the existing official Codex ChatGPT {plan} session."
+        )?;
+    } else {
+        writeln!(prompt, "Using the existing official Codex ChatGPT session.")?;
+    }
+    Ok(())
+}
+
+fn select_codex_subscription_model<'a>(
+    catalog: &'a [CodexSubscriptionModel],
+    requested: Option<&str>,
+) -> Result<&'a CodexSubscriptionModel, CliError> {
+    if let Some(requested) = requested {
+        return catalog
+            .iter()
+            .find(|model| model.model == requested)
+            .ok_or(CliError::ChatgptSubscriptionModelUnavailable);
+    }
+    let mut defaults = catalog.iter().filter(|model| model.is_default);
+    match (defaults.next(), defaults.next()) {
+        (Some(model), None) => Ok(model),
+        (None, None) => catalog
+            .iter()
+            .find(|model| model.model == OPENAI_SUBSCRIPTION_DEFAULT_MODEL)
+            .ok_or(CliError::ChatgptSubscriptionModelUnavailable),
+        _ => Err(CliError::ChatgptSubscriptionModelUnavailable),
+    }
+}
+
+fn render_onboard_summary(
+    resolved: &ResolvedOnboard,
+    options: &OnboardOptions,
+    prompt: &mut impl Write,
+) -> Result<(), CliError> {
+    let provider_json = serde_json::to_value(&resolved.provider)?;
+    let provider_id = provider_json
+        .get("providerId")
+        .and_then(Value::as_str)
+        .ok_or(CliError::InvalidSetupInput)?;
+    let model = provider_json
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or(CliError::InvalidSetupInput)?;
+    writeln!(prompt, "\nReview the exact non-secret onboarding plan:")?;
+    writeln!(prompt, "  route: {}", resolved.route.display_name())?;
+    writeln!(prompt, "  provider ID: {provider_id}")?;
+    writeln!(prompt, "  model: {model}")?;
+    if let Some(base_url) = provider_json.get("baseUrl").and_then(Value::as_str) {
+        writeln!(prompt, "  API base: {base_url}")?;
+    }
+    let context_tokens = provider_json
+        .get("contextTokens")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidSetupInput)?;
+    let maximum_output_tokens = provider_json
+        .get("maximumOutputTokens")
+        .and_then(Value::as_u64)
+        .ok_or(CliError::InvalidSetupInput)?;
+    writeln!(
+        prompt,
+        "  context/output tokens: {context_tokens}/{maximum_output_tokens}"
+    )?;
+    if let (Some(input_price), Some(output_price)) = (
+        provider_json
+            .get("inputMicrounitsPerMillionTokens")
+            .and_then(Value::as_u64),
+        provider_json
+            .get("outputMicrounitsPerMillionTokens")
+            .and_then(Value::as_u64),
+    ) {
+        writeln!(
+            prompt,
+            "  input/output price microunits per million tokens: {input_price}/{output_price}"
+        )?;
+    }
+    if let Some(streaming) = provider_json.get("streaming").and_then(Value::as_bool) {
+        writeln!(prompt, "  streaming: {streaming}")?;
+    }
+    writeln!(
+        prompt,
+        "  provider config digest preview: {}",
+        sha256_digest(&serde_json::to_vec(&resolved.provider)?)
+    )?;
+    writeln!(
+        prompt,
+        "  connectivity probe: {}",
+        if options.skip_connectivity_test {
+            "SKIPPED (configuration is not production-verified)"
+        } else {
+            "required before activation"
+        }
+    )?;
+    if let Some(credential) = &resolved.credential {
+        match credential.source {
+            OnboardCredentialSource::Environment => writeln!(
+                prompt,
+                "  credential source: environment variable {} (imported once; the value is never printed or stored in config)",
+                credential.environment
+            )?,
+            OnboardCredentialSource::HiddenTerminalPrompt => writeln!(
+                prompt,
+                "  credential source: hidden terminal prompt ({} was absent; the value is never echoed, printed, or stored in config)",
+                credential.environment
+            )?,
+        }
+    } else if resolved.route.uses_subscription_client() {
+        writeln!(
+            prompt,
+            "  credential source: existing official client subscription session (no token extraction)"
+        )?;
+    } else {
+        writeln!(prompt, "  credential source: none (literal loopback only)")?;
+    }
+    writeln!(
+        prompt,
+        "  service action: {}",
+        if options.configure_only {
+            "do not install or start a service"
+        } else {
+            "install, enable, start, and verify the Linux owner service"
+        }
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn activate_owner_service() -> Result<(), CliError> {
+    let systemctl = Path::new("/usr/bin/systemctl");
+    if !systemctl.is_file() || !is_trusted_system_executable(systemctl) {
+        return Err(CliError::InvalidService(
+            "onboarding requires trusted /usr/bin/systemctl".to_owned(),
+        ));
+    }
+    for arguments in [
+        ["--user", "daemon-reload"].as_slice(),
+        ["--user", "enable", "--now", "mealy.service"].as_slice(),
+    ] {
+        let output = ProcessCommand::new(systemctl).args(arguments).output()?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::InvalidService(format!(
+                "systemctl {} failed: {}",
+                arguments.join(" "),
+                terminal_safe_single_line(detail.trim())
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn activate_owner_service() -> Result<(), CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production onboarding service activation is supported only on Linux".to_owned(),
+    ))
+}
+
+async fn wait_for_onboard_readiness(home: &Path) -> Result<DoctorResponse, CliError> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(connection) = load_connection(home) {
+            let client = Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(2))
+                .build()?;
+            if let Ok(response) = authorized(
+                client.get(format!("{}/health/live", connection.base_url)),
+                &connection,
+            )
+            .send()
+            .await
+                && let Ok(health) = decode::<HealthResponse>(response).await
+                && health.api_version == API_VERSION
+                && health.live
+                && let Ok(response) = authorized(
+                    client.get(format!("{}/v1/admin/doctor", connection.base_url)),
+                    &connection,
+                )
+                .send()
+                .await
+                && let Ok(doctor) = decode::<DoctorResponse>(response).await
+                && doctor.api_version == API_VERSION
+                && doctor.control_plane_ready
+                && doctor.sandbox_available
+            {
+                return Ok(doctor);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CliError::InvalidService(
+                "timed out after 30 seconds".to_owned(),
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 impl SetupProviderArgument {
     const fn display_name(self) -> &'static str {
         match self {
@@ -6605,7 +9084,7 @@ fn run_setup(home: &Path, options: &SetupOptions) -> Result<(), CliError> {
         .zip(setup.credential_env.as_deref())
         .map(|(secret_id, credential_env)| ProviderCredentialImport {
             secret_id,
-            credential_env,
+            source: ProviderCredentialImportSource::Environment(credential_env),
         });
     configure_provider(
         home,
@@ -6719,6 +9198,88 @@ fn prompt_setup_provider(
         "4" | "local" => Ok(SetupProviderArgument::Local),
         _ => Err(CliError::InvalidSetupInput),
     }
+}
+
+#[cfg(unix)]
+fn prompt_hidden_onboard_credential(
+    input: &mut std::io::StdinLock<'_>,
+    prompt: &mut impl Write,
+    label: &str,
+) -> Result<Zeroizing<String>, CliError> {
+    use rustix::termios::{LocalModes, OptionalActions, Termios, tcgetattr, tcsetattr};
+    use std::os::fd::OwnedFd;
+
+    struct RestoreTerminalEcho {
+        descriptor: OwnedFd,
+        original: Option<Termios>,
+    }
+
+    impl RestoreTerminalEcho {
+        fn restore(mut self) -> Result<(), CliError> {
+            let original = self
+                .original
+                .take()
+                .expect("terminal state is present until restoration");
+            match tcsetattr(&self.descriptor, OptionalActions::Now, &original) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.original = Some(original);
+                    Err(CliError::Io(error.into()))
+                }
+            }
+        }
+    }
+
+    impl Drop for RestoreTerminalEcho {
+        fn drop(&mut self) {
+            if let Some(original) = self.original.take() {
+                let _ = tcsetattr(&self.descriptor, OptionalActions::Now, &original);
+            }
+        }
+    }
+
+    let descriptor = rustix::io::dup(input.as_fd()).map_err(|error| CliError::Io(error.into()))?;
+    let original = tcgetattr(&descriptor).map_err(|error| CliError::Io(error.into()))?;
+    let mut hidden = original.clone();
+    hidden.local_modes &= !(LocalModes::ECHO | LocalModes::ECHONL | LocalModes::ISIG);
+    tcsetattr(&descriptor, OptionalActions::Now, &hidden)
+        .map_err(|error| CliError::Io(error.into()))?;
+    let restore = RestoreTerminalEcho {
+        descriptor,
+        original: Some(original),
+    };
+    write!(prompt, "{label}")?;
+    prompt.flush()?;
+    let mut value = Zeroizing::new(String::new());
+    let read_result = (&mut *input)
+        .take(
+            u64::try_from(MAXIMUM_PROVIDER_CREDENTIAL_BYTES)
+                .unwrap_or(u64::MAX)
+                .saturating_add(2),
+        )
+        .read_line(&mut value);
+    let restore_result = restore.restore();
+    writeln!(prompt)?;
+    restore_result?;
+    let bytes = read_result?;
+    while matches!(value.as_bytes().last(), Some(b'\n' | b'\r')) {
+        value.pop();
+    }
+    if bytes == 0 || !valid_onboard_provider_credential(&value) {
+        return Err(CliError::InvalidOnboardCredential);
+    }
+    Ok(value)
+}
+
+#[cfg(not(unix))]
+fn prompt_hidden_onboard_credential(
+    _input: &mut std::io::StdinLock<'_>,
+    _prompt: &mut impl Write,
+    _label: &str,
+) -> Result<Zeroizing<String>, CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "hidden onboarding credential prompts require a Unix terminal".to_owned(),
+    ))
 }
 
 fn prompt_line(
@@ -6956,6 +9517,35 @@ struct ServiceInstallationResponse {
 }
 
 #[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+#[serde(rename_all = "camelCase")]
+struct ServiceRemovalPlan {
+    schema_version: &'static str,
+    platform: String,
+    home: PathBuf,
+    service_definition: PathBuf,
+    loaded_fragment: Option<PathBuf>,
+    daemon_path: Option<PathBuf>,
+    installed: bool,
+    definition_verified: bool,
+    loaded: bool,
+    active: bool,
+    action_required: bool,
+    apply_supported: bool,
+    preserves_home: bool,
+    removed: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedOwnerService {
+    /// Path reported by systemd. For a linked unit this is the loader-visible symlink.
+    fragment: PathBuf,
+    /// Canonical regular unit definition to which the fragment resolves.
+    definition: PathBuf,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigRollbackResponse {
     activated_digest: String,
@@ -7007,7 +9597,22 @@ struct ProviderChainConfigurationResponse {
 #[derive(Clone, Copy)]
 struct ProviderCredentialImport<'a> {
     secret_id: &'a str,
-    credential_env: &'a str,
+    source: ProviderCredentialImportSource<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum ProviderCredentialImportSource<'a> {
+    Environment(&'a str),
+    Resolved(&'a str),
+}
+
+impl ProviderCredentialImportSource<'_> {
+    fn read(self) -> Result<Zeroizing<String>, CliError> {
+        match self {
+            Self::Environment(environment) => read_provider_credential_environment(environment),
+            Self::Resolved(value) => Ok(Zeroizing::new(value.to_owned())),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -7362,30 +9967,9 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             *approve,
             *skip_connectivity_test,
         ),
-        ConfigCommand::ProviderSubscriptionClaude {
-            provider_id,
-            executable_path,
-            model,
-            residency,
-            context_tokens,
-            maximum_output_tokens,
-            skip_connectivity_test,
-            estimated_latency_ms,
-            approve,
-        } => configure_subscription_provider(
-            home,
-            provider_id,
-            SubscriptionCliClient::AnthropicClaude,
-            executable_path.as_deref(),
-            "claude",
-            model,
-            residency,
-            *context_tokens,
-            *maximum_output_tokens,
-            *estimated_latency_ms,
-            *approve,
-            *skip_connectivity_test,
-        ),
+        ConfigCommand::ProviderSubscriptionClaude { .. } => {
+            Err(CliError::ClaudeSubscriptionUnsupported)
+        }
         ConfigCommand::Provider {
             provider_id,
             base_url,
@@ -7436,7 +10020,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -7475,7 +10059,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -7514,7 +10098,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -7583,7 +10167,7 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             },
             Some(ProviderCredentialImport {
                 secret_id,
-                credential_env,
+                source: ProviderCredentialImportSource::Environment(credential_env),
             }),
             *approve,
             *skip_connectivity_test,
@@ -8720,9 +11304,9 @@ fn configure_subscription_provider(
     let selected = executable_path
         .map(Path::to_path_buf)
         .or_else(|| find_executable_on_path(default_executable))
-        .ok_or(CliError::InvalidProviderConfiguration)?;
+        .ok_or(CliError::ChatgptCodexUnavailable)?;
     let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
-        .map_err(|_| CliError::InvalidProviderConfiguration)?;
+        .map_err(|_| CliError::ChatgptCodexUnavailable)?;
     let canonical = canonical
         .to_str()
         .ok_or(CliError::InvalidProviderConfiguration)?;
@@ -8767,6 +11351,22 @@ fn configure_provider(
     approve: bool,
     skip_connectivity_test: bool,
 ) -> Result<(), CliError> {
+    print_json(activate_provider(
+        home,
+        provider,
+        credential_import,
+        approve,
+        skip_connectivity_test,
+    )?)
+}
+
+fn activate_provider(
+    home: &Path,
+    provider: ProviderConfig,
+    credential_import: Option<ProviderCredentialImport<'_>>,
+    approve: bool,
+    skip_connectivity_test: bool,
+) -> Result<ProviderConfigurationResponse, CliError> {
     if !approve {
         return Err(CliError::ApprovalRequired);
     }
@@ -8775,7 +11375,7 @@ fn configure_provider(
         .map_err(|_| CliError::InvalidProviderConfiguration)?;
     validate_provider_credential_import(&provider, credential_import)?;
     let credential = credential_import
-        .map(|import| read_provider_credential_environment(import.credential_env))
+        .map(|import| import.source.read())
         .transpose()?;
     let (home, _instance_lock) = lock_stopped_home(home)?;
     let current = home.join("config.json");
@@ -8846,7 +11446,7 @@ fn configure_provider(
     atomic_write_service(&replaced, &current_body)?;
     atomic_write_service(&current, &updated)?;
     let (protocol, provider_id, model, streaming) = provider_configuration_identity(provider)?;
-    print_json(ProviderConfigurationResponse {
+    Ok(ProviderConfigurationResponse {
         provider_config_digest,
         protocol: protocol.to_owned(),
         provider_id,
@@ -8916,7 +11516,7 @@ fn configure_provider_fallback(
         .map_err(|_| CliError::InvalidProviderConfiguration)?;
     validate_provider_credential_import(&provider, credential_import)?;
     let credential = credential_import
-        .map(|import| read_provider_credential_environment(import.credential_env))
+        .map(|import| import.source.read())
         .transpose()?;
     let (home, _instance_lock) = lock_stopped_home(home)?;
     let current = home.join("config.json");
@@ -11406,12 +14006,29 @@ fn read_channel_credential_environment(name: &str) -> Result<Zeroizing<String>, 
 }
 
 fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(), CliError> {
-    let ServiceCommand::Install {
-        daemon_path,
-        destination,
-    } = command;
+    match command {
+        ServiceCommand::Install {
+            daemon_path,
+            destination,
+        } => print_json(install_service_definition(
+            home,
+            daemon_path.as_deref(),
+            destination.as_deref(),
+        )?),
+        ServiceCommand::Remove {
+            destination,
+            approve,
+        } => run_service_removal(home, destination.as_deref(), *approve),
+    }
+}
+
+fn install_service_definition(
+    home: &Path,
+    daemon_path: Option<&Path>,
+    destination: Option<&Path>,
+) -> Result<ServiceInstallationResponse, CliError> {
     let daemon = daemon_path
-        .clone()
+        .map(Path::to_owned)
         .map_or_else(default_daemon_path, Ok)?
         .canonicalize()
         .map_err(CliError::Io)?;
@@ -11423,10 +14040,7 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
     let read_write_paths = service_read_write_paths(&home)?;
     let (platform, default_destination, body, activation) =
         service_definition(&daemon, &home, &read_write_paths)?;
-    let destination = destination.as_ref().map_or_else(
-        || Ok(default_destination),
-        |path| absolute_service_path(path),
-    )?;
+    let destination = destination.map_or_else(|| Ok(default_destination), absolute_service_path)?;
     let activation_command = activation(&destination)?;
     let parent = destination.parent().ok_or_else(|| {
         CliError::InvalidService("service definition has no parent directory".to_owned())
@@ -11434,7 +14048,7 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
     create_private_service_directory(parent)?;
     let rollback = preserve_service_rollback(&destination)?;
     atomic_write_service(&destination, body.as_bytes())?;
-    print_json(ServiceInstallationResponse {
+    Ok(ServiceInstallationResponse {
         platform,
         service_definition: destination.display().to_string(),
         daemon_path: daemon.display().to_string(),
@@ -11446,6 +14060,269 @@ fn run_service_installation(home: &Path, command: &ServiceCommand) -> Result<(),
         rollback_copy: rollback.map(|path| path.display().to_string()),
         activation_command,
     })
+}
+
+fn run_service_removal(
+    home: &Path,
+    destination: Option<&Path>,
+    approve: bool,
+) -> Result<(), CliError> {
+    let plan = plan_service_removal(home, destination)?;
+    if !approve || !plan.action_required {
+        return print_json(plan);
+    }
+    if !plan.apply_supported {
+        print_json(&plan)?;
+        return Err(CliError::MaintenanceUnavailable);
+    }
+    eprintln!("{}", terminal_safe_pretty_json(&plan)?);
+    apply_service_removal(&plan)?;
+    let mut result = plan_service_removal(home, Some(&plan.service_definition))?;
+    result.daemon_path.clone_from(&plan.daemon_path);
+    result.removed = true;
+    print_json(result)
+}
+
+#[cfg(target_os = "linux")]
+fn plan_service_removal(
+    home: &Path,
+    destination: Option<&Path>,
+) -> Result<ServiceRemovalPlan, CliError> {
+    let home = absolute_service_path(home)?.canonicalize()?;
+    validate_linux_service_home(&home)?;
+    let loaded_service = loaded_owner_service_fragment()?;
+    let destination = destination.map_or_else(
+        || {
+            loaded_service
+                .as_ref()
+                .map(|service| service.definition.clone())
+                .map_or_else(linux_default_service_destination, Ok)
+        },
+        absolute_service_path,
+    )?;
+    validate_linux_service_destination_name(&destination)?;
+    let active = owner_service_active_or_absent()?;
+    let (installed, daemon_path) = match fs::symlink_metadata(&destination) {
+        Ok(metadata) => {
+            let daemon = if !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && destination
+                    .canonicalize()
+                    .is_ok_and(|path| path == destination)
+            {
+                lifecycle::read_bounded_regular_file(&destination, 64 * 1024)
+                    .ok()
+                    .and_then(|bytes| generated_linux_service_daemon(&bytes, &home))
+            } else {
+                None
+            };
+            (true, daemon)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (false, None),
+        Err(error) => return Err(CliError::Io(error)),
+    };
+    let definition_verified = daemon_path.is_some();
+    let loaded_matches = loaded_service
+        .as_ref()
+        .is_none_or(|service| service.definition == destination);
+    let action_required = installed || loaded_service.is_some();
+    let apply_supported = !action_required
+        || (installed
+            && definition_verified
+            && loaded_matches
+            && !(active && loaded_service.is_none()));
+    Ok(ServiceRemovalPlan {
+        schema_version: "mealy.service-removal.v1",
+        platform: "linux-systemd-user".to_owned(),
+        home,
+        service_definition: destination,
+        loaded_fragment: loaded_service
+            .as_ref()
+            .map(|service| service.fragment.clone()),
+        daemon_path,
+        installed,
+        definition_verified,
+        loaded: loaded_service.is_some(),
+        active,
+        action_required,
+        apply_supported,
+        preserves_home: true,
+        removed: false,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn plan_service_removal(
+    _home: &Path,
+    _destination: Option<&Path>,
+) -> Result<ServiceRemovalPlan, CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production service removal is supported only on Linux".to_owned(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn apply_service_removal(plan: &ServiceRemovalPlan) -> Result<(), CliError> {
+    let loaded = loaded_owner_service_fragment()?;
+    if loaded.as_ref().is_some_and(|service| {
+        service.definition != plan.service_definition
+            || Some(&service.fragment) != plan.loaded_fragment.as_ref()
+    }) || (loaded.is_none() && owner_service_active_or_absent()?)
+    {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service does not match the reviewed definition".to_owned(),
+        ));
+    }
+    if let Some(reviewed) = loaded.as_ref() {
+        // Keep stop and disable as separate, ordered operations. systemd 257 removes a linked
+        // fragment before attempting the `--now` stop, then reports "unit not loaded" even though
+        // the service has stopped. Stopping first preserves the reviewed fragment for the state
+        // check and makes the transaction portable across the supported systemd versions.
+        run_systemctl(&["--user", "stop", "mealy.service"], true)?;
+        if owner_service_active_or_absent()? {
+            return Err(CliError::InvalidService(
+                "mealy.service remained active after stop".to_owned(),
+            ));
+        }
+        if loaded_owner_service_fragment()?.as_ref() != Some(reviewed) {
+            return Err(CliError::InvalidService(
+                "loaded mealy.service changed while stopping".to_owned(),
+            ));
+        }
+        run_systemctl(&["--user", "disable", "mealy.service"], true)?;
+    }
+    if owner_service_active_or_absent()? {
+        return Err(CliError::InvalidService(
+            "mealy.service remained active after disable".to_owned(),
+        ));
+    }
+    let (_home, _instance_lock) = lock_stopped_home(&plan.home)?;
+    let current = plan_service_removal(&plan.home, Some(&plan.service_definition))?;
+    if !current.installed || !current.definition_verified || !current.apply_supported {
+        return Err(CliError::InvalidService(
+            "service definition changed after the reviewed removal plan".to_owned(),
+        ));
+    }
+    if current
+        .loaded_fragment
+        .as_ref()
+        .is_some_and(|fragment| Some(fragment) != plan.loaded_fragment.as_ref())
+    {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment changed after the reviewed removal plan".to_owned(),
+        ));
+    }
+    if let Some(fragment) = plan
+        .loaded_fragment
+        .as_ref()
+        .filter(|fragment| *fragment != &plan.service_definition)
+    {
+        remove_reviewed_loader_fragment(fragment, &plan.service_definition)?;
+    }
+    fs::remove_file(&plan.service_definition)?;
+    sync_service_directory(plan.service_definition.parent().ok_or_else(|| {
+        CliError::InvalidService("service definition has no parent directory".to_owned())
+    })?)?;
+    run_systemctl(&["--user", "daemon-reload"], true)?;
+    run_systemctl(&["--user", "reset-failed", "mealy.service"], false)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_service_removal(_plan: &ServiceRemovalPlan) -> Result<(), CliError> {
+    Err(CliError::UnsupportedPlatform(
+        "production service removal is supported only on Linux".to_owned(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn loaded_owner_service_fragment() -> Result<Option<LoadedOwnerService>, CliError> {
+    let output = run_systemctl_output(&[
+        "--user",
+        "show",
+        "--property=FragmentPath",
+        "--value",
+        "mealy.service",
+    ])?;
+    let value = std::str::from_utf8(&output)
+        .map_err(|_| CliError::UpdateTransactionInconsistent)?
+        .trim_end_matches('\n');
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.contains('\n') || value.chars().any(char::is_control) {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment path is invalid".to_owned(),
+        ));
+    }
+    resolve_loaded_owner_service_fragment(Path::new(value)).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_loaded_owner_service_fragment(path: &Path) -> Result<LoadedOwnerService, CliError> {
+    let fragment = absolute_service_path(path)?;
+    validate_linux_service_destination_name(&fragment)?;
+    let metadata = fs::symlink_metadata(&fragment)?;
+    if !metadata.file_type().is_symlink() && !metadata.is_file() {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service fragment is not a regular file or symbolic link".to_owned(),
+        ));
+    }
+    let definition = fragment.canonicalize()?;
+    let definition_metadata = fs::symlink_metadata(&definition)?;
+    if definition_metadata.file_type().is_symlink()
+        || !definition_metadata.is_file()
+        || definition.canonicalize()? != definition
+    {
+        return Err(CliError::InvalidService(
+            "loaded mealy.service does not resolve to one canonical regular definition".to_owned(),
+        ));
+    }
+    validate_linux_service_destination_name(&definition)?;
+    Ok(LoadedOwnerService {
+        fragment,
+        definition,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn remove_reviewed_loader_fragment(fragment: &Path, definition: &Path) -> Result<(), CliError> {
+    match fs::symlink_metadata(fragment) {
+        Ok(_) => {
+            let resolved = resolve_loaded_owner_service_fragment(fragment)?;
+            if resolved.fragment != fragment || resolved.definition != definition {
+                return Err(CliError::InvalidService(
+                    "loaded service fragment changed after disable".to_owned(),
+                ));
+            }
+            fs::remove_file(fragment)?;
+            sync_service_directory(fragment.parent().ok_or_else(|| {
+                CliError::InvalidService(
+                    "loaded service fragment has no parent directory".to_owned(),
+                )
+            })?)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CliError::Io(error)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn owner_service_active_or_absent() -> Result<bool, CliError> {
+    let systemctl = trusted_systemctl()?;
+    let status = ProcessCommand::new(systemctl)
+        .args(["--user", "is-active", "--quiet", "mealy.service"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(3 | 4) => Ok(false),
+        _ => Err(CliError::InvalidService(
+            "could not inspect mealy.service activity".to_owned(),
+        )),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -11497,28 +14374,10 @@ fn service_definition(
     home: &Path,
     read_write_paths: &[PathBuf],
 ) -> Result<(String, PathBuf, String, ActivationCommand), CliError> {
-    let daemon_text = daemon.display().to_string();
-    let home_text = home.display().to_string();
-    validate_service_text(&daemon_text)?;
-    validate_service_text(&home_text)?;
     #[cfg(target_os = "linux")]
     {
-        if read_write_paths.is_empty() || !read_write_paths.iter().any(|path| path == home) {
-            return Err(CliError::InvalidService(
-                "service write paths must include the exact Mealy home".to_owned(),
-            ));
-        }
         let destination = linux_default_service_destination()?;
-        let body = format!(
-            "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
-             [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
-             UMask=0077\nNoNewPrivileges=true\n\
-             RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
-             SystemCallArchitectures=native\n\
-             MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
-            systemd_quote(&daemon_text),
-            systemd_quote(&home_text),
-        );
+        let body = linux_service_body(daemon, home, read_write_paths)?;
         Ok((
             "linux-systemd-user".to_owned(),
             destination,
@@ -11528,12 +14387,93 @@ fn service_definition(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (daemon_text, home_text, read_write_paths);
+        let _ = (daemon, home, read_write_paths);
         Err(CliError::UnsupportedPlatform(
             "production service installation is supported only on Linux; archived preview adapters do not provide a supported worker sandbox"
                 .to_owned(),
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_service_body(
+    daemon: &Path,
+    home: &Path,
+    read_write_paths: &[PathBuf],
+) -> Result<String, CliError> {
+    let daemon_text = daemon.display().to_string();
+    let home_text = home.display().to_string();
+    validate_service_text(&daemon_text)?;
+    validate_service_text(&home_text)?;
+    if read_write_paths.is_empty() || !read_write_paths.iter().any(|path| path == home) {
+        return Err(CliError::InvalidService(
+            "service write paths must include the exact Mealy home".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "[Unit]\nDescription=Mealy local-first agent daemon\nAfter=default.target\nStartLimitIntervalSec=60\nStartLimitBurst=3\n\n\
+         [Service]\nType=simple\nExecStart={} --home {}\nRestart=on-failure\nRestartPreventExitStatus=2\nRestartSec=2\n\
+         UMask=0077\nNoNewPrivileges=true\n\
+         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nRestrictRealtime=true\n\
+         SystemCallArchitectures=native\n\
+         MemoryHigh=1G\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=384\nLimitNOFILE=1024\nOOMPolicy=stop\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(&daemon_text),
+        systemd_quote(&home_text),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn generated_linux_service_daemon(body: &[u8], home: &Path) -> Option<PathBuf> {
+    let body = std::str::from_utf8(body).ok()?;
+    let mut commands = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("ExecStart="));
+    let command = commands.next()?;
+    if commands.next().is_some() {
+        return None;
+    }
+    let home_suffix = format!(" --home {}", systemd_quote(&home.display().to_string()));
+    let daemon_argument = command.strip_suffix(&home_suffix)?;
+    let daemon_text = decode_systemd_quoted_argument(daemon_argument)?;
+    let daemon = PathBuf::from(daemon_text);
+    if !daemon.is_absolute()
+        || !daemon.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return None;
+    }
+    let expected = linux_service_body(&daemon, home, &[home.to_owned()]).ok()?;
+    (expected == body).then_some(daemon)
+}
+
+#[cfg(target_os = "linux")]
+fn decode_systemd_quoted_argument(value: &str) -> Option<String> {
+    let value = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut decoded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next()? {
+                '\\' => decoded.push('\\'),
+                '"' => decoded.push('"'),
+                _ => return None,
+            },
+            '%' => {
+                if characters.next()? != '%' {
+                    return None;
+                }
+                decoded.push('%');
+            }
+            '"' => return None,
+            character if character.is_control() => return None,
+            character => decoded.push(character),
+        }
+    }
+    (!decoded.is_empty()).then_some(decoded)
 }
 
 fn service_read_write_paths(home: &Path) -> Result<Vec<PathBuf>, CliError> {
@@ -11775,11 +14715,7 @@ fn sync_service_directory(_path: &Path) -> Result<(), CliError> {
 
 #[cfg(target_os = "linux")]
 fn linux_activation_command(path: &Path) -> Result<String, CliError> {
-    if path.file_name().and_then(|name| name.to_str()) != Some("mealy.service") {
-        return Err(CliError::InvalidService(
-            "a Linux service destination must be named mealy.service".to_owned(),
-        ));
-    }
+    validate_linux_service_destination_name(path)?;
     let enable = "systemctl --user daemon-reload && systemctl --user enable --now mealy.service";
     if path == linux_default_service_destination()? {
         Ok(enable.to_owned())
@@ -11789,6 +14725,16 @@ fn linux_activation_command(path: &Path) -> Result<String, CliError> {
             setup_shell_argument(&path.display().to_string())
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_service_destination_name(path: &Path) -> Result<(), CliError> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("mealy.service") {
+        return Err(CliError::InvalidService(
+            "a Linux service destination must be named mealy.service".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn authorized(
@@ -12099,12 +15045,67 @@ fn escape_terminal_json(value: &str) -> String {
 /// Command-line client failure.
 #[derive(Debug, Error)]
 enum CliError {
+    /// No safe stable per-user default could be derived from the process environment.
+    #[error(
+        "could not determine the default Mealy home; set an absolute HOME, MEALY_HOME, or --home"
+    )]
+    DefaultHomeUnavailable,
+    /// An explicit Mealy home was empty.
+    #[error(
+        "Mealy home must not be empty; set MEALY_HOME or --home to a private durable directory"
+    )]
+    InvalidHome,
     /// Connection descriptor could not be read.
     #[error(transparent)]
     Io(#[from] std::io::Error),
     /// JSON encoding or decoding failed.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// Install provenance or lifecycle inspection failed.
+    #[error(transparent)]
+    Lifecycle(#[from] lifecycle::LifecycleError),
+    /// A one-command update would cross the durable-state schema and needs migration recovery.
+    #[error(
+        "automatic update refused the state-schema change from {current} to {target}; use the documented staged migration release procedure"
+    )]
+    UpdateSchemaChange {
+        /// Active state schema.
+        current: u64,
+        /// Candidate state schema.
+        target: u64,
+    },
+    /// Native package ownership requires the displayed package-manager command.
+    #[error(
+        "this installation is package-manager-owned; run the nativeUpdateCommand from the verified plan"
+    )]
+    NativePackageUpdate,
+    /// Native package ownership requires the displayed package-manager handoff.
+    #[error(
+        "this installation is package-manager-owned; run the nativeCommand from the verified plan"
+    )]
+    NativeMaintenance,
+    /// Current evidence cannot authorize the requested installation mutation.
+    #[error("the requested installation maintenance action is unavailable from verified evidence")]
+    MaintenanceUnavailable,
+    /// The detached helper is still running after the foreground observation window.
+    #[error(
+        "update helper is still running for transaction {0}; inspect the transaction or user-service journal"
+    )]
+    UpdateHelperPending(String),
+    /// The candidate failed qualification and the prior release was restored.
+    #[error("the update failed qualification and was automatically rolled back")]
+    UpdateRolledBack,
+    /// The target was rejected before program mutation and the prior service remains qualified.
+    #[error("the update was aborted before activation; the prior release remains qualified")]
+    UpdateAborted,
+    /// Neither target nor rollback could be fully qualified automatically.
+    #[error(
+        "the update helper could not establish a qualified release; preserve the transaction, backup, slots, and user-service journal"
+    )]
+    UpdateRecoveryFailed,
+    /// Durable update identity, service ownership, or phase evidence disagreed.
+    #[error("update transaction evidence is inconsistent with the installed system")]
+    UpdateTransactionInconsistent,
     /// HTTP client failed before a structured response.
     #[error(transparent)]
     Http(#[from] reqwest::Error),
@@ -12121,6 +15122,24 @@ enum CliError {
     /// Local protocol/stream validation failed.
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// Latest-session continuation was requested before this binding created a session.
+    #[error(
+        "no prior local session exists for this owner/channel binding; run `mealyctl chat` to start one"
+    )]
+    NoRecentSession,
+    /// The interactive recent-session picker was invoked without a complete terminal boundary.
+    #[error(
+        "chat --pick requires interactive stdin, stdout, and stderr; use --continue or --session-id for automation"
+    )]
+    ChatPickerRequiresTerminal,
+    /// Three bounded picker attempts did not select one of the displayed sessions.
+    #[error("no displayed conversation was selected; rerun `mealyctl chat --pick`")]
+    InvalidChatSelection,
+    /// A bare invocation could not safely enter an interactive onboarding or chat journey.
+    #[error(
+        "running `mealyctl` without a subcommand requires interactive stdin, stdout, and stderr; use `mealyctl onboard`, `mealyctl chat`, or `mealyctl --help` for automation"
+    )]
+    DefaultJourneyRequiresTerminal,
     /// OS randomness was unavailable.
     #[error("operating-system randomness is unavailable")]
     RandomUnavailable,
@@ -12142,9 +15161,60 @@ enum CliError {
     /// Interactive setup did not receive the exact final authorization phrase.
     #[error("guided setup was not approved; no provider activation was attempted")]
     SetupNotApproved,
+    /// Onboarding would replace an existing provider configuration without explicit authorization.
+    #[error(
+        "the Mealy home already has configuration; run `doctor` against a running service or rerun onboarding with --reconfigure while the daemon is stopped"
+    )]
+    OnboardExistingHome,
+    /// A remote onboarding credential was absent and no hidden terminal prompt was available.
+    #[error(
+        "provider credential {0} is absent; rerun onboarding with terminal stdin and stderr to enter it securely, or set {0} for automation"
+    )]
+    OnboardCredentialRequiresTerminal(String),
+    /// A prompted or imported onboarding credential has an unsafe text shape.
+    #[error(
+        "provider credential must be nonempty UTF-8, at most 4096 bytes, and contain no control characters"
+    )]
+    InvalidOnboardCredential,
+    /// A live provider catalog contained no model satisfying the route's fail-closed policy.
+    #[error("no eligible model was found for the {0} onboarding route")]
+    OnboardNoEligibleModel(&'static str),
+    /// Provider setup completed, but service installation, activation, or verification did not.
+    #[error(
+        "onboarding configured the provider but could not finish the owner service; the stopped home and diagnostics were preserved: {0}"
+    )]
+    OnboardService(String),
     /// Provider settings or the current daemon configuration document are invalid.
     #[error("provider configuration is invalid")]
     InvalidProviderConfiguration,
+    /// Anthropic expressly disallows third-party products from routing Claude subscriptions.
+    #[error(
+        "Claude subscription routing is unsupported: Anthropic prohibits third-party products from using Claude Free/Pro/Max OAuth credentials; use `anthropic-api`, `openrouter-free`, a custom endpoint, or Claude Code directly"
+    )]
+    ClaudeSubscriptionUnsupported,
+    /// A managed `ChatGPT` sign-in was required but terminal consent could not be obtained.
+    #[error(
+        "the official Codex client is not signed in with ChatGPT; rerun this route with terminal stdin and stderr for managed sign-in, or run `codex login` first"
+    )]
+    ChatgptLoginRequiresTerminal,
+    /// The owner declined the separately disclosed external Codex login change.
+    #[error("official Codex ChatGPT sign-in was declined; no Mealy home was changed")]
+    ChatgptLoginDeclined,
+    /// The official bounded app-server account, login, or catalog exchange failed closed.
+    #[error(
+        "official Codex ChatGPT onboarding failed; verify the exact Codex installation and login with `codex doctor` or `codex login status`, then retry"
+    )]
+    ChatgptSubscriptionOnboarding,
+    /// The requested or recommended subscription model was absent or ambiguous.
+    #[error(
+        "the requested or recommended ChatGPT subscription model is unavailable in the current Codex account catalog"
+    )]
+    ChatgptSubscriptionModelUnavailable,
+    /// The official Codex executable prerequisite was absent or unsafe to inspect.
+    #[error(
+        "the official Codex CLI was not found or could not be inspected; install it from https://learn.chatgpt.com/docs/codex/cli and ensure `codex` is on PATH, or pass `--executable-path /absolute/path/to/codex`"
+    )]
+    ChatgptCodexUnavailable,
     /// Provider model-discovery filtering, pagination, or output bound is invalid.
     #[error("provider model-discovery request is invalid")]
     InvalidProviderDiscoveryRequest,
@@ -12282,36 +15352,44 @@ mod tests {
     use super::{
         ApprovalCommand, Arguments, ChannelCommand, ChatLine, ChatMemoryCommand, CliError, Command,
         CompactionCommand, ConfigCommand, DelegationCommand, DiscordPairMessage, DiscordPairUser,
-        EffectCommand, ExtensionCommand, MAXIMUM_DAEMON_RESPONSE_BYTES,
-        MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand, ResumableChatTask,
-        SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, SetupProviderArgument, SkillCommand,
-        TelegramPairChat, TelegramPairMessage, TelegramPairUpdate, TelegramPairUser,
+        EffectCommand, ExtensionCommand, LifecycleArguments, LifecycleCommand,
+        MAXIMUM_DAEMON_RESPONSE_BYTES, MAXIMUM_LOCAL_TEXT_ATTACHMENT_BYTES, MemoryCommand,
+        OPENAI_SUBSCRIPTION_DEFAULT_MODEL, OnboardChatMode, OnboardOptions, ResumableChatTask,
+        SETUP_PROVIDER_ESTIMATED_LATENCY_MS, ScheduleCommand, ServiceCommand,
+        SetupProviderArgument, SkillCommand, TelegramPairChat, TelegramPairMessage,
+        TelegramPairUpdate, TelegramPairUser, UpdateRecoveryRoute, chat_usage_line,
         configure_workspace_grant, decode, generate_discord_pair_challenge,
         generate_telegram_pair_challenge, initialize_setup_home, inspect_mcp_executable,
-        load_connection, normalize_openrouter_display_name, observe_discord_pair_messages,
-        observe_resumable_chat_event, observe_telegram_pair_updates, openrouter_price_is_zero,
-        openrouter_price_microunits_per_million, parse_chat_line, prepare_local_text_attachment,
-        resolve_setup, setup_provider_config, telegram_pair_api_url,
-        validate_anthropic_probe_envelope, validate_anthropic_probe_stream, validate_connection,
-        validate_discord_pair_base_url, validate_provider_probe_envelope,
+        lifecycle_invocation, load_connection, normalize_openrouter_display_name,
+        observe_discord_pair_messages, observe_resumable_chat_event, observe_telegram_pair_updates,
+        onboard_chat_mode, openrouter_price_is_zero, openrouter_price_microunits_per_million,
+        parse_chat_line, prepare_local_text_attachment, resolve_default_operational_subcommand,
+        resolve_setup, select_codex_subscription_model, setup_provider_config,
+        should_open_onboard_chat, stable_default_mealy_home, telegram_pair_api_url,
+        update_recovery_route, validate_anthropic_probe_envelope, validate_anthropic_probe_stream,
+        validate_connection, validate_discord_pair_base_url, validate_provider_probe_envelope,
         validate_provider_probe_stream,
     };
     #[cfg(target_os = "linux")]
     use super::{
-        linux_activation_command, service_definition, service_read_write_paths, systemd_quote,
+        decode_systemd_quoted_argument, generated_linux_service_daemon, linux_activation_command,
+        linux_service_body, remove_reviewed_loader_fragment, resolve_loaded_owner_service_fragment,
+        service_definition, service_read_write_paths, systemd_quote,
     };
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::Parser;
     use mealy_application::{AgentLoopLimits, ProviderConfig};
+    use mealy_infrastructure::CodexSubscriptionModel;
     use mealy_protocol::{
-        API_VERSION, DeliveryMode, LocalConnectionInfo, TimelineCursor, TimelineEvent,
+        API_VERSION, DeliveryMode, LocalConnectionInfo, TaskBudgetUsage, TimelineCursor,
+        TimelineEvent,
     };
     use serde_json::json;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
     #[cfg(target_os = "linux")]
     use std::path::Path;
-    use std::{collections::BTreeMap, io::Cursor};
+    use std::{collections::BTreeMap, ffi::OsString, io::Cursor, path::PathBuf};
 
     fn connection(base_url: &str) -> LocalConnectionInfo {
         LocalConnectionInfo {
@@ -12320,6 +15398,82 @@ mod tests {
             bearer_token: URL_SAFE_NO_PAD.encode([7_u8; 32]),
             principal_id: "principal".to_owned(),
             channel_binding_id: "binding".to_owned(),
+        }
+    }
+
+    #[test]
+    fn codex_catalog_selection_requires_one_recommended_or_exact_requested_model() {
+        let catalog = vec![
+            CodexSubscriptionModel {
+                model: "gpt-account-default".to_owned(),
+                display_name: "Account Default".to_owned(),
+                is_default: true,
+            },
+            CodexSubscriptionModel {
+                model: "gpt-account-other".to_owned(),
+                display_name: "Account Other".to_owned(),
+                is_default: false,
+            },
+        ];
+        assert_eq!(
+            select_codex_subscription_model(&catalog, None)
+                .expect("recommended model")
+                .model,
+            "gpt-account-default"
+        );
+        assert_eq!(
+            select_codex_subscription_model(&catalog, Some("gpt-account-other"))
+                .expect("exact requested model")
+                .model,
+            "gpt-account-other"
+        );
+        assert!(select_codex_subscription_model(&catalog, Some("absent")).is_err());
+
+        let mut ambiguous = catalog.clone();
+        ambiguous[1].is_default = true;
+        assert!(select_codex_subscription_model(&ambiguous, None).is_err());
+        let fallback = [CodexSubscriptionModel {
+            model: OPENAI_SUBSCRIPTION_DEFAULT_MODEL.to_owned(),
+            display_name: "Stable fallback".to_owned(),
+            is_default: false,
+        }];
+        assert_eq!(
+            select_codex_subscription_model(&fallback, None)
+                .expect("documented stable fallback")
+                .model,
+            OPENAI_SUBSCRIPTION_DEFAULT_MODEL
+        );
+    }
+
+    #[test]
+    fn bare_interactive_command_selects_onboarding_or_chat_without_following_config_links() {
+        let home = tempfile::tempdir().expect("temporary bare-command home");
+        assert_eq!(
+            resolve_default_operational_subcommand(home.path(), true)
+                .expect("clean home selects onboarding"),
+            "onboard"
+        );
+        assert!(matches!(
+            resolve_default_operational_subcommand(home.path(), false),
+            Err(super::CliError::DefaultJourneyRequiresTerminal)
+        ));
+
+        let config = home.path().join("config.json");
+        std::fs::write(&config, b"{}").expect("write configuration marker");
+        assert_eq!(
+            resolve_default_operational_subcommand(home.path(), true)
+                .expect("configured home selects chat"),
+            "chat"
+        );
+
+        std::fs::remove_file(&config).expect("remove configuration marker");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/dev/null", &config).expect("link configuration marker");
+            assert!(matches!(
+                resolve_default_operational_subcommand(home.path(), true),
+                Err(super::CliError::InvalidProviderConfiguration)
+            ));
         }
     }
 
@@ -12336,6 +15490,68 @@ mod tests {
             }],
             "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}
         })
+    }
+
+    #[test]
+    fn update_recovery_routes_every_crash_boundary_without_false_commit() {
+        use super::lifecycle::{ActiveTransactionSlot as Slot, UpdateTransactionPhase as Phase};
+
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Previous), false, true),
+            UpdateRecoveryRoute::AbortUntouched
+        );
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Previous), false, false),
+            UpdateRecoveryRoute::FailClosed
+        );
+        assert_eq!(
+            update_recovery_route(Phase::Scheduled, Some(Slot::Candidate), false, true),
+            UpdateRecoveryRoute::FailClosed
+        );
+
+        for phase in [
+            Phase::Prepared,
+            Phase::Draining,
+            Phase::Stopped,
+            Phase::Activated,
+            Phase::Starting,
+            Phase::Verifying,
+            Phase::RollingBack,
+        ] {
+            for slot in [Slot::Previous, Slot::Candidate] {
+                assert_eq!(
+                    update_recovery_route(phase, Some(slot), true, true),
+                    UpdateRecoveryRoute::RestorePrevious,
+                    "{phase:?} with {slot:?} must restore the prior slot"
+                );
+            }
+        }
+
+        for phase in [
+            Phase::Activated,
+            Phase::Starting,
+            Phase::Verifying,
+            Phase::RollingBack,
+        ] {
+            assert_eq!(
+                update_recovery_route(phase, None, true, false),
+                UpdateRecoveryRoute::RestorePrevious,
+                "{phase:?} must attempt stopped rollback even when inspection is damaged"
+            );
+        }
+
+        for phase in [
+            Phase::Committed,
+            Phase::Aborted,
+            Phase::RolledBack,
+            Phase::RecoveryFailed,
+        ] {
+            assert_eq!(
+                update_recovery_route(phase, Some(Slot::Candidate), true, true),
+                UpdateRecoveryRoute::FailClosed,
+                "terminal phase {phase:?} cannot be resumed by recovery routing"
+            );
+        }
     }
 
     #[tokio::test]
@@ -12700,6 +15916,54 @@ mod tests {
     }
 
     #[test]
+    fn default_home_is_stable_absolute_and_owner_scoped() {
+        assert_eq!(
+            stable_default_mealy_home(Some(OsString::from("/home/mealy-owner"))),
+            Some(PathBuf::from("/home/mealy-owner/.mealy"))
+        );
+        assert_eq!(stable_default_mealy_home(None), None);
+        assert_eq!(stable_default_mealy_home(Some(OsString::new())), None);
+        assert_eq!(
+            stable_default_mealy_home(Some(OsString::from("relative-owner-home"))),
+            None
+        );
+    }
+
+    #[test]
+    fn lifecycle_parser_is_selected_without_growing_the_operational_command_graph() {
+        let direct = vec![OsString::from("mealyctl"), OsString::from("install-status")];
+        let home_prefixed = vec![
+            OsString::from("mealyctl"),
+            OsString::from("--home"),
+            OsString::from("/srv/mealy"),
+            OsString::from("update"),
+            OsString::from("--version"),
+            OsString::from("v1.2.3"),
+        ];
+        let operational = vec![OsString::from("mealyctl"), OsString::from("status")];
+        let helper = vec![
+            OsString::from("mealyctl"),
+            OsString::from("update-transaction"),
+            OsString::from("019f9010-977b-7c32-9c1b-f21e083ce845"),
+        ];
+        assert!(lifecycle_invocation(&direct));
+        assert!(lifecycle_invocation(&home_prefixed));
+        assert!(lifecycle_invocation(&helper));
+        assert!(!lifecycle_invocation(&operational));
+
+        let parsed = LifecycleArguments::try_parse_from(home_prefixed)
+            .expect("separate lifecycle command graph");
+        assert_eq!(parsed.home, PathBuf::from("/srv/mealy"));
+        assert!(matches!(
+            parsed.command,
+            LifecycleCommand::Update {
+                version,
+                approve: false
+            } if version == "v1.2.3"
+        ));
+    }
+
+    #[test]
     fn local_text_attachment_is_bounded_digest_framed_path_free_and_no_follow() {
         let home = tempfile::tempdir().expect("daemon home");
         let directory = tempfile::tempdir().expect("attachment directory");
@@ -12869,6 +16133,28 @@ mod tests {
             systemd_quote(r#"/srv/owner workspace/100%/quote\"/back\slash"#),
             r#""/srv/owner workspace/100%%/quote\\\"/back\\slash""#
         );
+        let home = Path::new("/srv/owner workspace/mealy-home");
+        let daemon = Path::new(r#"/srv/owner workspace/100%/quote"/back\slash/mealyd"#);
+        let body = linux_service_body(daemon, home, &[home.to_owned()])
+            .expect("generated service definition");
+        assert_eq!(
+            generated_linux_service_daemon(body.as_bytes(), home).as_deref(),
+            Some(daemon)
+        );
+        assert!(
+            generated_linux_service_daemon(
+                body.replacen("Restart=on-failure", "Restart=always", 1)
+                    .as_bytes(),
+                home
+            )
+            .is_none()
+        );
+        assert!(
+            generated_linux_service_daemon(body.as_bytes(), Path::new("/srv/another-home"))
+                .is_none()
+        );
+        assert!(decode_systemd_quoted_argument(r#""bad\q""#).is_none());
+        assert!(decode_systemd_quoted_argument(r#""single%specifier""#).is_none());
     }
 
     #[test]
@@ -13138,16 +16424,95 @@ mod tests {
     }
 
     #[test]
-    fn chat_command_and_delivery_controls_have_stable_shapes() {
-        let arguments =
-            Arguments::try_parse_from(["mealyctl", "chat", "--session-id", "durable-session"])
-                .expect("chat command");
-        assert!(matches!(
-            arguments.command,
-            Command::Chat {
-                session_id: Some(ref session_id)
-            } if session_id == "durable-session"
+    fn onboarding_openrouter_free_policy_requires_complete_exact_zero_metadata() {
+        let eligible = super::ProviderModelDiscoveryItem {
+            id: "vendor/tool-model:free".to_owned(),
+            display_name: Some("Tool model free".to_owned()),
+            created_at: None,
+            created_at_unix_seconds: Some(1),
+            owned_by: Some("vendor".to_owned()),
+            context_tokens: Some(32_768),
+            maximum_output_tokens: Some(4_096),
+            token_limits_complete: true,
+            input_microunits_per_million_tokens: Some(0),
+            output_microunits_per_million_tokens: Some(0),
+            pricing_complete: true,
+            unsupported_pricing_axes: Vec::new(),
+            tool_capable: Some(true),
+        };
+        assert!(super::openrouter_model_is_strictly_free(&eligible));
+
+        let mut paid = eligible;
+        paid.output_microunits_per_million_tokens = Some(1);
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
+        paid.output_microunits_per_million_tokens = Some(0);
+        paid.id = "vendor/tool-model".to_owned();
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
+        paid.id = "vendor/tool-model:free".to_owned();
+        paid.unsupported_pricing_axes.push("web_search".to_owned());
+        assert!(!super::openrouter_model_is_strictly_free(&paid));
+    }
+
+    #[test]
+    fn onboarding_chat_handoff_is_interactive_by_default_and_flag_safe() {
+        assert!(should_open_onboard_chat(OnboardChatMode::Auto, false, true));
+        assert!(!should_open_onboard_chat(
+            OnboardChatMode::Auto,
+            false,
+            false
         ));
+        assert!(!should_open_onboard_chat(
+            OnboardChatMode::Suppress,
+            false,
+            true
+        ));
+        assert!(!should_open_onboard_chat(OnboardChatMode::Auto, true, true));
+        assert!(should_open_onboard_chat(
+            OnboardChatMode::Force,
+            false,
+            false
+        ));
+
+        let forced =
+            Arguments::try_parse_from(["mealyctl", "onboard", "--route", "local", "--chat"])
+                .expect("forced onboarding chat");
+        assert!(matches!(
+            &forced.command,
+            Command::Onboard(OnboardOptions {
+                chat: true,
+                no_chat: false,
+                ..
+            })
+        ));
+        if let Command::Onboard(options) = &forced.command {
+            assert_eq!(onboard_chat_mode(options), OnboardChatMode::Force);
+        }
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "onboard",
+                "--route",
+                "local",
+                "--chat",
+                "--no-chat",
+            ])
+            .is_err()
+        );
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "onboard",
+                "--route",
+                "local",
+                "--chat",
+                "--configure-only",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn chat_command_and_delivery_controls_have_stable_shapes() {
         assert_eq!(
             parse_chat_line("/steer update the active task"),
             ChatLine::Send {
@@ -13215,6 +16580,7 @@ mod tests {
             parse_chat_line("/history amber orbit"),
             ChatLine::History("amber orbit".to_owned())
         );
+        assert_eq!(parse_chat_line("/status"), ChatLine::Status);
         assert_eq!(
             parse_chat_line("/act create a report"),
             ChatLine::Send {
@@ -13237,6 +16603,80 @@ mod tests {
             }
         );
         assert_eq!(parse_chat_line("/quit"), ChatLine::Exit);
+    }
+
+    #[test]
+    fn chat_usage_line_reports_exact_terminal_accounting() {
+        assert_eq!(
+            chat_usage_line(TaskBudgetUsage {
+                used_model_calls: 2,
+                used_tool_calls: 1,
+                used_retries: 1,
+                used_input_tokens: 12_345,
+                used_output_tokens: 67,
+                used_cost_microunits: 89,
+                ..TaskBudgetUsage::default()
+            }),
+            "usage> 12345 input + 67 output token(s) | 89 configured-cost microunit(s) | 2 model call(s) | 1 tool call(s) | 1 retry"
+        );
+    }
+
+    #[test]
+    fn chat_session_selection_modes_are_explicit_and_mutually_exclusive() {
+        let exact =
+            Arguments::try_parse_from(["mealyctl", "chat", "--session-id", "durable-session"])
+                .expect("exact chat command");
+        assert!(matches!(
+            exact.command,
+            Command::Chat {
+                session_id: Some(ref session_id),
+                continue_latest: false,
+                pick: false,
+            } if session_id == "durable-session"
+        ));
+        for option in ["--continue", "-c"] {
+            let continued = Arguments::try_parse_from(["mealyctl", "chat", option])
+                .expect("continue latest chat command");
+            assert!(matches!(
+                continued.command,
+                Command::Chat {
+                    session_id: None,
+                    continue_latest: true,
+                    pick: false,
+                }
+            ));
+        }
+        let picked =
+            Arguments::try_parse_from(["mealyctl", "chat", "--pick"]).expect("picker chat command");
+        assert!(matches!(
+            picked.command,
+            Command::Chat {
+                session_id: None,
+                continue_latest: false,
+                pick: true,
+            }
+        ));
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "chat",
+                "--continue",
+                "--session-id",
+                "durable-session",
+            ])
+            .is_err()
+        );
+        assert!(Arguments::try_parse_from(["mealyctl", "chat", "--pick", "--continue"]).is_err());
+        assert!(
+            Arguments::try_parse_from([
+                "mealyctl",
+                "chat",
+                "--pick",
+                "--session-id",
+                "durable-session",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -13929,6 +17369,81 @@ mod tests {
                 command: ConfigCommand::Rollback { approve: true, .. }
             }
         ));
+    }
+
+    #[test]
+    fn service_removal_is_plan_first_and_requires_explicit_approval() {
+        let plan = Arguments::try_parse_from([
+            "mealyctl",
+            "--home",
+            "/tmp/mealy",
+            "service",
+            "remove",
+            "--destination",
+            "/tmp/mealy.service",
+        ])
+        .expect("service removal plan");
+        assert!(matches!(
+            plan.command,
+            Command::Service {
+                command: ServiceCommand::Remove { approve: false, .. }
+            }
+        ));
+
+        let apply = Arguments::try_parse_from([
+            "mealyctl",
+            "--home",
+            "/tmp/mealy",
+            "service",
+            "remove",
+            "--destination",
+            "/tmp/mealy.service",
+            "--approve",
+        ])
+        .expect("approved service removal");
+        assert!(matches!(
+            apply.command,
+            Command::Service {
+                command: ServiceCommand::Remove { approve: true, .. }
+            }
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loaded_service_resolution_preserves_loader_link_and_canonical_definition() {
+        use std::os::unix::fs::symlink;
+
+        let root = service_test_tempdir("loaded-service-");
+        let definition_directory = root.path().join("definition");
+        let loader_directory = root.path().join("loader");
+        std::fs::create_dir_all(&definition_directory).expect("definition directory");
+        std::fs::create_dir_all(&loader_directory).expect("loader directory");
+        let definition = definition_directory.join("mealy.service");
+        let fragment = loader_directory.join("mealy.service");
+        std::fs::write(&definition, b"[Service]\nExecStart=/bin/false\n")
+            .expect("service definition");
+        symlink(&definition, &fragment).expect("loader link");
+
+        let resolved =
+            resolve_loaded_owner_service_fragment(&fragment).expect("resolved loaded service");
+        assert_eq!(resolved.fragment, fragment);
+        assert_eq!(resolved.definition, definition);
+
+        remove_reviewed_loader_fragment(&fragment, &definition).expect("remove exact loader link");
+        assert!(!fragment.exists());
+        assert!(definition.exists());
+        remove_reviewed_loader_fragment(&fragment, &definition)
+            .expect("systemd may already remove the loader link while disabling");
+
+        let changed_directory = root.path().join("changed");
+        std::fs::create_dir(&changed_directory).expect("changed definition directory");
+        let changed = changed_directory.join("mealy.service");
+        std::fs::write(&changed, b"[Service]\nExecStart=/bin/true\n").expect("changed definition");
+        symlink(&changed, &fragment).expect("changed loader link");
+        assert!(remove_reviewed_loader_fragment(&fragment, &definition).is_err());
+        assert!(fragment.is_symlink());
+        assert!(definition.exists());
     }
 
     #[test]

@@ -101,9 +101,12 @@ if [[ ! -f $release/PAYLOAD-SHA256SUMS \
   || ! -f $release/THIRD-PARTY-LICENSES.html \
   || ! -f $temporary/extracted/usr/share/doc/mealy/QUICKSTART.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/README.md \
+  || ! -f $temporary/extracted/usr/share/doc/mealy/docs/GETTING_STARTED.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/benchmarks/README.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/benchmarks/release-soak-subject.json \
   || ! -f $temporary/extracted/usr/share/doc/mealy/docs/research/REFERENCE_SYSTEMS.md \
+  || ! -f $temporary/extracted/usr/share/doc/mealy/docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md \
+  || ! -f $temporary/extracted/usr/share/doc/mealy/docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md \
   || ! -f $temporary/extracted/usr/share/doc/mealy/third-party-licenses.html \
   || ! -f $temporary/extracted/usr/share/doc/mealy/THREAT_MODEL.md ]]; then
   echo "Debian package is missing mandatory release metadata" >&2
@@ -138,6 +141,26 @@ cmp /usr/bin/mealyctl "$release/bin/mealyctl"
 [[ $(/usr/bin/mealyd --version) == "mealyd $version" ]]
 [[ $(/usr/bin/mealyctl --version) == "mealyctl $version" ]]
 [[ $(/usr/bin/mealyd --print-supported-schema-version) == "$schema_version" ]]
+install_status=$(/usr/bin/mealyctl install-status)
+jq -e --arg version "$version" --argjson schema "$schema_version" '
+  .schemaVersion == "mealy.install-status.v1"
+  and .installationKind == "debian-package"
+  and .integrity == "verified"
+  and .currentVersion == $version
+  and .stateSchemaVersion == $schema
+  and .updateMode == "apt"
+  and .rollbackAvailable == false
+  and (.nativeUpdateCommand | contains("apt"))
+  and .issues == []
+' <<<"$install_status" >/dev/null
+uninstall_plan=$(/usr/bin/mealyctl uninstall)
+jq -e '
+  .operation == "uninstall"
+  and .actionRequired == true
+  and .applySupported == false
+  and .preservesHome == true
+  and (.nativeCommand | contains("apt remove mealy"))
+' <<<"$uninstall_plan" >/dev/null
 
 mkdir -p "$home"
 chmod 0700 "$home"

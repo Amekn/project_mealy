@@ -4,11 +4,19 @@ Mealy is a local-first, self-contained agent runtime for a reliable personal AI 
 
 ## Run it
 
-For a published stable Linux release, install GitHub CLI plus the host prerequisites in the
-[quickstart](docs/QUICKSTART.md), then download and verify the small release
-bootstrap before running it. The bootstrap selects x86-64 or ARM64, resolves one exact stable tag,
-verifies every downloaded asset against the tag's release-workflow attestations and checksums, and
-installs rootlessly beneath `$HOME/.local` without a Rust toolchain, root access, or GitHub account:
+For a published stable Linux release, the
+[signed repository landing page](https://amekn.github.io/mealy/) gives version-matched APT, DNF,
+and Pacman installation, onboarding, continuation, diagnostics, and update commands. Use it only
+after the selected release shows green `Publish signed Linux repositories` and public-repository
+acceptance jobs. The page, package-manager configurations, public key, and package indexes are all
+bound into the release's signed repository inventory.
+
+For independent first-trust verification, a rootless install, or a release whose repository has
+not been deployed, install GitHub CLI plus the host prerequisites in the
+[quickstart](docs/QUICKSTART.md), then download and verify the small release bootstrap before
+running it. The bootstrap selects x86-64 or ARM64, resolves one exact stable tag, verifies every
+downloaded asset against the tag's release-workflow attestations and checksums, and installs
+rootlessly beneath `$HOME/.local` without a Rust toolchain, root access, or GitHub account:
 
 ```sh
 tmp=$(mktemp -d)
@@ -24,20 +32,23 @@ gh attestation verify "$tmp/install-mealy-release.sh" \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
-"$tmp/install-mealy-release.sh"
+"$tmp/install-mealy-release.sh" --onboard
 ```
 
-These canonical signer arguments apply to v0.1.1 and later. Historical v0.1.0 attestations retain
-the repository's former `Amekn/project_mealy` identity.
-
-The command prints the exact `setup` and service-install handoff. No release is implied when the
-repository has not published and attested these assets.
+After the attested install succeeds, this continues directly into the same guided onboarding used
+by packaged installs. An ordinary interactive fresh install also makes that transition by default;
+use `--no-onboard` for automation or to install without creating a Mealy home. These canonical
+signer arguments apply to new releases. Historical v0.1.0 attestations retain the repository's
+former `Amekn/project_mealy` identity. No release is implied when the repository has not published
+and attested these assets.
 
 Production releases support Ubuntu 24.04/26.04 LTS, Debian 13, Fedora 44, and current x86-64 Arch.
 They include `.deb`, `.rpm`, and `.pkg.tar.zst` packages in addition to the generic x86-64/ARM64
 archive. Derivatives are expected to work only when they retain glibc 2.39+, the trusted FHS
 helpers, Bubblewrap/user namespaces, persistent SQLite filesystem semantics, and a systemd user
-manager; review the exact [Linux support contract](docs/LINUX_SUPPORT.md).
+manager. Stable releases are also installed and updated through signed APT, DNF, and Pacman
+repositories; see the [package-manager setup](docs/LINUX_REPOSITORIES.md) and exact
+[Linux support contract](docs/LINUX_SUPPORT.md).
 
 To build this checkout instead, run:
 
@@ -45,53 +56,84 @@ To build this checkout instead, run:
 scripts/build-release-binaries.sh
 ```
 
-For a real model, run `target/release/mealyctl --home "$HOME/.mealy" setup` while the daemon is
-stopped; the wizard supports API-key-backed OpenAI, Anthropic, OpenRouter, or a literal-loopback
-Responses-compatible model and prints the exact next commands. Advanced stopped-home commands
-also support authenticated private Responses endpoints and owner-local OpenAI/Claude subscription
-sign-in through the official Codex or Claude client. For an immediate offline conformance run,
-skip setup and use the deterministic fixture provider.
+For a real model on a supported Linux terminal, run `target/release/mealyctl`. A clean private
+home enters guided onboarding; after configuration the same bare command opens a new durable
+chat. Scripts and service automation must continue to name an explicit subcommand. The client uses
+the stable private `$HOME/.mealy` directory by default, so later commands work from any directory. The guided path
+supports strictly free OpenRouter models, authenticated custom OpenAI-compatible endpoints,
+credentialless loopback models, owner-local ChatGPT subscriptions through the official Codex
+client, and advanced OpenAI/Anthropic API routes. For ChatGPT, onboarding checks the Codex-owned
+account, offers an official browser or headless device-code sign-in when needed, and chooses the
+current account-catalog default model; Mealy never receives the subscription credential. It probes
+the route, starts the owner service, and verifies `doctor` before opening the first chat on an
+interactive terminal. Use `--no-chat` for a passive or machine-readable handoff. See
+[getting started](docs/GETTING_STARTED.md) for the short path.
 
-Start the daemon in terminal 1 and chat in terminal 2:
+After successful onboarding:
 
 ```sh
-# terminal 1
-target/release/mealyd --home "$HOME/.mealy"
-
-# terminal 2
-target/release/mealyctl --home "$HOME/.mealy" doctor
-target/release/mealyctl --home "$HOME/.mealy" chat
+target/release/mealyctl doctor
+target/release/mealyctl
 ```
 
-At the `you>` prompt, plain text queues a turn and `/help` lists steering, approvals, memory,
-governed tools, and `/attach PATH`. For a persistent user service after installing both binaries
-side by side, run `mealyctl --home "$HOME/.mealy" service install` and execute the printed
-activation command. See the [quickstart](docs/QUICKSTART.md) for provider setup and capabilities,
+At the `you>` prompt, plain text queues a turn, `/status` shows the live provider/model, health,
+context/output limits, configured prices, and request pressure, and `/help` lists steering,
+approvals, memory, governed tools, and `/attach PATH`. Each terminal turn reports its exact
+recorded input/output tokens, provider-neutral cost microunits, model/tool calls, and retries. See
+the [quickstart](docs/QUICKSTART.md) for detailed provider setup and capabilities,
 the [CLI reference](docs/CLI.md) for the complete public command map, or the
 [release guide](docs/RELEASE.md) for attested archive and native-package
 install/upgrade/rollback behavior. Treat a build as published only when its exact tag workflow has
 produced the documented assets and attestations; never mistake a local dirty build for an attested
 package.
 
+Published installs expose the same plan-first maintenance UX across supported Linux families:
+`mealyctl install-status` verifies the complete release payload, `mealyctl update` verifies an
+attested target without mutation, and `repair`, `rollback`, or `uninstall` require explicit
+approval. Owner-local archives retain atomic release slots; Debian, RPM, and Arch operations return
+the exact native package-manager handoff and never write around the distribution database.
+Approved same-schema archive updates run through a separate restartable user-service helper that
+backs up, drains, restarts, verifies health and `doctor`, and rolls back failed qualification;
+`update-status` remains available after a terminal disconnect. Bash, Zsh, and Fish completion is
+generated with `mealyctl completion SHELL`. `service remove` safely plans and removes only the exact
+generated owner unit, and approved owner-local uninstall composes that cleanup while preserving the
+complete home.
+
 Local integrations can use the authenticated versioned HTTP/JSON and SSE surface documented in
 the [API reference](docs/API.md). Contributors and release operators should follow the
 [development-to-production runbook](docs/CI_CD.md), which defines the required protected checks,
 reviewed free-provider acceptance, tag promotion, attestation, and public clean-host gates.
+
+<details>
+<summary>Detailed implementation and security status</summary>
 
 > **Implementation status (verify the exact installed tag):** the durable release-one runtime
 > proof is complete, and Mealy now supports
 > bounded conversation through independently implemented `OpenAI` Responses and Anthropic
 > Messages adapters, including explicit mixed-protocol fallback chains, plus a guarded OpenRouter
 > stateless Responses-beta preset with account-filtered catalog/price discovery. A clean-home
-> `mealyctl setup` wizard reviews non-secret provider/model/limit/price inputs,
-> consumes credentials only from standard environment variables, performs the existing bounded
-> activation probe, brokers the key, and prints exact daemon/doctor/chat handoff commands. A
-> separate official-client bridge supports existing ChatGPT and Claude subscription sessions
-> without importing OAuth tokens: it pins the canonical client executable and SHA-256, clears API
-> key variables, disables client tools/connectors/session persistence, validates structured output
-> and usage, and fails activation when the official client is not signed in. ChatGPT subscriptions
-> are not OpenAI API keys, and these owner-local bridges are not the unattended release-acceptance
-> provider path. A
+> `mealyctl onboard` journey reviews non-secret provider/model/limit/price inputs,
+> imports a standard environment variable when present or uses a bounded echo-disabled terminal
+> prompt when it is absent, performs the existing bounded activation probe, brokers the key,
+> installs and starts the Linux owner service, and verifies
+> liveness plus `doctor`. It refuses to silently replace an existing home. The lower-level
+> `setup` command remains available for stopped-home/foreground workflows. A terminal-only bare
+> `mealyctl` invocation dispatches to onboarding when no configuration exists and to a new chat
+> when configuration is present; non-terminal callers fail without mutation and receive the
+> explicit automation commands. A
+> separate official-client bridge supports a ChatGPT subscription session without importing OAuth
+> tokens: guided onboarding uses the official bounded app-server account/login/model catalog,
+> requires separate terminal consent before changing a shared Codex login, and selects the unique
+> account-recommended model unless an exact catalog model is requested. It pins the canonical Codex
+> executable and SHA-256, clears API key variables, disables client tools/connectors/session
+> persistence, and validates structured runtime output and usage. The operational Mealy context
+> ceiling remains a conservative 128,000 tokens unless explicitly overridden. ChatGPT subscriptions
+> are not OpenAI API keys, and this
+> owner-local bridge is not the unattended release-acceptance provider path. Anthropic's current
+> [legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance) prohibits
+> third-party products from routing Claude Free, Pro, or Max subscription credentials, so Mealy
+> rejects that legacy route before mutation or client execution. Use the Anthropic API, strict-free
+> OpenRouter, a custom endpoint, or Claude Code directly instead. A
 > concurrent first-party chat REPL provides durable queue/steer/interrupt controls, bounded
 > owner-selected local UTF-8 text-file admission, model/tool
 > progress, and exact-subject approval commands. On Linux, real-provider runs can use bounded,
@@ -281,11 +323,20 @@ and context-epoch rotation excludes prior-session-derived material so a revoked 
 identity cannot return through old assistant text. The exact projection remains recorded-replay
 verifiable.
 
+</details>
+
 ## Start here
 
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — normative requirements and release-one acceptance boundary.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — practical design and requirement traceability.
+- [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — verified install, onboarding, and first chat.
 - [`docs/research/REFERENCE_SYSTEMS.md`](docs/research/REFERENCE_SYSTEMS.md) — pinned review of all eight reference systems.
+- [`docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md`](docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md)
+  — fresh comparison of competitor installation, onboarding, maintenance, documentation, CI,
+  release, and user-facing workflows.
+- [`docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md`](docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md)
+  — requirement-by-requirement proof and the remaining distinction between protected source and a
+  publicly usable release.
 - [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — vertical phases and exit gates.
 - [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — prerequisites, release build, first run, and current limitations.
 - [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) — active blockers and competitive acceptance gates.

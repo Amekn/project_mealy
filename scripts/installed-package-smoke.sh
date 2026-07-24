@@ -79,11 +79,44 @@ schema_version=$(jq -er '.stateSchemaVersion' "$manifest")
 [[ -f $prefix/share/mealy/docs/benchmarks/README.md ]]
 [[ -f $prefix/share/mealy/docs/benchmarks/release-soak-subject.json ]]
 [[ -f $prefix/share/mealy/docs/decisions/README.md ]]
+[[ -f $prefix/share/mealy/docs/GETTING_STARTED.md ]]
+[[ -f $prefix/share/mealy/docs/research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md ]]
+[[ -f $prefix/share/mealy/docs/research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md ]]
 [[ -f $prefix/share/mealy/docs/research/REFERENCE_SYSTEMS.md ]]
 [[ -f $prefix/share/mealy/docs/THREAT_MODEL.md ]]
 [[ $("$mealyd" --version) == "mealyd $version" ]]
 [[ $("$mealyctl" --version) == "mealyctl $version" ]]
 [[ $("$mealyd" --print-supported-schema-version) == "$schema_version" ]]
+install_status=$("$mealyctl" install-status)
+jq -e --arg version "$version" --argjson schema "$schema_version" '
+  .schemaVersion == "mealy.install-status.v1"
+  and .installationKind == "managed-archive"
+  and .integrity == "verified"
+  and .currentVersion == $version
+  and .stateSchemaVersion == $schema
+  and .updateMode == "attested-archive"
+  and .rollbackAvailable == false
+  and .issues == []
+' <<<"$install_status" >/dev/null
+"$mealyctl" completion bash >"$temporary/mealyctl.bash"
+"$mealyctl" completion zsh >"$temporary/_mealyctl"
+"$mealyctl" completion fish >"$temporary/mealyctl.fish"
+[[ -s $temporary/mealyctl.bash && -s $temporary/_mealyctl && -s $temporary/mealyctl.fish ]]
+
+printf 'modified manager\n' >"$prefix/share/mealy-manager.sh"
+repair_plan=$("$mealyctl" repair)
+jq -e '
+  .schemaVersion == "mealy.maintenance-plan.v1"
+  and .operation == "repair"
+  and .actionRequired == true
+  and .applySupported == true
+  and .preservesHome == true
+  and .removesVerifiedOwnerService == false
+  and .installation.integrity == "failed"
+' <<<"$repair_plan" >/dev/null
+"$mealyctl" repair --approve >"$temporary/repaired-status.json"
+jq -e '.integrity == "verified" and .issues == []' \
+  "$temporary/repaired-status.json" >/dev/null
 
 mkdir -p "$home"
 chmod 0700 "$home"
@@ -256,7 +289,18 @@ fi
 wait "$daemon_pid"
 daemon_pid=
 
-"$prefix/share/mealy-manager.sh" uninstall --prefix "$prefix" --home "$home" >/dev/null
+uninstall_plan=$("$mealyctl" --home "$home" uninstall)
+jq -e '
+  .schemaVersion == "mealy.maintenance-plan.v1"
+  and .operation == "uninstall"
+  and .actionRequired == true
+  and .applySupported == true
+  and .requiresStoppedDaemon == true
+  and .preservesHome == true
+  and .removesVerifiedOwnerService == true
+  and .installation.installationKind == "managed-archive"
+' <<<"$uninstall_plan" >/dev/null
+"$mealyctl" --home "$home" uninstall --approve >/dev/null
 [[ ! -e $prefix/bin/mealyd && ! -e $prefix/bin/mealyctl ]]
 [[ -f $home/mealy.sqlite3 ]]
 

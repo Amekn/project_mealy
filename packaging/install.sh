@@ -46,7 +46,9 @@ release_documents=(
   CI_CD.md
   CLI.md
   DOMAIN_MODEL.md
+  GETTING_STARTED.md
   IMPLEMENTATION_PLAN.md
+  LINUX_REPOSITORIES.md
   LINUX_SUPPORT.md
   OPERATIONS.md
   PRODUCTION_READINESS.md
@@ -75,6 +77,7 @@ release_documents=(
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
   benchmarks/2026-07-23-schema16-release-soak-subject.json
   benchmarks/2026-07-23-schema16-release-soak.json
+  benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md
   benchmarks/README.md
   benchmarks/release-soak.json
   benchmarks/release-soak-subject.json
@@ -87,12 +90,16 @@ release_documents=(
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
   decisions/0009-sqlite-writer-and-snapshot-readers.md
+  decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md
+  research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
   releases/README.md
   releases/v0.1.0.md
   releases/v0.1.1.md
+  releases/v0.2.0.md
 )
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -258,11 +265,13 @@ verify_managed_slot() {
     expected=$(expected_digest "$metadata" "$logical") || return 1
     [[ $(sha256sum "$actual" | awk '{print $1}') == "$expected" ]] || return 1
   done
-  for logical in BUILD-MANIFEST.json SBOM.cdx.json install.sh fetch-browser-runtime.sh \
+  for logical in BUILD-MANIFEST.json SBOM.cdx.json install.sh install-release.sh \
+    fetch-browser-runtime.sh \
     LICENSE THIRD-PARTY-LICENSES.html ARCHITECTURE.md README.md REQUIREMENTS.md SECURITY.md \
     "${release_documents[@]/#/docs/}"; do
     case "$logical" in
       install.sh) actual="$metadata/manage-install.sh" ;;
+      install-release.sh) actual="$metadata/manage-release.sh" ;;
       fetch-browser-runtime.sh) actual="$metadata/fetch-browser-runtime.sh" ;;
       *) actual="$metadata/$logical" ;;
     esac
@@ -315,6 +324,7 @@ copy_package_metadata() {
   install -m 0644 "$source/SBOM.cdx.json" "$destination/SBOM.cdx.json"
   install -m 0644 "$source/PAYLOAD-SHA256SUMS" "$destination/PAYLOAD-SHA256SUMS"
   install -m 0755 "$source/install.sh" "$destination/manage-install.sh"
+  install -m 0755 "$source/install-release.sh" "$destination/manage-release.sh"
   install -m 0755 "$source/fetch-browser-runtime.sh" "$destination/fetch-browser-runtime.sh"
   install -m 0644 "$source/LICENSE" "$destination/LICENSE"
   install -m 0644 "$source/THIRD-PARTY-LICENSES.html" \
@@ -439,6 +449,7 @@ install_release() {
     bin/mealyd
     bin/mealyctl
     install.sh
+    install-release.sh
     fetch-browser-runtime.sh
     BUILD-MANIFEST.json
     SBOM.cdx.json
@@ -457,7 +468,7 @@ install_release() {
     fi
   done
   [[ -x $package/bin/mealyd && -x $package/bin/mealyctl && -x $package/install.sh \
-    && -x $package/fetch-browser-runtime.sh ]] || {
+    && -x $package/install-release.sh && -x $package/fetch-browser-runtime.sh ]] || {
     echo "release archive executable modes are invalid" >&2
     exit 65
   }
@@ -658,11 +669,13 @@ verify_captured_release_slot() {
     expected=$(expected_digest "$metadata" "$logical") || return 1
     [[ $(sha256sum "$actual" | awk '{print $1}') == "$expected" ]] || return 1
   done
-  for logical in BUILD-MANIFEST.json SBOM.cdx.json install.sh fetch-browser-runtime.sh \
+  for logical in BUILD-MANIFEST.json SBOM.cdx.json install.sh install-release.sh \
+    fetch-browser-runtime.sh \
     LICENSE THIRD-PARTY-LICENSES.html ARCHITECTURE.md README.md REQUIREMENTS.md SECURITY.md \
     "${release_documents[@]/#/docs/}"; do
     case "$logical" in
       install.sh) actual="$metadata/manage-install.sh" ;;
+      install-release.sh) actual="$metadata/manage-release.sh" ;;
       fetch-browser-runtime.sh) actual="$metadata/fetch-browser-runtime.sh" ;;
       *) actual="$metadata/$logical" ;;
     esac

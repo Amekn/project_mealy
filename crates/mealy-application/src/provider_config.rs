@@ -102,7 +102,8 @@ pub enum ProviderConfig {
 pub enum SubscriptionCliClient {
     /// `OpenAI` Codex CLI authenticated with `ChatGPT` sign-in.
     OpenAiCodex,
-    /// Anthropic Claude Code authenticated with a Claude subscription.
+    /// Legacy serialized identity retained only so existing configuration fails closed with no
+    /// request; Anthropic prohibits third-party subscription routing.
     AnthropicClaude,
 }
 
@@ -228,7 +229,8 @@ impl ProviderConfig {
                 maximum_output_tokens,
                 estimated_latency_ms,
             } => {
-                if valid_label(provider_id, 128)
+                if *client == SubscriptionCliClient::OpenAiCodex
+                    && valid_label(provider_id, 128)
                     && valid_absolute_executable_path(executable_path)
                     && is_sha256_digest(executable_sha256)
                     && valid_label(model, 256)
@@ -477,10 +479,17 @@ mod tests {
         };
         *context_tokens = SubscriptionCliClient::OpenAiCodex.input_token_overhead();
         assert!(subscription.validate().is_err());
-        assert_eq!(
-            SubscriptionCliClient::AnthropicClaude.input_token_overhead(),
-            24_576
-        );
+        let ProviderConfig::SubscriptionCli {
+            client,
+            context_tokens,
+            ..
+        } = &mut subscription
+        else {
+            unreachable!()
+        };
+        *client = SubscriptionCliClient::AnthropicClaude;
+        *context_tokens = 32_768;
+        assert!(subscription.validate().is_err());
     }
 
     #[test]

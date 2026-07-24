@@ -1,6 +1,6 @@
 # Mealy Software Requirements
 
-- Version: 0.1.1
+- Version: 0.2.0
 - Status: release-one requirements implemented; pre-1.0 production evidence in progress
 - Normative terms: **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are used as defined by RFC 2119.
 

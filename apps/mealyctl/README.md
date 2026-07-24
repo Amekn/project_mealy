@@ -15,14 +15,23 @@ and prints exact daemon/doctor/chat handoff commands on stderr. Supplying all fl
 provides the same process-tested non-interactive path. `--skip-connectivity-test` is explicitly
 staged and does not count as production verification.
 
-Owner-local subscription activation is deliberately separate from this API-key wizard.
-`config provider-subscription-openai` uses an existing ChatGPT sign-in owned by the official Codex
-client, and `config provider-subscription-claude` uses the official Claude client's existing
-subscription sign-in. Both canonicalize and SHA-256-pin the selected executable, exclude provider
-API-key variables and host-client tools/connectors, run a bounded structured connectivity probe,
-and persist no OAuth/session/token material or broker identity. Activation raises the configured
+Owner-local subscription activation is deliberately separate from API-key handling. The ordinary
+`onboard --route chatgpt-subscription` path uses the official Codex app-server to read only coarse
+account state, obtain a browser or device-code challenge after separate terminal consent, and
+select the current account-catalog default model. It never reads or stores email, account IDs,
+OAuth/session tokens, or a broker identity. The lower-level
+`config provider-subscription-openai` command assumes Codex is already signed in and retains its
+`gpt-5.6`/128,000-token defaults for explicit stopped-home automation. Both paths allow deliberate
+model/context overrides; onboarding accepts only an exact account-catalog model. The runtime bridge
+canonicalizes and SHA-256-pins the selected executable, excludes provider API-key variables and
+host-client tools/connectors, and runs a bounded structured connectivity probe. Activation raises the configured
 provider deadline only as far as its declared latency estimate and total run wall-time permit;
 official-client input overhead is included in the durable token reservation.
+
+The legacy `provider-subscription-claude` surface fails closed before configuration mutation or
+client execution. Anthropic currently prohibits third-party products from offering Claude.ai
+login or routing Free, Pro, or Max subscription credentials. Use `provider-anthropic`,
+strict-free OpenRouter, a custom endpoint, or the official Claude Code product instead.
 
 The selected home must remain a canonical owner-private directory rather than a symlink. Before
 using the daemon bearer, the client validates that parent boundary, opens `connection.json`
@@ -46,6 +55,17 @@ occurrence counts, `/manage` turns for one exact create-directory, digest-bound 
 move/removal, or empty-directory removal, high-risk `/run` turns whose approval preview verifies
 and renders exact normalized argv, inline governed-memory remember/search/correct/lifecycle
 commands, a stopped-daemon data-only skill lifecycle, and configuration rollback.
+
+Installed-program lifecycle is separately provenance aware. `install-status` verifies the complete
+published payload and distinguishes managed archives from Debian, RPM, Arch, development, and
+unknown layouts. `update`, `repair`, `rollback`, and `uninstall` emit no-mutation plans by default
+and require explicit approval for an owner-local mutation; native packages always hand control back
+to their package database. The bundled attested bootstrap lets `update` compare the exact target
+state schema before a same-schema archive swap. Approved apply runs in a separate restartable user
+service, records its phases, backs up and drains first, health-gates commit, and automatically
+restores a qualified prior slot on failure; `update-status` inspects that durable transaction.
+Approved archive uninstall also removes only an exact generated owner service; `service remove`
+provides the same plan-first cleanup independently. Bash/Zsh/Fish completion is generated offline.
 
 `chat --session-id SESSION_ID` also reconstructs local watchers for the retained active task and
 pending durable inputs; leaving the REPL never cancels accepted daemon work. `session list` returns

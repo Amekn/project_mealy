@@ -26,7 +26,9 @@ release_documents=(
   CI_CD.md
   CLI.md
   DOMAIN_MODEL.md
+  GETTING_STARTED.md
   IMPLEMENTATION_PLAN.md
+  LINUX_REPOSITORIES.md
   LINUX_SUPPORT.md
   OPERATIONS.md
   PRODUCTION_READINESS.md
@@ -55,6 +57,7 @@ release_documents=(
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
   benchmarks/2026-07-23-schema16-release-soak-subject.json
   benchmarks/2026-07-23-schema16-release-soak.json
+  benchmarks/2026-07-24-v0.1.1-release-workflow-fixture-failure.md
   benchmarks/README.md
   benchmarks/release-soak.json
   benchmarks/release-soak-subject.json
@@ -67,12 +70,16 @@ release_documents=(
   decisions/0007-local-api.md
   decisions/0008-risk-based-validation.md
   decisions/0009-sqlite-writer-and-snapshot-readers.md
+  decisions/0010-disconnect-resistant-update-transaction.md
   decisions/README.md
   research/GAP_MATRIX.md
+  research/ONBOARDING_COMPLETION_AUDIT_2026-07-24.md
+  research/PRODUCT_OPERATIONS_BENCHMARK_2026-07-24.md
   research/REFERENCE_SYSTEMS.md
   releases/README.md
   releases/v0.1.0.md
   releases/v0.1.1.md
+  releases/v0.2.0.md
 )
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \
@@ -178,6 +185,8 @@ mkdir -p "$staging/$package_name/bin" "$staging/$package_name/docs"
 install -m 0755 "$binary_dir/mealyd" "$staging/$package_name/bin/mealyd"
 install -m 0755 "$binary_dir/mealyctl" "$staging/$package_name/bin/mealyctl"
 install -m 0755 "$repository_root/packaging/install.sh" "$staging/$package_name/install.sh"
+install -m 0755 "$repository_root/packaging/install-release.sh" \
+  "$staging/$package_name/install-release.sh"
 install -m 0755 "$repository_root/scripts/fetch-browser-runtime.sh" \
   "$staging/$package_name/fetch-browser-runtime.sh"
 install -m 0644 "$repository_root/LICENSE" "$staging/$package_name/LICENSE"
@@ -203,6 +212,7 @@ printf '{"schemaVersion":"mealy.release.v2","version":"%s","target":"%s","commit
     bin/mealyd \
     bin/mealyctl \
     install.sh \
+    install-release.sh \
     fetch-browser-runtime.sh \
     BUILD-MANIFEST.json \
     SBOM.cdx.json \

@@ -132,6 +132,11 @@ async fn safe_mode_supports_diagnostics_backup_export_and_clean_drain() {
     assert!(status.admission_open);
     assert_eq!(status.schema_version, 16);
     assert_eq!(status.provider_health, "healthy");
+    assert_eq!(status.provider_context_tokens, 32_768);
+    assert_eq!(status.provider_maximum_output_tokens, 512);
+    assert_eq!(status.provider_input_token_overhead, 0);
+    assert_eq!(status.provider_input_microunits_per_million_tokens, 0);
+    assert_eq!(status.provider_output_microunits_per_million_tokens, 0);
     let doctor: DoctorResponse = authorized_get(&client, &connection, "/v1/admin/doctor").await;
     assert!(doctor.control_plane_ready);
     assert_eq!(doctor.sandbox_profiles.len(), 5);

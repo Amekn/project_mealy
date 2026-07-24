@@ -87,6 +87,12 @@ The five-minute paced report remains the newest isolated throughput comparison. 
 explicit clean [release soak](release-soak.json), historical comparison reports are deliberately
 marked `dirty_worktree`; use them as development evidence only and never relabel them as clean
 packaged-release durability evidence.
+The failed
+[`v0.1.1` release-workflow attempt](2026-07-24-v0.1.1-release-workflow-fixture-failure.md)
+is retained separately as negative delivery evidence. Both architecture jobs rejected a workflow
+fixture that placed a persistent service home below `/tmp`; publication never ran and no
+`v0.1.1` release exists. The runtime safety check remains intact, the release fixture now uses a
+persistent container-overlay path, and the public tag will not be moved or reused.
 The [superseded schema-14 long-soak failure](2026-07-13-schema14-long-soak-failure.md) is retained
 as negative evidence: it cannot satisfy a durability gate and motivated failure-report retention.
 That retained path reproduced a current one-second read-tool timeout under contention. After both

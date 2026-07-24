@@ -5,7 +5,8 @@ umask 077
 
 usage() {
   cat >&2 <<'USAGE'
-usage: install-mealy-release.sh [--version TAG|latest]
+usage: install-mealy-release.sh [--version TAG|latest] [--check]
+       [--onboard [-- ONBOARD_ARGS...]|--no-onboard]
        [--repository OWNER/REPO] [--prefix DIR] [--home DIR]
 
 Downloads one stable, attested Mealy release for this Linux architecture,
@@ -13,12 +14,20 @@ verifies its release-workflow provenance and complete checksum inventory, and
 installs it through the release's own owner-local manager. No Rust toolchain or
 root access or GitHub account is required. GitHub CLI performs offline-bundle
 verification; curl reads only the public release metadata and exact assets.
+An interactive fresh install continues into guided onboarding by default.
+--onboard forces that handoff; --no-onboard always prints the exact next command.
+Arguments after -- are passed only to the verified installed onboarding command.
+--check performs the same download, provenance, checksum, and target-manifest
+verification but emits bounded JSON without installing anything.
 The historical v0.1.0 tag predates the repository rename; select it only with
 --repository Amekn/project_mealy so its retained attestations verify exactly.
 USAGE
 }
 
 version=latest
+check=false
+onboard_mode=auto
+onboard_arguments=()
 repository=Amekn/mealy
 prefix=${HOME:+$HOME/.local}
 home=${MEALY_HOME:-${HOME:+$HOME/.mealy}}
@@ -27,6 +36,35 @@ while [[ $# -gt 0 ]]; do
     --version)
       version=${2-}
       shift 2
+      ;;
+    --check)
+      check=true
+      shift
+      ;;
+    --onboard)
+      if [[ $onboard_mode != auto ]]; then
+        usage
+        exit 64
+      fi
+      onboard_mode=always
+      shift
+      ;;
+    --no-onboard)
+      if [[ $onboard_mode != auto ]]; then
+        usage
+        exit 64
+      fi
+      onboard_mode=never
+      shift
+      ;;
+    --)
+      if [[ $onboard_mode != always ]]; then
+        usage
+        exit 64
+      fi
+      shift
+      onboard_arguments=("$@")
+      break
       ;;
     --repository)
       repository=${2-}
@@ -52,6 +90,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $(uname -s) != Linux || -z $prefix || -z $home \
+  || ( $check == true && $onboard_mode == always ) \
   || ! $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ \
   || ( $version != latest \
     && ! $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ) ]]; then
@@ -79,7 +118,7 @@ case $(uname -m) in
 esac
 
 for command in awk basename chmod curl find getconf gh grep jq mktemp readlink rm sha256sum sort stat \
-  uname wc; do
+  tar uname wc; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required release-bootstrap command is unavailable: $command" >&2
     exit 69
@@ -219,6 +258,42 @@ if [[ $(wc -l <"$verification_manifest") -ne 3 ]] \
   exit 65
 fi
 
+manifest_member="mealy-v${release_version}-${target}/BUILD-MANIFEST.json"
+if [[ $(tar -tzf "$temporary/$archive" | grep -Fxc "$manifest_member") -ne 1 ]]; then
+  echo "attested release archive has no unique build manifest" >&2
+  exit 65
+fi
+tar -xOzf "$temporary/$archive" "$manifest_member" >"$temporary/BUILD-MANIFEST.json"
+if [[ $(stat -c '%s' "$temporary/BUILD-MANIFEST.json") -gt 65536 ]] \
+  || ! jq -e --arg version "$release_version" --arg target "$target" '
+      .schemaVersion == "mealy.release.v2"
+      and .version == $version
+      and .target == $target
+      and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.sourceDateEpoch | type == "number" and . >= 1 and floor == .)
+      and (.stateSchemaVersion | type == "number" and . >= 1 and . <= 9999 and floor == .)
+      and .sbom == "SBOM.cdx.json"
+      and .licenses == "THIRD-PARTY-LICENSES.html"
+    ' "$temporary/BUILD-MANIFEST.json" >/dev/null; then
+  echo "attested release build manifest is invalid" >&2
+  exit 65
+fi
+if [[ $check == true ]]; then
+  jq -cn --arg version "$release_version" --arg target "$target" \
+    --arg commit "$(jq -er '.commit' "$temporary/BUILD-MANIFEST.json")" \
+    --argjson state_schema_version \
+      "$(jq -er '.stateSchemaVersion' "$temporary/BUILD-MANIFEST.json")" \
+    '{
+      schemaVersion: "mealy.update-check.v1",
+      version: $version,
+      target: $target,
+      commit: $commit,
+      stateSchemaVersion: $state_schema_version,
+      verified: true
+    }'
+  exit 0
+fi
+
 chmod 0755 "$temporary/$manager"
 "$temporary/$manager" install \
   --archive "$temporary/$archive" \
@@ -234,6 +309,27 @@ if [[ -z $installed_prefix || -z $installed_home ]]; then
   echo "installed Mealy handoff paths could not be canonicalized" >&2
   exit 65
 fi
-printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
-printf '  %q --home %q setup\n' "$installed_prefix/bin/mealyctl" "$installed_home"
-printf '  %q --home %q service install\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+configured_home=false
+if [[ -e $installed_home/config.json || -L $installed_home/config.json ]]; then
+  configured_home=true
+fi
+run_onboarding=false
+if [[ $onboard_mode == always \
+  || ( $onboard_mode == auto && $configured_home == false \
+    && -t 0 && -t 1 && -t 2 ) ]]; then
+  run_onboarding=true
+fi
+if [[ $run_onboarding == true ]]; then
+  printf 'Installed Mealy %s for %s.\nStarting guided onboarding.\n' \
+    "$release_version" "$target"
+  "$installed_prefix/bin/mealyctl" --home "$installed_home" onboard \
+    "${onboard_arguments[@]}"
+elif [[ $configured_home == true ]]; then
+  printf 'Installed Mealy %s for %s; retained the existing home.\nNext:\n' \
+    "$release_version" "$target"
+  printf '  %q --home %q doctor\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+  printf '  %q --home %q chat\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+else
+  printf 'Installed Mealy %s for %s.\nNext:\n' "$release_version" "$target"
+  printf '  %q --home %q onboard\n' "$installed_prefix/bin/mealyctl" "$installed_home"
+fi
