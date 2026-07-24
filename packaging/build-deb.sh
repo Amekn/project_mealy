@@ -84,6 +84,9 @@ release_documents=(
   decisions/README.md
   research/GAP_MATRIX.md
   research/REFERENCE_SYSTEMS.md
+  releases/README.md
+  releases/v0.1.0.md
+  releases/v0.1.1.md
 )
 
 for command in ar awk chmod cp date dirname find gzip install jq ln md5sum mkdir mktemp mv od \

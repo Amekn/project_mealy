@@ -68,6 +68,9 @@ release_documents=(
   decisions/README.md
   research/GAP_MATRIX.md
   research/REFERENCE_SYSTEMS.md
+  releases/README.md
+  releases/v0.1.0.md
+  releases/v0.1.1.md
 )
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \

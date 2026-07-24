@@ -21,8 +21,9 @@ release_run_url=$7
 output=$8
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 lineage_proof=$repository_root/docs/benchmarks/release-soak-lineage.json
+release_summary=$repository_root/docs/releases/$tag.md
 
-for command in install jq mktemp stat; do
+for command in cat install jq mktemp stat; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "required release-note command is unavailable: $command" >&2
     exit 69
@@ -36,6 +37,22 @@ if [[ -L $report || ! -f $report || ! $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9
   exit 64
 fi
 version=${tag#v}
+if [[ -L $release_summary || ! -f $release_summary ]]; then
+  echo "release-note summary is absent or not a real file: docs/releases/$tag.md" >&2
+  exit 65
+fi
+release_summary_bytes=$(stat -c '%s' "$release_summary")
+if (( release_summary_bytes < 32 || release_summary_bytes > 64 * 1024 )) \
+  || ! jq -Rse '
+    startswith("## What changed\n\n")
+    and endswith("\n")
+    and (contains("\u0000") | not)
+    and (contains("\r") | not)
+    and (split("\n") | all(.[]; test("^# ") | not))
+  ' "$release_summary" >/dev/null; then
+  echo "release-note summary is malformed or exceeds its 64 KiB bound" >&2
+  exit 65
+fi
 expected_run_prefix="https://github.com/$repository/actions/runs/"
 for run_url in "$ci_run_url" "$live_run_url" "$release_run_url"; do
   run_id=${run_url#"$expected_run_prefix"}
@@ -175,6 +192,8 @@ trap cleanup EXIT
 {
   printf '# Mealy %s\n\n' "$tag"
   printf '%s\n\n' 'Mealy is a local-first personal-agent runtime with durable execution, explicit policy and approval boundaries, crash recovery, replay, and owner-operated Linux packaging.'
+  cat "$release_summary"
+  printf '\n'
   printf '%s\n\n' '## Supported release surfaces'
   printf '%s\n' '- Ubuntu 24.04/26.04 LTS and Debian 13 on x86-64/ARM64: native Debian package or rootless archive.'
   printf '%s\n' '- Fedora 44 on x86-64/ARM64: native RPM or rootless archive.'
