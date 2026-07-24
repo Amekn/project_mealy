@@ -225,7 +225,7 @@ for expected in \
   'sudo dnf install mealy' \
   'file:///repository/repository-signing-key.asc' \
   'sudo pacman -Syu mealy' \
-  'mealyctl onboard' \
+  'mealyctl</code></pre>' \
   'ChatGPT subscription through the official Codex client' \
   'mealyctl chat --continue' \
   'mealyctl update' \
@@ -239,6 +239,10 @@ for expected in \
     exit 1
   fi
 done
+if grep -Fq 'mealyctl onboard</code></pre>' "$repository_index"; then
+  echo "repository install page bypasses the canonical bare-command journey" >&2
+  exit 1
+fi
 if grep -Eq '<script|@@(VERSION|BASE_URL|FINGERPRINT)@@' "$repository_index"; then
   echo "repository install page contains JavaScript or an unresolved template field" >&2
   exit 1
