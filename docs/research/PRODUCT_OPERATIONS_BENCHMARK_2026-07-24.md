@@ -27,6 +27,15 @@ interactive install enters the exact installed onboarding client automatically,
 with explicit force/passive controls and existing-home preservation. After
 service and `doctor` qualification, terminal onboarding opens the first durable
 chat; non-interactive callers retain bounded JSON and one exact next command.
+OpenAI subscription onboarding now follows the same competitor pattern of a
+maintained default: the official `gpt-5.6` alias and a conservative
+128,000-token Mealy context ceiling are selected unless the owner uses explicit
+override flags. A post-audit upstream-terms review also found that Anthropic
+explicitly prohibits third-party developers from routing Claude Free, Pro, or
+Max subscription credentials. The prior experimental Claude subscription
+bridge is therefore retired and fails before mutation or client invocation;
+Anthropic API, strict-free OpenRouter, custom endpoints, and Claude Code itself
+remain the supported alternatives.
 
 This is not a retroactive change to the matrix observed before implementation.
 It does not yet equal the complete competitor delivery experience:
@@ -489,9 +498,12 @@ service definition, executes a separately printed activation command, waits
 for the daemon, runs `doctor`, and starts `chat`.
 
 Mealy already has model discovery commands for OpenAI, Anthropic, OpenRouter,
-and local endpoints. It also has separate OpenAI/ChatGPT and Claude subscription
-configuration, a generic custom base URL mechanism, and service installation.
-The weakness is that the guided path does not compose them.
+and local endpoints. At the time of this pre-implementation matrix it also had
+experimental OpenAI/ChatGPT and Claude subscription configuration, a generic
+custom base URL mechanism, and service installation. The weakness was that the
+guided path did not compose them. Subsequent implementation retained the
+ChatGPT/Codex bridge and retired Claude subscription routing after the
+compliance review described above.
 
 ## Gap matrix
 
@@ -543,7 +555,6 @@ operations:
    - custom OpenAI-compatible endpoint;
    - local credentialless endpoint;
    - ChatGPT subscription through the official Codex client;
-   - Claude subscription through the official Claude client;
    - advanced OpenAI or Anthropic API setup;
 3. fetch model metadata and present eligible models;
 4. derive limits and posted prices where the provider supplies them;
@@ -552,6 +563,16 @@ operations:
 7. install the user service, start it, and wait for bounded health;
 8. run `doctor`; and
 9. open chat or print one exact next command for non-interactive use.
+
+The Claude subscription item in the original recommendation was superseded by
+the first-party terms review. Anthropic's
+[legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance)
+does not permit a third-party Mealy login or routing bridge for Free, Pro, or
+Max credentials. OpenAI's documented
+[Codex app-server](https://learn.chatgpt.com/docs/app-server) and
+[current model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+provide an upstream-supported integration direction and maintained alias for
+the ChatGPT route.
 
 Required failure behavior:
 

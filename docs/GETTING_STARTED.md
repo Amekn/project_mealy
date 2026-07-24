@@ -47,12 +47,15 @@ offers these routes:
 | Custom endpoint | An OpenAI Responses-compatible HTTPS `/v1` endpoint and its key. Set a named environment variable for automation, or enter the key at the hidden interactive prompt. |
 | Local endpoint | A credentialless Responses-compatible server on a literal loopback IP. |
 | ChatGPT subscription | The official `codex` client installed and already signed in with ChatGPT. |
-| Claude subscription | The official `claude` client installed and already signed in with a Claude subscription. |
 | OpenAI API | `OPENAI_API_KEY`. |
 | Anthropic API | `ANTHROPIC_API_KEY`. |
 
-Subscription routes use the existing official client session. Mealy does not extract OAuth tokens,
-inherit API-key variables into that client, or treat a ChatGPT/Claude subscription as an API key.
+The ChatGPT route uses the existing official Codex client session. Mealy does not extract OAuth
+tokens, inherit API-key variables into that client, or treat a ChatGPT subscription as an API key.
+It defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy context
+ceiling. Anthropic's current terms prohibit third-party products from routing Claude Free, Pro, or
+Max subscription credentials; use the Anthropic API, strict-free OpenRouter, a custom endpoint, or
+Claude Code directly instead.
 
 ## 3. Run or continue onboarding
 
@@ -102,12 +105,15 @@ mealyctl onboard \
   --base-url 'http://127.0.0.1:11434/v1'
 ```
 
-For a subscription, first complete sign-in in the official client, then choose
-`chatgpt-subscription` or `claude-subscription`:
+For a ChatGPT subscription, first complete sign-in in the official Codex client:
 
 ```sh
+codex login status
 mealyctl onboard --route chatgpt-subscription
 ```
+
+The model and context prompts are intentionally omitted on this route. Advanced users can override
+the maintained defaults with `--model` and `--context-tokens`.
 
 Onboarding refuses to replace an existing `config.json`. Diagnose an existing running home with
 `doctor`; only use `--reconfigure` after stopping the daemon and intentionally reviewing the new

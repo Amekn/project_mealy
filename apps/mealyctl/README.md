@@ -17,12 +17,18 @@ staged and does not count as production verification.
 
 Owner-local subscription activation is deliberately separate from this API-key wizard.
 `config provider-subscription-openai` uses an existing ChatGPT sign-in owned by the official Codex
-client, and `config provider-subscription-claude` uses the official Claude client's existing
-subscription sign-in. Both canonicalize and SHA-256-pin the selected executable, exclude provider
-API-key variables and host-client tools/connectors, run a bounded structured connectivity probe,
-and persist no OAuth/session/token material or broker identity. Activation raises the configured
+client. It defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy
+context ceiling; `--model` and `--context-tokens` remain explicit escape hatches. The bridge
+canonicalizes and SHA-256-pins the selected executable, excludes provider API-key variables and
+host-client tools/connectors, runs a bounded structured connectivity probe, and persists no
+OAuth/session/token material or broker identity. Activation raises the configured
 provider deadline only as far as its declared latency estimate and total run wall-time permit;
 official-client input overhead is included in the durable token reservation.
+
+The legacy `provider-subscription-claude` surface fails closed before configuration mutation or
+client execution. Anthropic currently prohibits third-party products from offering Claude.ai
+login or routing Free, Pro, or Max subscription credentials. Use `provider-anthropic`,
+strict-free OpenRouter, a custom endpoint, or the official Claude Code product instead.
 
 The selected home must remain a canonical owner-private directory rather than a symlink. Before
 using the daemon bearer, the client validates that parent boundary, opens `connection.json`

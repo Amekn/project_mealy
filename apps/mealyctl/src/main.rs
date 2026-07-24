@@ -122,6 +122,12 @@ const PROVIDER_PROBE_MAXIMUM_TEXT_BYTES: usize = 64 * 1024;
 // against `max_output_tokens` before emitting the requested visible text.
 const PROVIDER_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
 const SUBSCRIPTION_PROBE_MAXIMUM_OUTPUT_TOKENS: u64 = 256;
+// OpenAI's maintained Codex guidance currently maps the stable `gpt-5.6` alias to the
+// recommended Sol model. Mealy deliberately accepts only a conservative 128k slice of the
+// documented 1,050,000-token window so the owner-local bridge remains safe across plan/catalog
+// changes. Both values remain explicit CLI overrides for pinned deployments.
+const OPENAI_SUBSCRIPTION_DEFAULT_MODEL: &str = "gpt-5.6";
+const OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS: u64 = 128_000;
 const SETUP_PROVIDER_ESTIMATED_LATENCY_MS: u64 = 30_000;
 const PROVIDER_DISPATCH_SAFETY_MARGIN_MS: u64 = 5_000;
 const PROVIDER_DISCOVERY_MAXIMUM_MODELS: usize = 500;
@@ -462,7 +468,8 @@ enum OnboardRouteArgument {
     Local,
     /// Existing official Codex CLI session authenticated with a `ChatGPT` subscription.
     ChatgptSubscription,
-    /// Existing official Claude Code session authenticated with a Claude subscription.
+    /// Retired compatibility name; always rejected under Anthropic's third-party terms.
+    #[value(hide = true)]
     ClaudeSubscription,
     /// Official `OpenAI` Responses API credential.
     OpenaiApi,
@@ -663,14 +670,17 @@ enum ConfigCommand {
         /// Installed Codex executable; PATH lookup is used when omitted.
         #[arg(long)]
         executable_path: Option<PathBuf>,
-        /// Exact subscription-accessible Codex model name.
-        #[arg(long)]
+        /// Codex model name or maintained alias.
+        #[arg(long, default_value = OPENAI_SUBSCRIPTION_DEFAULT_MODEL)]
         model: String,
         /// Remote residency/trust label used by routing policy.
         #[arg(long, default_value = "openai-subscription")]
         residency: String,
-        /// Conservative context limit for this exact model.
-        #[arg(long)]
+        /// Conservative accepted context limit.
+        #[arg(
+            long,
+            default_value_t = OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS
+        )]
         context_tokens: u64,
         /// Maximum output tokens Mealy accepts from the official client.
         #[arg(long, default_value_t = 4_096)]
@@ -685,7 +695,8 @@ enum ConfigCommand {
         #[arg(long)]
         approve: bool,
     },
-    /// Configure official Claude Code access using its existing Claude subscription sign-in.
+    /// Retired: Anthropic forbids third-party routing through Claude subscription credentials.
+    #[command(hide = true)]
     ProviderSubscriptionClaude {
         /// Stable provider identity retained in routing evidence.
         #[arg(long, default_value = "claude.subscription")]
@@ -8294,13 +8305,9 @@ fn prompt_onboard_route(
         prompt,
         "  4. ChatGPT subscription through official Codex CLI"
     )?;
-    writeln!(
-        prompt,
-        "  5. Claude subscription through official Claude Code"
-    )?;
-    writeln!(prompt, "  6. OpenAI API")?;
-    writeln!(prompt, "  7. Anthropic API")?;
-    match prompt_line(input, prompt, "Route [1-7]: ")?
+    writeln!(prompt, "  5. OpenAI API")?;
+    writeln!(prompt, "  6. Anthropic API")?;
+    match prompt_line(input, prompt, "Route [1-6]: ")?
         .to_ascii_lowercase()
         .as_str()
     {
@@ -8308,9 +8315,9 @@ fn prompt_onboard_route(
         "2" | "custom" => Ok(OnboardRouteArgument::Custom),
         "3" | "local" => Ok(OnboardRouteArgument::Local),
         "4" | "chatgpt" | "chatgpt-subscription" => Ok(OnboardRouteArgument::ChatgptSubscription),
-        "5" | "claude" | "claude-subscription" => Ok(OnboardRouteArgument::ClaudeSubscription),
-        "6" | "openai" | "openai-api" => Ok(OnboardRouteArgument::OpenaiApi),
-        "7" | "anthropic" | "anthropic-api" => Ok(OnboardRouteArgument::AnthropicApi),
+        "claude" | "claude-subscription" => Ok(OnboardRouteArgument::ClaudeSubscription),
+        "5" | "openai" | "openai-api" => Ok(OnboardRouteArgument::OpenaiApi),
+        "6" | "anthropic" | "anthropic-api" => Ok(OnboardRouteArgument::AnthropicApi),
         _ => Err(CliError::InvalidSetupInput),
     }
 }
@@ -8642,9 +8649,12 @@ fn resolve_onboard_context(
 fn resolve_subscription_onboard(
     route: OnboardRouteArgument,
     options: &OnboardOptions,
-    input: &mut impl BufRead,
-    prompt: &mut impl Write,
+    _input: &mut impl BufRead,
+    _prompt: &mut impl Write,
 ) -> Result<ResolvedOnboard, CliError> {
+    if matches!(route, OnboardRouteArgument::ClaudeSubscription) {
+        return Err(CliError::ClaudeSubscriptionUnsupported);
+    }
     if options.base_url.is_some()
         || options.credential_env.is_some()
         || options.input_microunits_per_million_tokens.is_some()
@@ -8653,14 +8663,13 @@ fn resolve_subscription_onboard(
     {
         return Err(CliError::InvalidSetupInput);
     }
-    let model = options.model.clone().map_or_else(
-        || prompt_line(input, prompt, "Exact subscription model ID: "),
-        Ok,
-    )?;
-    let context_tokens = options.context_tokens.map_or_else(
-        || prompt_u64(input, prompt, "Conservative context-token limit: ", false),
-        Ok,
-    )?;
+    let model = options
+        .model
+        .clone()
+        .unwrap_or_else(|| OPENAI_SUBSCRIPTION_DEFAULT_MODEL.to_owned());
+    let context_tokens = options
+        .context_tokens
+        .unwrap_or(OPENAI_SUBSCRIPTION_CONSERVATIVE_CONTEXT_TOKENS);
     let (client, executable_name, provider_id, residency) = match route {
         OnboardRouteArgument::ChatgptSubscription => (
             SubscriptionCliClient::OpenAiCodex,
@@ -8668,12 +8677,9 @@ fn resolve_subscription_onboard(
             "openai.subscription",
             "openai-subscription",
         ),
-        OnboardRouteArgument::ClaudeSubscription => (
-            SubscriptionCliClient::AnthropicClaude,
-            "claude",
-            "claude.subscription",
-            "claude-subscription",
-        ),
+        OnboardRouteArgument::ClaudeSubscription => {
+            return Err(CliError::ClaudeSubscriptionUnsupported);
+        }
         _ => return Err(CliError::InvalidSetupInput),
     };
     let selected = options
@@ -9819,30 +9825,9 @@ fn run_config_operation(home: &Path, command: &ConfigCommand) -> Result<(), CliE
             *approve,
             *skip_connectivity_test,
         ),
-        ConfigCommand::ProviderSubscriptionClaude {
-            provider_id,
-            executable_path,
-            model,
-            residency,
-            context_tokens,
-            maximum_output_tokens,
-            skip_connectivity_test,
-            estimated_latency_ms,
-            approve,
-        } => configure_subscription_provider(
-            home,
-            provider_id,
-            SubscriptionCliClient::AnthropicClaude,
-            executable_path.as_deref(),
-            "claude",
-            model,
-            residency,
-            *context_tokens,
-            *maximum_output_tokens,
-            *estimated_latency_ms,
-            *approve,
-            *skip_connectivity_test,
-        ),
+        ConfigCommand::ProviderSubscriptionClaude { .. } => {
+            Err(CliError::ClaudeSubscriptionUnsupported)
+        }
         ConfigCommand::Provider {
             provider_id,
             base_url,
@@ -15060,6 +15045,11 @@ enum CliError {
     /// Provider settings or the current daemon configuration document are invalid.
     #[error("provider configuration is invalid")]
     InvalidProviderConfiguration,
+    /// Anthropic expressly disallows third-party products from routing Claude subscriptions.
+    #[error(
+        "Claude subscription routing is unsupported: Anthropic prohibits third-party products from using Claude Free/Pro/Max OAuth credentials; use `anthropic-api`, `openrouter-free`, a custom endpoint, or Claude Code directly"
+    )]
+    ClaudeSubscriptionUnsupported,
     /// Provider model-discovery filtering, pagination, or output bound is invalid.
     #[error("provider model-discovery request is invalid")]
     InvalidProviderDiscoveryRequest,

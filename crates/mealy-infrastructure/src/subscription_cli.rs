@@ -233,7 +233,8 @@ impl SubscriptionCliProvider {
         // normalized context. The capability contract reserves above observed usage so ordinary
         // Mealy tool schemas remain usable after a small upstream client change.
         let input_token_overhead = settings.client.input_token_overhead();
-        if !valid_label(&settings.provider_id, 128)
+        if settings.client != SubscriptionCliClient::OpenAiCodex
+            || !valid_label(&settings.provider_id, 128)
             || !valid_label(&settings.model, 256)
             || !valid_label(&settings.residency, 128)
             || !is_sha256_digest(&settings.executable_sha256)
@@ -1290,42 +1291,56 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn both_official_client_envelopes_normalize_without_api_credentials() {
+    fn openai_official_client_envelope_normalizes_without_api_credentials() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        for client in [
+        let decision = r#"{\"kind\":\"final\",\"text\":\"ok\",\"toolId\":null,\"arguments\":null}"#;
+        let (executable_path, executable_sha256) = fixture_client(
+            directory.path(),
             SubscriptionCliClient::OpenAiCodex,
-            SubscriptionCliClient::AnthropicClaude,
-        ] {
-            let decision =
-                r#"{\"kind\":\"final\",\"text\":\"ok\",\"toolId\":null,\"arguments\":null}"#;
-            let (executable_path, executable_sha256) =
-                fixture_client(directory.path(), client, decision);
-            let provider = SubscriptionCliProvider::new(SubscriptionCliSettings {
-                provider_id: "subscription.fixture".to_owned(),
-                client,
-                executable_path,
-                executable_sha256,
-                model: "fixture-model".to_owned(),
-                residency: "subscription-remote".to_owned(),
-                context_tokens: 32_768,
-                maximum_output_tokens: 32,
-                maximum_concurrent_requests: 1,
-                requests_per_minute: 10,
-            })
-            .expect("subscription provider");
-            let output = provider
-                .complete(&request(), &NeverCancelled)
-                .expect("subscription completion");
-            assert_eq!(
-                output.response,
-                ProviderResponse::Final {
-                    text: "ok".to_owned()
-                }
-            );
-            assert_eq!(output.usage.input_tokens, 10);
-            assert_eq!(output.usage.output_tokens, 5);
-            assert_eq!(output.usage.cost_microunits, 0);
-        }
+            decision,
+        );
+        let provider = SubscriptionCliProvider::new(SubscriptionCliSettings {
+            provider_id: "subscription.fixture".to_owned(),
+            client: SubscriptionCliClient::OpenAiCodex,
+            executable_path,
+            executable_sha256,
+            model: "fixture-model".to_owned(),
+            residency: "subscription-remote".to_owned(),
+            context_tokens: 32_768,
+            maximum_output_tokens: 32,
+            maximum_concurrent_requests: 1,
+            requests_per_minute: 10,
+        })
+        .expect("subscription provider");
+        let output = provider
+            .complete(&request(), &NeverCancelled)
+            .expect("subscription completion");
+        assert_eq!(
+            output.response,
+            ProviderResponse::Final {
+                text: "ok".to_owned()
+            }
+        );
+        assert_eq!(output.usage.input_tokens, 10);
+        assert_eq!(output.usage.output_tokens, 5);
+        assert_eq!(output.usage.cost_microunits, 0);
+    }
+
+    #[test]
+    fn claude_subscription_bridge_is_retained_only_as_a_rejected_legacy_identity() {
+        let result = SubscriptionCliProvider::new(SubscriptionCliSettings {
+            provider_id: "claude.subscription".to_owned(),
+            client: SubscriptionCliClient::AnthropicClaude,
+            executable_path: "/does/not/matter".into(),
+            executable_sha256: "0".repeat(64),
+            model: "claude".to_owned(),
+            residency: "subscription-remote".to_owned(),
+            context_tokens: 32_768,
+            maximum_output_tokens: 32,
+            maximum_concurrent_requests: 1,
+            requests_per_minute: 10,
+        });
+        assert!(result.is_err());
     }
 
     #[test]

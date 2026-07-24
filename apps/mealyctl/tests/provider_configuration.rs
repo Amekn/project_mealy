@@ -321,148 +321,170 @@ fn provider_model_discovery_does_not_echo_failure_body_or_credential() {
 #[test]
 #[cfg(unix)]
 #[allow(clippy::too_many_lines)]
-fn subscription_provider_activation_pins_official_client_and_clears_api_keys() {
+fn openai_subscription_activation_pins_official_client_and_uses_safe_defaults() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let cases = [
-        (
-            "provider-subscription-openai",
-            "chatgpt-subscription",
-            "openai_subscription_cli",
-            "open_ai_codex",
-            "openai.subscription",
-            concat!(
-                "#!/bin/sh\n",
-                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
-                "cat >/dev/null\n",
-                "printf '%s\\n' ",
-                "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
-                "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
-                "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
-            ),
-        ),
-        (
+    let command = "provider-subscription-openai";
+    let onboarding_route = "chatgpt-subscription";
+    let protocol = "openai_subscription_cli";
+    let client = "open_ai_codex";
+    let provider_id = "openai.subscription";
+    let fixture_body = concat!(
+        "#!/bin/sh\n",
+        "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
+        "cat >/dev/null\n",
+        "printf '%s\\n' ",
+        "'{\"type\":\"thread.started\",\"thread_id\":\"fixture-request\"}' ",
+        "'{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\"}}' ",
+        "'{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
+    );
+    let home = tempfile::tempdir().expect("temporary subscription home");
+    fs::create_dir(home.path().join("config-history")).expect("configuration history");
+    fs::write(
+        home.path().join("config.json"),
+        serde_json::to_vec_pretty(&default_config()).expect("encode default config"),
+    )
+    .expect("write default config");
+    let executable = home.path().join(format!("{command}-fixture"));
+    fs::write(&executable, fixture_body).expect("write subscription fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make subscription fixture executable");
+    let executable = executable
+        .canonicalize()
+        .expect("canonical subscription fixture");
+    let executable_digest = sha256_digest(fixture_body.as_bytes());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args(["config", command, "--executable-path"])
+        .arg(&executable)
+        .args(["--maximum-output-tokens", "64", "--approve"])
+        .env("OPENAI_API_KEY", "must-not-reach-official-client")
+        .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+        .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+        .env("LOCAL_API_KEY", "must-not-reach-official-client")
+        .output()
+        .expect("activate subscription provider");
+    assert!(
+        output.status.success(),
+        "{command} activation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("activation response");
+    assert_eq!(response["protocol"], protocol);
+    assert_eq!(response["providerId"], provider_id);
+    assert_eq!(response["connectivityTested"], true);
+    assert_eq!(response["secretId"], Value::Null);
+
+    let config: Value = serde_json::from_slice(
+        &fs::read(home.path().join("config.json")).expect("subscription config"),
+    )
+    .expect("subscription config JSON");
+    assert_eq!(config["provider"]["kind"], "subscription_cli");
+    assert_eq!(config["provider"]["client"], client);
+    assert_eq!(
+        config["provider"]["executablePath"],
+        executable.to_str().expect("UTF-8 fixture path")
+    );
+    assert_eq!(config["provider"]["executableSha256"], executable_digest);
+    assert_eq!(config["provider"]["model"], "gpt-5.6");
+    assert_eq!(config["provider"]["contextTokens"], 128_000);
+    assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
+    assert!(!home.path().join("provider-secrets").exists());
+
+    let onboard_home = tempfile::tempdir().expect("temporary subscription onboarding home");
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(onboard_home.path())
+        .args(["onboard", "--route", onboarding_route, "--executable-path"])
+        .arg(&executable)
+        .args([
+            "--maximum-output-tokens",
+            "64",
+            "--configure-only",
+            "--approve",
+        ])
+        .env("OPENAI_API_KEY", "must-not-reach-official-client")
+        .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
+        .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
+        .env("LOCAL_API_KEY", "must-not-reach-official-client")
+        .output()
+        .expect("onboard subscription provider");
+    assert!(
+        output.status.success(),
+        "{onboarding_route} onboarding failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
+    assert_eq!(response["provider"]["protocol"], protocol);
+    assert_eq!(response["provider"]["providerId"], provider_id);
+    assert_eq!(response["provider"]["connectivityTested"], true);
+    assert_eq!(response["provider"]["secretId"], Value::Null);
+    assert_eq!(response["service"], Value::Null);
+    assert_eq!(response["serviceStarted"], false);
+    assert_eq!(response["chatStarted"], false);
+    let config: Value = serde_json::from_slice(
+        &fs::read(onboard_home.path().join("config.json")).expect("subscription onboarding config"),
+    )
+    .expect("subscription onboarding JSON");
+    assert_eq!(config["provider"]["client"], client);
+    assert_eq!(config["provider"]["model"], "gpt-5.6");
+    assert_eq!(config["provider"]["contextTokens"], 128_000);
+    assert_eq!(config["provider"]["executableSha256"], executable_digest);
+    assert!(!onboard_home.path().join("provider-secrets").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn claude_subscription_routes_fail_before_home_mutation_or_client_execution() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::tempdir().expect("temporary retired-subscription root");
+    let marker = root.path().join("invoked");
+    let executable = root.path().join("claude-fixture");
+    fs::write(
+        &executable,
+        format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    )
+    .expect("write retired subscription fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make retired subscription fixture executable");
+
+    for arguments in [
+        vec![
+            "config",
             "provider-subscription-claude",
+            "--executable-path",
+            executable.to_str().expect("fixture path"),
+            "--model",
+            "claude",
+            "--context-tokens",
+            "32768",
+            "--approve",
+        ],
+        vec![
+            "onboard",
+            "--route",
             "claude-subscription",
-            "claude_subscription_cli",
-            "anthropic_claude",
-            "claude.subscription",
-            concat!(
-                "#!/bin/sh\n",
-                "test -z \"${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${LOCAL_API_KEY:-}\" || exit 90\n",
-                "cat >/dev/null\n",
-                "printf '%s\\n' ",
-                "'{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"kind\\\":\\\"final\\\",\\\"text\\\":\\\"OK\\\",\\\"toolId\\\":null,\\\"arguments\\\":null}\",\"session_id\":\"fixture-request\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5},\"modelUsage\":{\"fixture-model\":{}}}'\n",
-            ),
-        ),
-    ];
-
-    for (command, onboarding_route, protocol, client, provider_id, fixture_body) in cases {
-        let home = tempfile::tempdir().expect("temporary subscription home");
-        fs::create_dir(home.path().join("config-history")).expect("configuration history");
-        fs::write(
-            home.path().join("config.json"),
-            serde_json::to_vec_pretty(&default_config()).expect("encode default config"),
-        )
-        .expect("write default config");
-        let executable = home.path().join(format!("{command}-fixture"));
-        fs::write(&executable, fixture_body).expect("write subscription fixture");
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
-            .expect("make subscription fixture executable");
-        let executable = executable
-            .canonicalize()
-            .expect("canonical subscription fixture");
-        let executable_digest = sha256_digest(fixture_body.as_bytes());
-
+            "--executable-path",
+            executable.to_str().expect("fixture path"),
+            "--configure-only",
+            "--approve",
+        ],
+    ] {
+        let home = tempfile::tempdir().expect("temporary retired-subscription home");
         let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
             .arg("--home")
             .arg(home.path())
-            .args(["config", command, "--executable-path"])
-            .arg(&executable)
-            .args([
-                "--model",
-                "fixture-model",
-                "--context-tokens",
-                "32768",
-                "--maximum-output-tokens",
-                "64",
-                "--approve",
-            ])
-            .env("OPENAI_API_KEY", "must-not-reach-official-client")
-            .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
-            .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
-            .env("LOCAL_API_KEY", "must-not-reach-official-client")
+            .args(arguments)
             .output()
-            .expect("activate subscription provider");
-        assert!(
-            output.status.success(),
-            "{command} activation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let response: Value = serde_json::from_slice(&output.stdout).expect("activation response");
-        assert_eq!(response["protocol"], protocol);
-        assert_eq!(response["providerId"], provider_id);
-        assert_eq!(response["connectivityTested"], true);
-        assert_eq!(response["secretId"], Value::Null);
-
-        let config: Value = serde_json::from_slice(
-            &fs::read(home.path().join("config.json")).expect("subscription config"),
-        )
-        .expect("subscription config JSON");
-        assert_eq!(config["provider"]["kind"], "subscription_cli");
-        assert_eq!(config["provider"]["client"], client);
-        assert_eq!(
-            config["provider"]["executablePath"],
-            executable.to_str().expect("UTF-8 fixture path")
-        );
-        assert_eq!(config["provider"]["executableSha256"], executable_digest);
-        assert_eq!(config["provider"]["model"], "fixture-model");
-        assert_eq!(config["agentLoopLimits"]["providerTimeoutMs"], 65_000);
-        assert!(!home.path().join("provider-secrets").exists());
-
-        let onboard_home = tempfile::tempdir().expect("temporary subscription onboarding home");
-        let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
-            .arg("--home")
-            .arg(onboard_home.path())
-            .args(["onboard", "--route", onboarding_route, "--executable-path"])
-            .arg(&executable)
-            .args([
-                "--model",
-                "fixture-model",
-                "--context-tokens",
-                "32768",
-                "--maximum-output-tokens",
-                "64",
-                "--configure-only",
-                "--approve",
-            ])
-            .env("OPENAI_API_KEY", "must-not-reach-official-client")
-            .env("ANTHROPIC_API_KEY", "must-not-reach-official-client")
-            .env("OPENROUTER_API_KEY", "must-not-reach-official-client")
-            .env("LOCAL_API_KEY", "must-not-reach-official-client")
-            .output()
-            .expect("onboard subscription provider");
-        assert!(
-            output.status.success(),
-            "{onboarding_route} onboarding failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let response: Value = serde_json::from_slice(&output.stdout).expect("onboarding response");
-        assert_eq!(response["provider"]["protocol"], protocol);
-        assert_eq!(response["provider"]["providerId"], provider_id);
-        assert_eq!(response["provider"]["connectivityTested"], true);
-        assert_eq!(response["provider"]["secretId"], Value::Null);
-        assert_eq!(response["service"], Value::Null);
-        assert_eq!(response["serviceStarted"], false);
-        assert_eq!(response["chatStarted"], false);
-        let config: Value = serde_json::from_slice(
-            &fs::read(onboard_home.path().join("config.json"))
-                .expect("subscription onboarding config"),
-        )
-        .expect("subscription onboarding JSON");
-        assert_eq!(config["provider"]["client"], client);
-        assert_eq!(config["provider"]["executableSha256"], executable_digest);
-        assert!(!onboard_home.path().join("provider-secrets").exists());
+            .expect("run retired subscription route");
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("Claude subscription routing is unsupported"));
+        assert!(!home.path().join("config.json").exists());
+        assert!(!marker.exists());
     }
 }
 

@@ -260,8 +260,10 @@ gate and final publication gate use the checked selector to require that exact n
 workflow path, successful `workflow_dispatch` result, repository run URL, and
 `openrouter-free` provider. A success on an earlier commit does not qualify a later tag, and a
 successful private/direct-provider run cannot substitute for the free-model gate.
-`LOCAL_API_KEY`, direct paid API keys, and owner-local ChatGPT/Claude subscription bridges remain
-useful additional acceptance, but should not be used for frequent CI traffic.
+`LOCAL_API_KEY`, direct paid API keys, and the owner-local ChatGPT subscription bridge remain
+useful additional acceptance, but should not be used for frequent CI traffic. Claude Free, Pro,
+and Max subscription credentials are not a supported Mealy route under Anthropic's current
+third-party terms; exercise the direct Anthropic API only with separately approved paid credentials.
 
 ## Tag and publish
 

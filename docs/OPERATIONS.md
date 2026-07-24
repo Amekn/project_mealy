@@ -123,17 +123,21 @@ review creates no config or broker state. Probe failure can leave only the safe 
 home so setup is retryable; it never publishes the proposed provider or credential. Never use
 `--skip-connectivity-test` as production connectivity evidence.
 
-Personal OpenAI and Claude subscriptions use separate stopped-home commands, not the API-key
-wizard. `config provider-subscription-openai` launches an already ChatGPT-authenticated official
-Codex client; `config provider-subscription-claude` launches an already subscription-authenticated
-official Claude client. Each activation pins the canonical executable path and SHA-256 and runs a
-bounded no-tools connectivity probe. Mealy never imports the client's OAuth/session material and
-never passes provider API-key variables to that process. A client upgrade or expired login requires
-owner-local reactivation. These bridges are suitable only for the owner's signed-in machine; use a
-brokered API key or private endpoint for unattended service accounts and release acceptance.
+Personal ChatGPT subscriptions use a separate stopped-home command, not the API-key wizard.
+`config provider-subscription-openai` launches an already ChatGPT-authenticated official Codex
+client. Activation pins the canonical executable path and SHA-256 and runs a bounded no-tools
+connectivity probe. Mealy never imports the client's OAuth/session material and never passes
+provider API-key variables to that process. A client upgrade or expired login requires owner-local
+reactivation. This bridge is suitable only for the owner's signed-in machine; use a brokered API
+key or private endpoint for unattended service accounts and release acceptance.
 Activation expands the per-call deadline only to the declared subscription routing estimate and
 only within the existing total run wall-time. Official-client-added input tokens are represented by
 a conservative capability allowance and included in the durable reservation and replay evidence.
+
+The legacy Claude subscription provider is retired and fails validation before process dispatch.
+Anthropic prohibits third-party products from routing Free, Pro, or Max subscription credentials.
+To migrate an old stopped home, activate `provider-anthropic`, strict-free OpenRouter, or a custom
+endpoint before restarting the service. Claude Code remains available as its own official product.
 
 Run directly:
 
@@ -456,14 +460,15 @@ daemon is stopped and take effect after restart. `mealyctl config provider` vali
 Responses-compatible provider; `config provider-anthropic` validates the independently implemented
 Anthropic Messages contract. Each imports a credential into the owner-private broker, writes only
 its opaque identity to configuration, and preserves the replaced document.
-`provider-subscription-openai` and `provider-subscription-claude` instead persist no secret
-reference: they retain the selected official-client kind, exact canonical executable path/digest,
-model, residency, and bounded limits. The runtime re-hashes the client before every dispatch,
+`provider-subscription-openai` instead persists no secret reference: it retains the selected
+official-client kind, exact canonical executable path/digest, model, residency, and bounded limits.
+The runtime re-hashes the Codex client before every dispatch,
 clears its environment to a small owner/authentication allowlist, excludes all API-key variables,
 disables client tools/connectors/project instructions/session persistence, and accepts only bounded
 schema-valid decisions plus complete usage. Client-reported output above the configured acceptance
 ceiling fails closed; the official clients do not expose a direct-API-equivalent upstream maximum
-output setting. The corresponding
+output setting. Legacy Claude subscription configuration fails validation before the executable is
+opened. The corresponding
 `provider-fallback` and `provider-fallback-anthropic` commands append a uniquely identified
 endpoint only when its residency and local/remote boundary exactly match the primary. A chain may
 mix protocols, and each fallback credential is brokered separately. Definite

@@ -220,7 +220,7 @@ opens a new durable chat after configuration. Scripts must use the explicit `mea
 command so a missing subcommand never creates state outside a terminal.
 
 The guided journey offers strictly free OpenRouter, authenticated custom, credentialless loopback,
-ChatGPT subscription, Claude subscription, OpenAI API, and Anthropic API routes. The command discovers
+ChatGPT subscription, OpenAI API, and Anthropic API routes. The command discovers
 models where the provider supplies a bounded catalog, derives complete OpenRouter free-model
 limits and exact zero prices, shows one non-secret plan, performs the bounded live probe, installs
 and starts the owner service, waits for health, requires `doctor` to pass, and opens the first
@@ -687,7 +687,7 @@ and [model pricing schema](https://openrouter.ai/docs/guides/overview/models#mod
 Free-model availability and rate limits can change. Re-run account-filtered discovery before
 activation or acceptance; never remove the `:free` suffix or substitute a merely low-cost model.
 
-### OpenAI and Claude subscription sign-in
+### ChatGPT subscription sign-in and Claude alternatives
 
 A ChatGPT subscription is not an OpenAI Platform API key. Mealy supports that owner-local account
 only by launching the official Codex client that is already signed in with ChatGPT. It does not
@@ -696,32 +696,34 @@ read, copy, refresh, or store the client's OAuth material:
 ```sh
 codex login status
 "$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-openai \
-  --model YOUR_EXACT_CODEX_SUBSCRIPTION_MODEL \
-  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
   --maximum-output-tokens 4096 \
   --approve
 ```
 
-Claude subscription access uses the same boundary around an already signed-in official Claude
-client:
-
-```sh
-claude auth status
-"$HOME/.local/bin/mealyctl" --home "$HOME/.mealy" config provider-subscription-claude \
-  --model YOUR_EXACT_CLAUDE_SUBSCRIPTION_MODEL \
-  --context-tokens YOUR_CONSERVATIVE_CONTEXT_LIMIT \
-  --maximum-output-tokens 4096 \
-  --approve
-```
+The route defaults to OpenAI's maintained `gpt-5.6` alias and a conservative 128,000-token Mealy
+context ceiling. OpenAI currently documents the alias as routing to `gpt-5.6-sol`; the larger
+published model context is deliberately not assumed as Mealy's operational ceiling. Use `--model`
+or `--context-tokens` only when you intentionally need an override. See OpenAI's
+[current model guidance](https://developers.openai.com/api/docs/guides/latest-model) and
+[`gpt-5.6-sol` model page](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
 
 If PATH lookup is ambiguous, add `--executable-path /absolute/path/to/the/official/client`. Mealy
 canonicalizes that path, records its SHA-256, and rechecks the bytes before every request. The
-official process receives no OpenAI, Anthropic, OpenRouter, or local API-key variables; client
+Codex process receives no OpenAI, Anthropic, OpenRouter, or local API-key variables; client
 tools, connectors, project instructions, session persistence, and writable execution are disabled.
 Only a bounded JSON conversation/tool envelope enters stdin, and only schema-valid decision and
 usage output is accepted. Updating the official client changes its digest and deliberately requires
 stopped-home reactivation. Expired or invalid client login fails the connectivity probe without
 replacing the previous provider.
+
+Mealy does not offer Claude.ai subscription login. Anthropic's current
+[legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance) says
+third-party developers may not route requests through Claude Free, Pro, or Max plan credentials.
+The retired `claude-subscription` onboarding alias and
+`config provider-subscription-claude` command fail before mutation or client execution. Use
+`anthropic-api`, `openrouter-free`, a custom endpoint, or Claude Code directly. An old Mealy config
+that names the Claude subscription client also fails validation until the stopped home is migrated
+to one of those supported routes.
 
 Activation raises the current per-provider deadline only when needed to cover the declared
 routing-latency estimate (60 seconds by default) and refuses to exceed the configured total run
@@ -730,8 +732,9 @@ tokens added by the official client outside the normalized conversation; the pro
 usage must still fit that durable reservation before settlement succeeds.
 
 The configured output-token value is an acceptance ceiling checked against client-reported usage;
-the subscription clients do not currently expose the same exact upstream `max_output_tokens`
-control as the direct APIs. Use the private llama-server or zero-price OpenRouter route for
+the Codex subscription client does not currently expose the same exact upstream
+`max_output_tokens` control as the direct API. Use the private llama-server or zero-price
+OpenRouter route for
 frequent, long-running, unattended, or release-acceptance work. Subscription availability, account
 limits, and official-client terms remain upstream constraints, and these commands are not a way to
 turn a personal subscription into a general API credential.

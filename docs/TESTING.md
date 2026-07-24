@@ -103,9 +103,11 @@ working-directory change while `--home` and `MEALY_HOME` overrides remain exact 
 explicit home without `HOME`). They also discover a live OpenRouter account catalog, exclude
 paid/incomplete models,
 derive exact zero prices and limits for an eligible `:free` model, perform its bounded streaming
-probe, and keep the credential out of all output/config. Both official subscription-client
-fixtures are also exercised through `onboard`, including executable digest pinning and API-key
-environment exclusion. The suite also proves atomic credential brokering and protocol-specific activation probes, plus
+probe, and keep the credential out of all output/config. The official Codex subscription-client
+fixture is exercised through `onboard`, including default model/context selection, executable
+digest pinning, and API-key environment exclusion. Separate negative process coverage proves the
+retired Claude subscription route fails before configuration mutation or client invocation. The
+suite also proves atomic credential brokering and protocol-specific activation probes, plus
 read-only live OpenAI/Anthropic model discovery with exact authentication headers, filtering,
 Anthropic cursor pagination, token-limit normalization, and local record/response bounds. Its
 probe validators require the terminal protocol discriminator, bounded safe identity, and exact

@@ -177,8 +177,8 @@ mealyctl completion fish >"$HOME/.config/fish/completions/mealyctl.fish"
 ## Onboarding routes
 
 `mealyctl onboard` is the ordinary clean-install path. It prompts for one of
-seven explicit routes: `openrouter-free`, `custom`, `local`, `chatgpt-subscription`,
-`claude-subscription`, `openai-api`, or `anthropic-api`.
+six explicit routes: `openrouter-free`, `custom`, `local`, `chatgpt-subscription`,
+`openai-api`, or `anthropic-api`.
 
 The OpenRouter route fetches the live account catalog and admits only tool-capable text models
 whose exact ID ends in `:free`, whose context/output limits are complete, and whose posted
@@ -187,8 +187,16 @@ credential from the named environment variable when present. When it is absent a
 are terminals, onboarding reads the credential once through an echo-disabled bounded prompt,
 restores the terminal before continuing, and brokers the value without printing it. Non-terminal
 automation fails before mutation unless the variable is set. The local route requires a
-literal-loopback endpoint and no credential. Subscription routes pin and live-probe the installed
-official Codex or Claude executable without extracting its subscription credential.
+literal-loopback endpoint and no credential. The ChatGPT subscription route pins and live-probes
+the installed official Codex executable without extracting its subscription credential. It uses
+the maintained `gpt-5.6` alias and a conservative 128,000-token context ceiling unless either
+value is explicitly overridden.
+
+The retired `claude-subscription` alias and `config provider-subscription-claude` command remain
+recognizable only to give existing scripts an actionable error. They fail before home mutation or
+client invocation because Anthropic prohibits third-party routing of Free, Pro, and Max
+subscription credentials. Supported alternatives are `anthropic-api`, `openrouter-free`, a
+`custom` endpoint, or Claude Code itself.
 
 Before mutation, onboarding prints a non-secret provider digest and its service action, then
 requires the exact word `APPROVE` unless `--approve` was given. A pre-existing configuration is
