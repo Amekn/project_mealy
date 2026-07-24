@@ -20,6 +20,7 @@ Start with these documents in order:
 16. [`decisions/`](decisions/) — accepted architectural choices.
 17. [`research/`](research/) — pinned evidence from the eight reference systems.
 18. [`benchmarks/`](benchmarks/) — versioned soak/performance reports and reproduction commands.
+19. [`releases/`](releases/) — checked human-facing changes included in each immutable release.
 
 Requirements are authoritative for product intent. Accepted ADRs are authoritative for cross-cutting implementation decisions. Architecture describes the current synthesis and must be updated when an ADR supersedes it.
 

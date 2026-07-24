@@ -70,16 +70,18 @@ render() {
   local report=$1
   local output=$2
   local tag=${3:-v0.1.0}
-  local live_url=${4:-https://github.com/Amekn/project_mealy/actions/runs/123}
-  "$renderer" "$report" Amekn/project_mealy "$tag" "$commit" \
-    https://github.com/Amekn/project_mealy/actions/runs/321 \
-    "$live_url" https://github.com/Amekn/project_mealy/actions/runs/456 "$output"
+  local live_url=${4:-https://github.com/Amekn/mealy/actions/runs/123}
+  "$renderer" "$report" Amekn/mealy "$tag" "$commit" \
+    https://github.com/Amekn/mealy/actions/runs/321 \
+    "$live_url" https://github.com/Amekn/mealy/actions/runs/456 "$output"
 }
 
 render "$valid" "$temporary/first.md"
 render "$valid" "$temporary/second.md"
 cmp "$temporary/first.md" "$temporary/second.md"
 grep -Fq "# Mealy v0.1.0" "$temporary/first.md"
+grep -Fq "## What changed" "$temporary/first.md"
+grep -Fq "first immutable production release" "$temporary/first.md"
 grep -Fq "$commit" "$temporary/first.md"
 grep -Fq "$revision" "$temporary/first.md"
 grep -Fq "$daemon_sha256" "$temporary/first.md"
@@ -92,9 +94,9 @@ if grep -Fqi "macOS preview" "$temporary/first.md"; then
   echo "release notes advertised the archived macOS preview" >&2
   exit 1
 fi
-grep -Fq "CI run](https://github.com/Amekn/project_mealy/actions/runs/321)" \
+grep -Fq "CI run](https://github.com/Amekn/mealy/actions/runs/321)" \
   "$temporary/first.md"
-grep -Fq "live-provider run](https://github.com/Amekn/project_mealy/actions/runs/123)" \
+grep -Fq "live-provider run](https://github.com/Amekn/mealy/actions/runs/123)" \
   "$temporary/first.md"
 if grep -Fq "docs/benchmarks/release-soak-lineage.json" "$temporary/first.md"; then
   echo "release notes linked an absent optional lineage proof" >&2
@@ -130,10 +132,10 @@ if render "$valid" "$temporary/wrong-run.md" v0.1.0 \
   echo "release-note renderer accepted a foreign workflow URL" >&2
   exit 1
 fi
-if "$renderer" "$valid" Amekn/project_mealy v0.1.0 "$commit" \
+if "$renderer" "$valid" Amekn/mealy v0.1.0 "$commit" \
   https://github.com/another/project/actions/runs/321 \
-  https://github.com/Amekn/project_mealy/actions/runs/123 \
-  https://github.com/Amekn/project_mealy/actions/runs/456 \
+  https://github.com/Amekn/mealy/actions/runs/123 \
+  https://github.com/Amekn/mealy/actions/runs/456 \
   "$temporary/wrong-ci.md" \
   >"$temporary/wrong-ci.stdout" 2>"$temporary/wrong-ci.stderr"; then
   echo "release-note renderer accepted a foreign protected-CI URL" >&2

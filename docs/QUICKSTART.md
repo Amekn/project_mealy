@@ -24,18 +24,21 @@ starts a service, creates a Mealy home, or requires Rust:
 tmp=$(mktemp -d)
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/install-mealy-release.sh" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/install-mealy-release.sh
+  https://github.com/Amekn/mealy/releases/latest/download/install-mealy-release.sh
 curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$tmp/ATTESTATION-installers.sigstore.json" \
-  https://github.com/Amekn/project_mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
+  https://github.com/Amekn/mealy/releases/latest/download/ATTESTATION-installers.sigstore.json
 gh attestation verify "$tmp/install-mealy-release.sh" \
-  --repo Amekn/project_mealy \
-  --signer-workflow Amekn/project_mealy/.github/workflows/release.yml \
+  --repo Amekn/mealy \
+  --signer-workflow Amekn/mealy/.github/workflows/release.yml \
   --bundle "$tmp/ATTESTATION-installers.sigstore.json" \
   --deny-self-hosted-runners
 chmod 0755 "$tmp/install-mealy-release.sh"
 "$tmp/install-mealy-release.sh"
 ```
+
+The canonical signer identity above applies to v0.1.1 and later. Historical v0.1.0 bundles were
+issued as `Amekn/project_mealy` before the repository rename and retain that identity.
 
 Use `--version vX.Y.Z` to select a particular stable release, or `--prefix`/`--home` for custom
 paths. Public release metadata/assets are fetched with bounded HTTPS requests, so no GitHub login

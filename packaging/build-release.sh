@@ -53,6 +53,8 @@ release_documents=(
   benchmarks/2026-07-16-schema15-release-soak.json
   benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
+  benchmarks/2026-07-23-schema16-release-soak-subject.json
+  benchmarks/2026-07-23-schema16-release-soak.json
   benchmarks/README.md
   benchmarks/release-soak.json
   benchmarks/release-soak-subject.json
@@ -68,6 +70,9 @@ release_documents=(
   decisions/README.md
   research/GAP_MATRIX.md
   research/REFERENCE_SYSTEMS.md
+  releases/README.md
+  releases/v0.1.0.md
+  releases/v0.1.1.md
 )
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \

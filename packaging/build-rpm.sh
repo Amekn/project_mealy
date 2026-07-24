@@ -84,7 +84,7 @@ Version: %{mealy_version}
 Release: 1
 Summary: Local-first durable personal agent runtime
 License: Apache-2.0
-URL: https://github.com/Amekn/project_mealy
+URL: https://github.com/Amekn/mealy
 BuildArch: %{mealy_arch}
 AutoReqProv: no
 Requires: bubblewrap

@@ -9,6 +9,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+public_bootstrap=$(
+  sed -n \
+    '/- name: Exercise the public tokenless rootless bootstrap/,/- name: Re-run exact downloaded archive and Debian lifecycle smokes/p' \
+    "$repository_root/.github/workflows/release.yml"
+)
+expected_bootstrap_version="--version \"\$GITHUB_REF_NAME\""
+if [[ $public_bootstrap != *'downloaded/install-mealy-release.sh'* \
+  || $public_bootstrap != *"$expected_bootstrap_version"* ]]; then
+  echo "release workflow no longer exercises the public bootstrap installer" >&2
+  exit 1
+fi
+if [[ $public_bootstrap == *'--repository'* ]]; then
+  echo "public bootstrap acceptance bypasses the installer repository default" >&2
+  exit 1
+fi
+
 make_binaries() {
   local directory=$1
   local version=$2
@@ -328,7 +344,7 @@ MEALY_TEST_TARGET="$target" \
 MEALY_TEST_GH_LOG="$temporary/bootstrap-gh.log" \
 PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 \
     --prefix "$temporary/bootstrap prefix" --home "$temporary/bootstrap home" \
     >"$temporary/bootstrap-output"
 [[ $("$temporary/bootstrap prefix/bin/mealyd") == mealyd-v1 ]]
@@ -341,7 +357,7 @@ grep -Fqx "$expected_setup" "$temporary/bootstrap-output"
 grep -Fqx "$expected_service" "$temporary/bootstrap-output"
 for asset in "$archive" "SHA256SUMS-${target}" install-mealy.sh \
   install-mealy-release.sh; do
-  grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
+  grep -Eq "attestation verify .*${asset} .*--signer-workflow .*Amekn/mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
     "$temporary/bootstrap-gh.log"
 done
 grep -Eq "attestation verify .*${archive} .*--bundle .*ATTESTATION-${target}.sigstore.json" \
@@ -351,7 +367,7 @@ grep -Eq "attestation verify .*install-mealy-release.sh .*--bundle .*ATTESTATION
 # The bootstrap verifies the archive before execution, and the verified manager
 # independently enforces the same exact workflow, tag ref, and hosted-runner
 # provenance rather than accepting an arbitrary repository attestation.
-[[ $(grep -Ec "attestation verify .*${archive} .*--signer-workflow .*Amekn/project_mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
+[[ $(grep -Ec "attestation verify .*${archive} .*--signer-workflow .*Amekn/mealy/.github/workflows/release.yml .*--source-ref refs/tags/v0.1.0 .*--deny-self-hosted-runners" \
   "$temporary/bootstrap-gh.log") -eq 2 ]]
 if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_TARGET="$target" \
@@ -359,7 +375,7 @@ if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_GH_FAIL_ASSET=install-mealy-release.sh \
   PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap-denied-prefix" \
     --home "$temporary/bootstrap-denied-home" >/dev/null 2>&1; then
   echo "release bootstrap accepted a failed provenance verification" >&2
@@ -372,7 +388,7 @@ if MEALY_TEST_RELEASE_DIR="$bootstrap_release" \
   MEALY_TEST_GLIBC_VERSION=2.38 \
   PATH="$bootstrap_fake_bin:$PATH" \
   "$repository_root/packaging/install-release.sh" \
-    --version v0.1.0 --repository Amekn/project_mealy \
+    --version v0.1.0 --repository Amekn/mealy \
     --prefix "$temporary/bootstrap-old-glibc-prefix" \
     --home "$temporary/bootstrap-old-glibc-home" >/dev/null 2>&1; then
   echo "release bootstrap accepted an unsupported glibc host" >&2
@@ -409,6 +425,7 @@ printf 'preserve durable state\n' >"$temporary/home/state.keep"
 [[ -f $temporary/prefix/share/mealy/docs/benchmarks/release-soak-subject.json ]]
 [[ -f $temporary/prefix/share/mealy/docs/decisions/README.md ]]
 [[ -f $temporary/prefix/share/mealy/docs/research/REFERENCE_SYSTEMS.md ]]
+[[ -f $temporary/prefix/share/mealy/docs/releases/v0.1.1.md ]]
 [[ -f $temporary/prefix/share/mealy/ARCHITECTURE.md ]]
 [[ -f $temporary/prefix/share/mealy/REQUIREMENTS.md ]]
 [[ -f $temporary/prefix/share/mealy/SECURITY.md ]]

@@ -168,7 +168,7 @@ canonical repository on the Linux soak host, with an authenticated `gh` session 
 draft release:
 
 ```sh
-repository=Amekn/project_mealy
+repository=Amekn/mealy
 report=/absolute/path/to/release-soak.json
 mealyd=/absolute/path/to/the/exact/soaked/mealyd
 observed=$(jq -er '.revision | select(test("^[0-9a-f]{40}$"))' "$report")
