@@ -53,6 +53,8 @@ release_documents=(
   benchmarks/2026-07-16-schema15-release-soak.json
   benchmarks/2026-07-20-schema15-near-deadline-provider-dispatch-failure.md
   benchmarks/2026-07-20-interrupted-soak-and-storage-architecture.md
+  benchmarks/2026-07-23-schema16-release-soak-subject.json
+  benchmarks/2026-07-23-schema16-release-soak.json
   benchmarks/README.md
   benchmarks/release-soak.json
   benchmarks/release-soak-subject.json

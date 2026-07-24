@@ -1,31 +1,31 @@
 {
   "artifactBytes": 19712,
   "buildProfile": "release",
-  "completedTurns": 19248,
+  "completedTurns": 19208,
   "completedTurnsPerMinute": 13,
-  "daemonBinarySha256": "7b5d39502e96bbb03c4c33280c6355a91682234d14a5284ded83c143807a55bc",
-  "databaseBytesIncludingSidecars": 1693863936,
-  "databaseBytesPerCompletedTurn": 88002,
+  "daemonBinarySha256": "78591cafdbe79691805d651ecc03e3383313fec8bfeb6ed3428a051fa23f69a7",
+  "databaseBytesIncludingSidecars": 1690718208,
+  "databaseBytesPerCompletedTurn": 88021,
   "duplicateAdmissions": 1129,
-  "finishedAtUnixMs": 1784773852768,
+  "finishedAtUnixMs": 1784870945208,
   "hardRestarts": 48,
   "harnessMode": "external_release_binary",
   "homeStorage": {
     "filesystem": "btrfs",
     "mode": "retained"
   },
-  "interruptedProviderTurns": 51,
+  "interruptedProviderTurns": 52,
   "latencyMs": {
-    "maximum": 19034,
-    "mean": 3367,
-    "minimum": 551,
-    "p50": 2706,
-    "p95": 8372,
-    "p99": 10292
+    "maximum": 29055,
+    "mean": 3418,
+    "minimum": 544,
+    "p50": 2719,
+    "p95": 8528,
+    "p99": 10578
   },
-  "mealyVersion": "0.1.0",
-  "observedDurationMs": 86409247,
-  "peakResidentSetKiB": 296460,
+  "mealyVersion": "0.1.1",
+  "observedDurationMs": 86415473,
+  "peakResidentSetKiB": 301904,
   "providerDelayMs": 250,
   "requestedDurationSeconds": 86400,
   "residual": {
@@ -36,556 +36,556 @@
     "pendingInputs": 0,
     "unknownEffects": 0
   },
-  "resumedUndispatchedModelTurns": 2,
-  "resumedUndispatchedReadToolTurns": 2,
+  "resumedUndispatchedModelTurns": 0,
+  "resumedUndispatchedReadToolTurns": 1,
   "retriedReadToolTurns": 0,
-  "revision": "9b3653f6837087d8e66eabd5b27f516231c138a0",
+  "revision": "8867c46774c693a335853625dd967fd3520976ff",
   "roundIntervalMs": 30000,
-  "rounds": 2406,
+  "rounds": 2401,
   "schemaVersion": "mealy.soak-report.v2",
   "sessions": 8,
   "sourceState": "clean_revision",
   "sqliteIntegrity": "ok",
   "sqliteStorage": {
     "contextManifestItems": {
-      "artifactContentRows": 19279,
-      "includedRows": 2546617,
-      "inlineContentBytes": 553141230,
-      "inlineContentRows": 2527338,
+      "artifactContentRows": 19237,
+      "includedRows": 2541229,
+      "inlineContentBytes": 551969841,
+      "inlineContentRows": 2521992,
       "maximumInlineContentBytes": 384,
-      "rows": 2546617,
+      "rows": 2541229,
       "withheldRows": 0
     },
     "contextManifestSourceRows": {
-      "baseline": 38549,
-      "conversation_assistant": 1225120,
-      "conversation_user": 1225120,
-      "tool": 19279,
-      "user": 38549
+      "baseline": 38468,
+      "conversation_assistant": 1222528,
+      "conversation_user": 1222528,
+      "tool": 19237,
+      "user": 38468
     },
-    "databaseFileBytes": 1693863936,
+    "databaseFileBytes": 1690718208,
     "freeBytes": 0,
     "freePages": 0,
     "largestObjects": [
       {
-        "bytes": 471433216,
+        "bytes": 470441984,
         "kind": "table",
         "name": "context_manifest_bundle",
-        "pages": 115096,
-        "payloadBytes": 440338920,
-        "unusedBytes": 29743501
+        "pages": 114854,
+        "payloadBytes": 439385604,
+        "unusedBytes": 29708441
       },
       {
-        "bytes": 308019200,
+        "bytes": 307388416,
         "kind": "table",
         "name": "model_attempt",
-        "pages": 75200,
-        "payloadBytes": 249289735,
-        "unusedBytes": 57559027
+        "pages": 75046,
+        "payloadBytes": 248761414,
+        "unusedBytes": 57459033
       },
       {
-        "bytes": 215040000,
+        "bytes": 214593536,
         "kind": "table",
         "name": "journal_event",
-        "pages": 52500,
-        "payloadBytes": 201105602,
-        "unusedBytes": 9150086
+        "pages": 52391,
+        "payloadBytes": 200687649,
+        "unusedBytes": 9131541
       },
       {
-        "bytes": 79024128,
+        "bytes": 78860288,
         "kind": "table",
         "name": "validation_context_manifest",
-        "pages": 19293,
-        "payloadBytes": 66896633,
-        "unusedBytes": 11698032
+        "pages": 19253,
+        "payloadBytes": 66756536,
+        "unusedBytes": 11675249
       },
       {
-        "bytes": 39518208,
+        "bytes": 39436288,
         "kind": "table",
         "name": "tool_call",
-        "pages": 9648,
-        "payloadBytes": 28932646,
-        "unusedBytes": 10311684
+        "pages": 9628,
+        "payloadBytes": 28871088,
+        "unusedBytes": 10291949
       },
       {
-        "bytes": 35844096,
+        "bytes": 35766272,
         "kind": "table",
         "name": "loop_checkpoint",
-        "pages": 8751,
-        "payloadBytes": 32784147,
-        "unusedBytes": 2254850
+        "pages": 8732,
+        "payloadBytes": 32714814,
+        "unusedBytes": 2248103
       },
       {
-        "bytes": 35020800,
+        "bytes": 34885632,
         "kind": "table",
         "name": "outbox",
-        "pages": 8550,
-        "payloadBytes": 28593672,
-        "unusedBytes": 5896482
+        "pages": 8517,
+        "payloadBytes": 28534232,
+        "unusedBytes": 5822155
       },
       {
-        "bytes": 34574336,
+        "bytes": 34717696,
         "kind": "index",
         "name": "journal_event_aggregate_idx",
-        "pages": 8441,
-        "payloadBytes": 29150328,
-        "unusedBytes": 3646782
+        "pages": 8476,
+        "payloadBytes": 29089761,
+        "unusedBytes": 3853766
       },
       {
-        "bytes": 34574336,
+        "bytes": 34717696,
         "kind": "index",
         "name": "sqlite_autoindex_journal_event_2",
-        "pages": 8441,
-        "payloadBytes": 29150328,
-        "unusedBytes": 3646782
+        "pages": 8476,
+        "payloadBytes": 29089761,
+        "unusedBytes": 3853766
       },
       {
-        "bytes": 33181696,
+        "bytes": 33116160,
         "kind": "index",
         "name": "journal_event_timeline_idx",
-        "pages": 8101,
-        "payloadBytes": 27340759,
-        "unusedBytes": 4067791
+        "pages": 8085,
+        "payloadBytes": 27283968,
+        "unusedBytes": 4062715
       },
       {
-        "bytes": 31309824,
+        "bytes": 31244288,
         "kind": "index",
         "name": "timeline_event_cursor_event_reference_idx",
-        "pages": 7644,
-        "payloadBytes": 25631926,
-        "unusedBytes": 3910236
+        "pages": 7628,
+        "payloadBytes": 25578612,
+        "unusedBytes": 3901683
       },
       {
-        "bytes": 28958720,
+        "bytes": 28901376,
         "kind": "index",
         "name": "sqlite_autoindex_journal_event_1",
-        "pages": 7070,
-        "payloadBytes": 23430237,
-        "unusedBytes": 3767709
+        "pages": 7056,
+        "payloadBytes": 23381559,
+        "unusedBytes": 3762688
       },
       {
-        "bytes": 28958720,
+        "bytes": 28901376,
         "kind": "index",
         "name": "sqlite_autoindex_timeline_event_1",
-        "pages": 7070,
-        "payloadBytes": 23430237,
-        "unusedBytes": 3767709
+        "pages": 7056,
+        "payloadBytes": 23381559,
+        "unusedBytes": 3762688
       },
       {
-        "bytes": 28958720,
+        "bytes": 28901376,
         "kind": "index",
         "name": "timeline_event_event_idx",
-        "pages": 7070,
-        "payloadBytes": 23430237,
-        "unusedBytes": 3767709
+        "pages": 7056,
+        "payloadBytes": 23381559,
+        "unusedBytes": 3762688
       },
       {
-        "bytes": 26370048,
+        "bytes": 26308608,
         "kind": "table",
         "name": "run",
-        "pages": 6438,
-        "payloadBytes": 20961072,
-        "unusedBytes": 5186901
+        "pages": 6423,
+        "payloadBytes": 20917512,
+        "unusedBytes": 5169555
       },
       {
-        "bytes": 25481216,
+        "bytes": 25427968,
         "kind": "table",
         "name": "timeline_event",
-        "pages": 6221,
-        "payloadBytes": 21787194,
-        "unusedBytes": 253172
+        "pages": 6208,
+        "payloadBytes": 21741993,
+        "unusedBytes": 252300
       },
       {
-        "bytes": 19759104,
+        "bytes": 19718144,
         "kind": "table",
         "name": "validation_record",
-        "pages": 4824,
-        "payloadBytes": 16283808,
-        "unusedBytes": 3279257
+        "pages": 4814,
+        "payloadBytes": 16249968,
+        "unusedBytes": 3272587
       },
       {
-        "bytes": 15831040,
+        "bytes": 15798272,
         "kind": "table",
         "name": "context_manifest",
-        "pages": 3865,
-        "payloadBytes": 14648612,
-        "unusedBytes": 865099
+        "pages": 3857,
+        "payloadBytes": 14617832,
+        "unusedBytes": 863814
       },
       {
-        "bytes": 15810560,
+        "bytes": 15777792,
         "kind": "table",
         "name": "message",
-        "pages": 3860,
-        "payloadBytes": 14840208,
-        "unusedBytes": 789866
+        "pages": 3852,
+        "payloadBytes": 14809368,
+        "unusedBytes": 788354
       },
       {
-        "bytes": 13012992,
+        "bytes": 13066240,
         "kind": "index",
         "name": "sqlite_autoindex_aggregate_sequence_1",
-        "pages": 3177,
-        "payloadBytes": 11063736,
-        "unusedBytes": 1275409
+        "pages": 3190,
+        "payloadBytes": 11040625,
+        "unusedBytes": 1352935
       },
       {
-        "bytes": 12226560,
+        "bytes": 12173312,
         "kind": "table",
         "name": "aggregate_sequence",
-        "pages": 2985,
-        "payloadBytes": 10557160,
-        "unusedBytes": 364003
+        "pages": 2972,
+        "payloadBytes": 10535172,
+        "unusedBytes": 335609
       },
       {
-        "bytes": 9883648,
+        "bytes": 9863168,
         "kind": "table",
         "name": "artifact",
-        "pages": 2413,
-        "payloadBytes": 9181296,
-        "unusedBytes": 545211
+        "pages": 2408,
+        "payloadBytes": 9162216,
+        "unusedBytes": 544176
       },
       {
-        "bytes": 9883648,
+        "bytes": 9863168,
         "kind": "table",
         "name": "task_success_criteria",
-        "pages": 2413,
-        "payloadBytes": 9296784,
-        "unusedBytes": 429723
+        "pages": 2408,
+        "payloadBytes": 9277464,
+        "unusedBytes": 428928
       },
       {
-        "bytes": 6590464,
+        "bytes": 6578176,
         "kind": "table",
         "name": "session_inbox",
-        "pages": 1609,
-        "payloadBytes": 6371600,
-        "unusedBytes": 74694
+        "pages": 1606,
+        "payloadBytes": 6358320,
+        "unusedBytes": 76017
       },
       {
-        "bytes": 6086656,
+        "bytes": 6070272,
         "kind": "table",
         "name": "turn",
-        "pages": 1486,
-        "payloadBytes": 5678160,
-        "unusedBytes": 266308
+        "pages": 1482,
+        "payloadBytes": 5666360,
+        "unusedBytes": 262070
       },
       {
-        "bytes": 5091328,
+        "bytes": 5079040,
         "kind": "index",
         "name": "sqlite_autoindex_loop_checkpoint_2",
-        "pages": 1243,
-        "payloadBytes": 4167921,
-        "unusedBytes": 619451
+        "pages": 1240,
+        "payloadBytes": 4159069,
+        "unusedBytes": 616660
       },
       {
-        "bytes": 4960256,
+        "bytes": 4952064,
         "kind": "index",
         "name": "sqlite_autoindex_loop_checkpoint_1",
-        "pages": 1211,
-        "payloadBytes": 4013721,
-        "unusedBytes": 642963
+        "pages": 1209,
+        "payloadBytes": 4005195,
+        "unusedBytes": 643930
       },
       {
-        "bytes": 4321280,
+        "bytes": 4317184,
         "kind": "table",
         "name": "run_loop_state",
-        "pages": 1055,
-        "payloadBytes": 3965088,
-        "unusedBytes": 220968
+        "pages": 1054,
+        "payloadBytes": 3956848,
+        "unusedBytes": 225409
       },
       {
-        "bytes": 4079616,
+        "bytes": 4071424,
         "kind": "index",
         "name": "outbox_delivery_recovery_idx",
-        "pages": 996,
-        "payloadBytes": 3374001,
-        "unusedBytes": 520435
+        "pages": 994,
+        "payloadBytes": 3366921,
+        "unusedBytes": 519707
       },
       {
-        "bytes": 3608576,
+        "bytes": 3600384,
         "kind": "index",
         "name": "sqlite_autoindex_context_manifest_3",
-        "pages": 881,
-        "payloadBytes": 3012476,
-        "unusedBytes": 469885
+        "pages": 879,
+        "payloadBytes": 3006077,
+        "unusedBytes": 468359
       },
       {
-        "bytes": 3608576,
+        "bytes": 3600384,
         "kind": "index",
         "name": "sqlite_autoindex_model_attempt_3",
-        "pages": 881,
-        "payloadBytes": 3012476,
-        "unusedBytes": 469885
+        "pages": 879,
+        "payloadBytes": 3006077,
+        "unusedBytes": 468359
       },
       {
-        "bytes": 3596288,
+        "bytes": 3592192,
         "kind": "table",
         "name": "artifact_reference",
-        "pages": 878,
-        "payloadBytes": 3329904,
-        "unusedBytes": 134005
+        "pages": 877,
+        "payloadBytes": 3322984,
+        "unusedBytes": 137126
       },
       {
-        "bytes": 3440640,
+        "bytes": 3432448,
         "kind": "index",
         "name": "turn_context_graph_reference_idx",
-        "pages": 840,
-        "payloadBytes": 2925568,
-        "unusedBytes": 428004
+        "pages": 838,
+        "payloadBytes": 2919488,
+        "unusedBytes": 426076
       },
       {
-        "bytes": 3219456,
+        "bytes": 3223552,
         "kind": "table",
         "name": "budget_reservation",
-        "pages": 786,
-        "payloadBytes": 2853028,
-        "unusedBytes": 138657
+        "pages": 787,
+        "payloadBytes": 2847040,
+        "unusedBytes": 149212
       },
       {
-        "bytes": 3055616,
+        "bytes": 3051520,
         "kind": "table",
         "name": "work_lease",
-        "pages": 746,
-        "payloadBytes": 2895750,
-        "unusedBytes": 29217
+        "pages": 745,
+        "payloadBytes": 2890050,
+        "unusedBytes": 31104
       },
       {
-        "bytes": 2994176,
+        "bytes": 2985984,
         "kind": "index",
         "name": "model_attempt_recovery_idx",
-        "pages": 731,
-        "payloadBytes": 2511433,
-        "unusedBytes": 358328
+        "pages": 729,
+        "payloadBytes": 2506097,
+        "unusedBytes": 355739
       },
       {
-        "bytes": 2961408,
+        "bytes": 2953216,
         "kind": "index",
         "name": "sqlite_autoindex_outbox_1",
-        "pages": 723,
-        "payloadBytes": 2392353,
-        "unusedBytes": 387151
+        "pages": 721,
+        "payloadBytes": 2387313,
+        "unusedBytes": 384383
       },
       {
-        "bytes": 2879488,
+        "bytes": 2834432,
         "kind": "index",
         "name": "artifact_reference_owner_idx",
-        "pages": 703,
-        "payloadBytes": 2540608,
-        "unusedBytes": 253456
+        "pages": 692,
+        "payloadBytes": 2535328,
+        "unusedBytes": 213972
       },
       {
-        "bytes": 2748416,
+        "bytes": 2732032,
         "kind": "index",
         "name": "artifact_owner_idx",
-        "pages": 671,
-        "payloadBytes": 2348128,
-        "unusedBytes": 334496
+        "pages": 667,
+        "payloadBytes": 2343248,
+        "unusedBytes": 323160
       },
       {
-        "bytes": 2637824,
+        "bytes": 2633728,
         "kind": "index",
         "name": "work_lease_fence_reference_idx",
-        "pages": 644,
-        "payloadBytes": 2239309,
-        "unusedBytes": 332876
+        "pages": 643,
+        "payloadBytes": 2234903,
+        "unusedBytes": 333312
       },
       {
-        "bytes": 2633728,
+        "bytes": 2629632,
         "kind": "index",
         "name": "sqlite_autoindex_artifact_2",
-        "pages": 643,
-        "payloadBytes": 2213392,
-        "unusedBytes": 354880
+        "pages": 642,
+        "payloadBytes": 2208792,
+        "unusedBytes": 355516
       },
       {
-        "bytes": 2633728,
+        "bytes": 2629632,
         "kind": "index",
         "name": "sqlite_autoindex_validation_context_manifest_2",
-        "pages": 643,
-        "payloadBytes": 2213392,
-        "unusedBytes": 354880
+        "pages": 642,
+        "payloadBytes": 2208792,
+        "unusedBytes": 355516
       },
       {
-        "bytes": 2633728,
+        "bytes": 2629632,
         "kind": "index",
         "name": "turn_manifest_graph_reference_idx",
-        "pages": 643,
-        "payloadBytes": 2213392,
-        "unusedBytes": 354880
+        "pages": 642,
+        "payloadBytes": 2208792,
+        "unusedBytes": 355516
       },
       {
-        "bytes": 2195456,
+        "bytes": 2199552,
         "kind": "table",
         "name": "run_budget_usage",
-        "pages": 536,
-        "payloadBytes": 2021193,
-        "unusedBytes": 66652
+        "pages": 537,
+        "payloadBytes": 2016996,
+        "unusedBytes": 75171
       },
       {
-        "bytes": 2191360,
+        "bytes": 2187264,
         "kind": "index",
         "name": "sqlite_autoindex_artifact_reference_1",
-        "pages": 535,
-        "payloadBytes": 1828432,
-        "unusedBytes": 298768
+        "pages": 534,
+        "payloadBytes": 1824632,
+        "unusedBytes": 298604
       },
       {
-        "bytes": 2056192,
+        "bytes": 2039808,
         "kind": "table",
         "name": "task",
-        "pages": 502,
-        "payloadBytes": 1713072,
-        "unusedBytes": 236058
+        "pages": 498,
+        "payloadBytes": 1709512,
+        "unusedBytes": 223540
       },
       {
-        "bytes": 2035712,
+        "bytes": 2031616,
         "kind": "index",
         "name": "sqlite_autoindex_context_manifest_2",
-        "pages": 497,
-        "payloadBytes": 1644013,
-        "unusedBytes": 270092
+        "pages": 496,
+        "payloadBytes": 1640489,
+        "unusedBytes": 269775
       },
       {
-        "bytes": 2035712,
+        "bytes": 2031616,
         "kind": "index",
         "name": "sqlite_autoindex_model_attempt_2",
-        "pages": 497,
-        "payloadBytes": 1644013,
-        "unusedBytes": 270092
+        "pages": 496,
+        "payloadBytes": 1640489,
+        "unusedBytes": 269775
       },
       {
-        "bytes": 1961984,
+        "bytes": 1957888,
         "kind": "index",
         "name": "sqlite_autoindex_budget_reservation_1",
-        "pages": 479,
-        "payloadBytes": 1586163,
-        "unusedBytes": 254430
+        "pages": 478,
+        "payloadBytes": 1582761,
+        "unusedBytes": 253991
       },
       {
-        "bytes": 1961984,
+        "bytes": 1957888,
         "kind": "index",
         "name": "sqlite_autoindex_context_manifest_1",
-        "pages": 479,
-        "payloadBytes": 1586163,
-        "unusedBytes": 254430
+        "pages": 478,
+        "payloadBytes": 1582761,
+        "unusedBytes": 253991
       },
       {
-        "bytes": 1961984,
+        "bytes": 1957888,
         "kind": "index",
         "name": "sqlite_autoindex_context_manifest_bundle_1",
-        "pages": 479,
-        "payloadBytes": 1586163,
-        "unusedBytes": 254430
+        "pages": 478,
+        "payloadBytes": 1582761,
+        "unusedBytes": 253991
       },
       {
-        "bytes": 1961984,
+        "bytes": 1957888,
         "kind": "index",
         "name": "sqlite_autoindex_model_attempt_1",
-        "pages": 479,
-        "payloadBytes": 1586163,
-        "unusedBytes": 254430
+        "pages": 478,
+        "payloadBytes": 1582761,
+        "unusedBytes": 253991
       },
       {
-        "bytes": 1929216,
+        "bytes": 1925120,
         "kind": "index",
         "name": "validation_task_idx",
-        "pages": 471,
-        "payloadBytes": 1635952,
-        "unusedBytes": 229872
+        "pages": 470,
+        "payloadBytes": 1632552,
+        "unusedBytes": 229308
       },
       {
-        "bytes": 1798144,
+        "bytes": 1794048,
         "kind": "index",
         "name": "agent_effect_run_task_reference_idx",
-        "pages": 439,
-        "payloadBytes": 1501216,
-        "unusedBytes": 233920
+        "pages": 438,
+        "payloadBytes": 1498096,
+        "unusedBytes": 233076
       },
       {
-        "bytes": 1798144,
+        "bytes": 1794048,
         "kind": "index",
         "name": "sqlite_autoindex_message_3",
-        "pages": 439,
-        "payloadBytes": 1501216,
-        "unusedBytes": 233920
+        "pages": 438,
+        "payloadBytes": 1498096,
+        "unusedBytes": 233076
       },
       {
-        "bytes": 1798144,
+        "bytes": 1794048,
         "kind": "index",
         "name": "sqlite_autoindex_tool_call_4",
-        "pages": 439,
-        "payloadBytes": 1501372,
-        "unusedBytes": 233758
+        "pages": 438,
+        "payloadBytes": 1498174,
+        "unusedBytes": 232995
       },
       {
-        "bytes": 1798144,
+        "bytes": 1794048,
         "kind": "index",
         "name": "sqlite_autoindex_validation_record_3",
-        "pages": 439,
-        "payloadBytes": 1501216,
-        "unusedBytes": 233920
+        "pages": 438,
+        "payloadBytes": 1498096,
+        "unusedBytes": 233076
       },
       {
-        "bytes": 1761280,
+        "bytes": 1757184,
         "kind": "table",
         "name": "context_manifest_bundle_artifact",
-        "pages": 430,
-        "payloadBytes": 1484483,
-        "unusedBytes": 213804
+        "pages": 429,
+        "payloadBytes": 1481249,
+        "unusedBytes": 213080
       },
       {
-        "bytes": 1724416,
+        "bytes": 1720320,
         "kind": "table",
         "name": "run_lineage",
-        "pages": 421,
-        "payloadBytes": 1597584,
-        "unusedBytes": 21069
+        "pages": 420,
+        "payloadBytes": 1594264,
+        "unusedBytes": 20550
       },
       {
-        "bytes": 1683456,
+        "bytes": 1679360,
         "kind": "index",
         "name": "outbox_pending_idx",
-        "pages": 411,
-        "payloadBytes": 1295217,
-        "unusedBytes": 210079
+        "pages": 410,
+        "payloadBytes": 1292457,
+        "unusedBytes": 209115
       },
       {
-        "bytes": 1495040,
+        "bytes": 1490944,
         "kind": "index",
         "name": "tool_call_recovery_idx",
-        "pages": 365,
-        "payloadBytes": 1251114,
-        "unusedBytes": 181800
+        "pages": 364,
+        "payloadBytes": 1248453,
+        "unusedBytes": 180500
       },
       {
-        "bytes": 1388544,
+        "bytes": 1384448,
         "kind": "index",
         "name": "run_claim_order_idx",
-        "pages": 339,
-        "payloadBytes": 1135504,
-        "unusedBytes": 191232
+        "pages": 338,
+        "payloadBytes": 1133144,
+        "unusedBytes": 189628
       },
       {
-        "bytes": 1269760,
+        "bytes": 1298432,
         "kind": "index",
         "name": "work_lease_owner_idx",
-        "pages": 310,
-        "payloadBytes": 1100200,
-        "unusedBytes": 107929
+        "pages": 317,
+        "payloadBytes": 1098032,
+        "unusedBytes": 138799
       },
       {
-        "bytes": 1216512,
+        "bytes": 1212416,
         "kind": "index",
         "name": "session_inbox_pending_idx",
-        "pages": 297,
-        "payloadBytes": 1018992,
-        "unusedBytes": 136216
+        "pages": 296,
+        "payloadBytes": 1016872,
+        "unusedBytes": 134372
       }
     ],
-    "pageCount": 413541,
+    "pageCount": 412773,
     "pageSizeBytes": 4096,
     "sharedMemoryFileBytes": 32768,
     "walFileBytes": 0
   },
-  "startedAtUnixMs": 1784687443521,
+  "startedAtUnixMs": 1784784529734,
   "target": {
     "architecture": "x86_64",
     "cpuModel": "Intel(R) Core(TM) Ultra 5 235T",
