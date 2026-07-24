@@ -1804,6 +1804,13 @@ mod tests {
     use std::fmt::Write as _;
     use tempfile::TempDir;
 
+    fn newer_fixture_version() -> String {
+        let [major, minor, patch] =
+            stable_version_numbers(env!("CARGO_PKG_VERSION")).expect("stable package version");
+        let patch = patch.checked_add(1).expect("fixture patch version");
+        format!("{major}.{minor}.{patch}")
+    }
+
     fn fixture() -> (TempDir, PathBuf) {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let prefix = temporary.path().to_owned();
@@ -1894,6 +1901,7 @@ mod tests {
     #[test]
     fn old_helper_inspects_new_slot_without_executing_candidate_client() {
         let (_temporary, executable) = fixture();
+        let newer_version = newer_fixture_version();
         let prefix = executable
             .parent()
             .and_then(Path::parent)
@@ -1901,7 +1909,7 @@ mod tests {
         let metadata = prefix.join("share/mealy");
         let manifest_path = metadata.join("BUILD-MANIFEST.json");
         let manifest = format!(
-            "{{\"schemaVersion\":\"mealy.release.v2\",\"version\":\"0.2.0\",\"target\":\"linux-x86_64-gnu\",\"commit\":\"{}\",\"sourceDateEpoch\":1,\"stateSchemaVersion\":15,\"sbom\":\"SBOM.cdx.json\",\"licenses\":\"THIRD-PARTY-LICENSES.html\"}}\n",
+            "{{\"schemaVersion\":\"mealy.release.v2\",\"version\":\"{newer_version}\",\"target\":\"linux-x86_64-gnu\",\"commit\":\"{}\",\"sourceDateEpoch\":1,\"stateSchemaVersion\":15,\"sbom\":\"SBOM.cdx.json\",\"licenses\":\"THIRD-PARTY-LICENSES.html\"}}\n",
             "b".repeat(40)
         );
         fs::write(&manifest_path, manifest.as_bytes()).expect("newer manifest");
@@ -1933,7 +1941,7 @@ mod tests {
 
         let recovered = inspect_managed_prefix(prefix).expect("old-helper prefix inspection");
         assert_eq!(recovered.integrity, IntegrityStatus::Verified);
-        assert_eq!(recovered.current_version, "0.2.0");
+        assert_eq!(recovered.current_version, newer_version);
         let expected_commit = "b".repeat(40);
         assert_eq!(
             recovered.current_commit.as_deref(),
@@ -2009,16 +2017,18 @@ mod tests {
     fn update_plan_requires_newer_matching_target_and_reports_schema_changes() {
         let (_temporary, executable) = fixture();
         let installation = inspect_executable(&executable);
+        let newer_version = newer_fixture_version();
+        let requested_version = format!("v{newer_version}");
         let candidate = UpdateCandidate {
             schema_version: "mealy.update-check.v1".to_owned(),
-            version: "0.2.0".to_owned(),
+            version: newer_version,
             target: "linux-x86_64-gnu".to_owned(),
             commit: "b".repeat(40),
             state_schema_version: 15,
             verified: true,
         };
-        let plan =
-            build_update_plan(installation.clone(), "v0.2.0", candidate.clone()).expect("plan");
+        let plan = build_update_plan(installation.clone(), &requested_version, candidate.clone())
+            .expect("plan");
         assert!(plan.update_available);
         assert!(plan.state_schema_compatible);
         assert!(plan.apply_supported);
@@ -2033,7 +2043,7 @@ mod tests {
         let mut wrong_target = candidate;
         wrong_target.target = "linux-aarch64-gnu".to_owned();
         assert!(
-            build_update_plan(installation, "v0.2.0", wrong_target).is_err(),
+            build_update_plan(installation, &requested_version, wrong_target).is_err(),
             "a target mismatch must fail closed"
         );
     }
@@ -2047,15 +2057,18 @@ mod tests {
         let service = prefix.join("mealy.service");
         fs::write(&service, b"[Service]\n").expect("service");
         let installation = inspect_executable(&executable);
+        let newer_version = newer_fixture_version();
+        let requested_version = format!("v{newer_version}");
         let candidate = UpdateCandidate {
             schema_version: "mealy.update-check.v1".to_owned(),
-            version: "0.2.0".to_owned(),
+            version: newer_version,
             target: "linux-x86_64-gnu".to_owned(),
             commit: "b".repeat(40),
             state_schema_version: 15,
             verified: true,
         };
-        let plan = build_update_plan(installation, "v0.2.0", candidate).expect("update plan");
+        let plan =
+            build_update_plan(installation, &requested_version, candidate).expect("update plan");
         let mut transaction =
             prepare_update_transaction(&home, &plan, &service).expect("transaction");
         assert_eq!(transaction.phase, UpdateTransactionPhase::Scheduled);
