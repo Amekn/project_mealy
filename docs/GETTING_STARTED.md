@@ -59,6 +59,13 @@ conservative 128,000-token Mealy context ceiling. Anthropic's current terms proh
 products from routing Claude Free, Pro, or Max subscription credentials; use the Anthropic API,
 strict-free OpenRouter, a custom endpoint, or Claude Code directly instead.
 
+If `codex --version` is unavailable, use OpenAI's
+[official Codex CLI installation guide](https://learn.chatgpt.com/docs/codex/cli). Its current
+macOS/Linux standalone command is `curl -fsSL https://chatgpt.com/codex/install.sh | sh`; review
+the official instructions before running it and ensure its install directory is on `PATH`.
+Mealy never downloads or installs this external prerequisite automatically. An advanced
+installation can instead pass `--executable-path /absolute/path/to/codex`.
+
 ## 3. Run or continue onboarding
 
 If the verified bootstrap already opened onboarding, choose the matching route at its prompt.

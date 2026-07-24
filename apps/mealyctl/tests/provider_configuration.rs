@@ -448,6 +448,32 @@ fn openai_subscription_activation_pins_official_client_and_uses_safe_defaults() 
 }
 
 #[test]
+fn chatgpt_onboarding_missing_codex_reports_official_help_without_mutation() {
+    let home = tempfile::tempdir().expect("missing Codex onboarding home");
+    let empty_path = tempfile::tempdir().expect("empty executable PATH");
+    let output = Command::new(env!("CARGO_BIN_EXE_mealyctl"))
+        .arg("--home")
+        .arg(home.path())
+        .args([
+            "onboard",
+            "--route",
+            "chatgpt-subscription",
+            "--configure-only",
+            "--approve",
+        ])
+        .env("PATH", empty_path.path())
+        .output()
+        .expect("run onboarding without Codex");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("the official Codex CLI was not found"));
+    assert!(error.contains("https://learn.chatgpt.com/docs/codex/cli"));
+    assert!(error.contains("--executable-path /absolute/path/to/codex"));
+    assert!(!home.path().join("config.json").exists());
+    assert!(!home.path().join("provider-secrets").exists());
+}
+
+#[test]
 #[cfg(unix)]
 fn claude_subscription_routes_fail_before_home_mutation_or_client_execution() {
     use std::os::unix::fs::PermissionsExt as _;

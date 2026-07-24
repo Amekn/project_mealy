@@ -8711,9 +8711,9 @@ fn resolve_subscription_onboard(
         .executable_path
         .clone()
         .or_else(|| find_executable_on_path(executable_name))
-        .ok_or(CliError::InvalidProviderConfiguration)?;
+        .ok_or(CliError::ChatgptCodexUnavailable)?;
     let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
-        .map_err(|_| CliError::InvalidProviderConfiguration)?;
+        .map_err(|_| CliError::ChatgptCodexUnavailable)?;
     let mut app_server = CodexAppServerClient::start(&canonical, &executable_sha256)
         .map_err(|_| CliError::ChatgptSubscriptionOnboarding)?;
     ensure_codex_chatgpt_account(
@@ -11304,9 +11304,9 @@ fn configure_subscription_provider(
     let selected = executable_path
         .map(Path::to_path_buf)
         .or_else(|| find_executable_on_path(default_executable))
-        .ok_or(CliError::InvalidProviderConfiguration)?;
+        .ok_or(CliError::ChatgptCodexUnavailable)?;
     let (canonical, executable_sha256) = inspect_subscription_cli_executable(&selected)
-        .map_err(|_| CliError::InvalidProviderConfiguration)?;
+        .map_err(|_| CliError::ChatgptCodexUnavailable)?;
     let canonical = canonical
         .to_str()
         .ok_or(CliError::InvalidProviderConfiguration)?;
@@ -15210,6 +15210,11 @@ enum CliError {
         "the requested or recommended ChatGPT subscription model is unavailable in the current Codex account catalog"
     )]
     ChatgptSubscriptionModelUnavailable,
+    /// The official Codex executable prerequisite was absent or unsafe to inspect.
+    #[error(
+        "the official Codex CLI was not found or could not be inspected; install it from https://learn.chatgpt.com/docs/codex/cli and ensure `codex` is on PATH, or pass `--executable-path /absolute/path/to/codex`"
+    )]
+    ChatgptCodexUnavailable,
     /// Provider model-discovery filtering, pagination, or output bound is invalid.
     #[error("provider model-discovery request is invalid")]
     InvalidProviderDiscoveryRequest,

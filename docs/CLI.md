@@ -199,7 +199,9 @@ an exact visible or hidden account-catalog entry. Its Mealy context ceiling rema
 The lower-level stopped-home `config provider-subscription-openai` command does not manage login
 or query the catalog. It requires an existing official Codex ChatGPT session and retains the
 maintained `gpt-5.6` model alias and conservative 128,000-token defaults unless explicitly
-overridden.
+overridden. If Codex is absent or cannot be inspected safely, both paths fail before mutation and
+point to the [official Codex CLI installation guide](https://learn.chatgpt.com/docs/codex/cli);
+Mealy does not download or execute that external installer.
 
 The retired `claude-subscription` alias and `config provider-subscription-claude` command remain
 recognizable only to give existing scripts an actionable error. They fail before home mutation or

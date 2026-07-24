@@ -109,7 +109,8 @@ challenge-bound completion, account-catalog default/override selection, executab
 and API-key environment exclusion. PTY/non-terminal proofs show login requires separate owner
 consent and that signed-out automation or explicit decline starts no login and mutates no Mealy
 home. A model-call-free live acceptance also reads the installed Codex Plus account and its
-recommended model without retaining identity or token material. Separate negative process coverage
+recommended model without retaining identity or token material. A missing-client process proof
+requires actionable official installation guidance and zero Mealy mutation. Separate negative process coverage
 proves the retired Claude subscription route fails before configuration mutation or client invocation. The
 suite also proves atomic credential brokering and protocol-specific activation probes, plus
 read-only live OpenAI/Anthropic model discovery with exact authentication headers, filtering,
