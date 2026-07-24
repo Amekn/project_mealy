@@ -896,6 +896,11 @@ jobs:
           grep -Fq -- '--bundle' <<<"$attestation_help"
           grep -Fq -- '--source-digest' <<<"$attestation_help"
           gh release verify --help >/dev/null
+          uid=$(id -u)
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >>"$GITHUB_ENV"
+          XDG_RUNTIME_DIR="/run/user/${uid}" systemctl --user show-environment >/dev/null
       - name: Verify immutable public release and exact native assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -976,7 +981,9 @@ jobs:
             --bundle "downloaded/$architecture_bundle" \
             --deny-self-hosted-runners >/dev/null
           (cd downloaded && sha256sum --check --strict "$checksums")
-      - name: Exercise the public tokenless rootless bootstrap
+      - name: Exercise the public rootless bootstrap through first chat
+        env:
+          MEALY_SYSTEMD_SMOKE_ALLOW_HOST: 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -994,18 +1001,12 @@ jobs:
           chmod 0755 downloaded/install-mealy-release.sh
           GH_CONFIG_DIR="$temporary/gh-config" \
             env -u GH_TOKEN -u GITHUB_TOKEN downloaded/install-mealy-release.sh \
-            --version "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" \
+            --version "$GITHUB_REF_NAME" \
             --prefix "$temporary/prefix" --home "$temporary/home" --no-onboard
           test "$("$temporary/prefix/bin/mealyd" --version)" = "mealyd $version"
           test "$("$temporary/prefix/bin/mealyctl" --version)" = "mealyctl $version"
-          mkdir -m 0700 "$temporary/home"
-          "$temporary/prefix/bin/mealyctl" --home "$temporary/home" service install \
-            --destination "$temporary/mealy.service" >"$temporary/service.json"
-          jq -e --arg daemon "$temporary/prefix/bin/mealyd" '
-            .platform == "linux-systemd-user"
-            and .daemonPath == $daemon
-            and (.activationCommand | contains("systemctl --user"))
-          ' "$temporary/service.json" >/dev/null
+          scripts/systemd-service-smoke.sh \
+            "$temporary/prefix/bin/mealyd" "$temporary/prefix/bin/mealyctl"
           "$temporary/prefix/share/mealy-manager.sh" uninstall \
             --prefix "$temporary/prefix" --home "$temporary/home" >/dev/null
           test ! -e "$temporary/prefix/bin/mealyd"

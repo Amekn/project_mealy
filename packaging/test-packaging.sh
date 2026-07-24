@@ -9,6 +9,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+public_bootstrap=$(
+  sed -n \
+    '/- name: Exercise the public rootless bootstrap through first chat/,/- name: Re-run exact downloaded archive and Debian lifecycle smokes/p' \
+    "$repository_root/.github/workflows/release.yml"
+)
+if [[ -z $public_bootstrap ]]; then
+  echo "release workflow is missing public rootless first-chat acceptance" >&2
+  exit 1
+fi
+expected_public_version="--version \"\$GITHUB_REF_NAME\""
+grep -Fq -- "$expected_public_version" <<<"$public_bootstrap"
+if grep -Fq -- '--repository' <<<"$public_bootstrap"; then
+  echo "public rootless acceptance overrides the installer's canonical repository" >&2
+  exit 1
+fi
+grep -Fq 'scripts/systemd-service-smoke.sh' <<<"$public_bootstrap"
+expected_public_binaries="\"\$temporary/prefix/bin/mealyd\" \"\$temporary/prefix/bin/mealyctl\""
+grep -Fq "$expected_public_binaries" \
+  <<<"$public_bootstrap"
+
 make_binaries() {
   local directory=$1
   local version=$2

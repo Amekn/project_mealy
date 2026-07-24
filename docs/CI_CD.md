@@ -309,8 +309,11 @@ Do not move or reuse a published version tag. A correction uses a new semantic v
 - assembles one exact release inventory and publishes deterministic evidence-bound notes;
 - deploys the signed repositories only after the immutable GitHub release exists;
 - downloads the public release on native Linux runners, verifies release/asset integrity and
-  provenance, repeats clean-host installed acceptance on Ubuntu, Debian, Fedora, and Arch, and
-  installs the tagged version through each public HTTPS repository before the workflow can pass.
+  provenance, uses the public tokenless rootless bootstrap without a repository override, and
+  repeats guided onboarding, first chat, enabled-service restart, `doctor`, durable continuation,
+  and clean removal against those exact downloaded binaries;
+- repeats clean-host installed acceptance on Ubuntu, Debian, Fedora, and Arch and installs the
+  tagged version through each public HTTPS repository before the workflow can pass.
 
 The one-time Pages, signing Environment, offline-key, and rotation controls are in
 [LINUX_REPOSITORIES.md](LINUX_REPOSITORIES.md#maintainer-activation). A missing Pages site,

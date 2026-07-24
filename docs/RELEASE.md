@@ -412,6 +412,11 @@ standalone command requires a reachable systemd user manager, refuses to replace
 Run `mealyctl --home "$HOME/.mealy" onboard` and the quickstart's first-chat check after a clean
 install. Onboarding reviews and probes one provider before publishing the secret reference, then
 installs/starts the Linux owner service and requires bounded health plus `doctor` verification.
+After publication, native public-acceptance runners use the tokenless release bootstrap without a
+repository override and repeat that complete journey against the downloaded binaries with a
+credentialless official-client fixture. The gate requires the visible first response, enabled
+service restart, passing `doctor`, exact durable-session continuation, and clean uninstall; a
+source-tree or pre-publication package result cannot substitute for it.
 The provider-only `setup` and `service install` commands remain available for foreground,
 automation, and recovery workflows. A
 checksum detects accidental corruption; the GitHub attestation ties the bytes to this repository
