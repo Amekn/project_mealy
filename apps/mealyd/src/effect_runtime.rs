@@ -842,24 +842,49 @@ fn add_dynamic_bindings(
     }
     let output = String::from_utf8(output.stdout)?;
     for line in output.lines() {
-        let candidate = line.split_once("=>").map_or_else(
-            || line.split_whitespace().next(),
-            |(_, right)| right.split_whitespace().next(),
-        );
-        let Some(candidate) = candidate.filter(|value| value.starts_with('/')) else {
-            continue;
-        };
-        let sandbox_path = PathBuf::from(candidate);
-        bindings.insert(
-            sandbox_path.clone(),
-            SandboxRuntimeBinding {
-                host_path: sandbox_path.clone(),
-                sandbox_path,
-                identity_digest: None,
-            },
-        );
+        for (host_path, sandbox_path) in dynamic_linker_bindings(line) {
+            bindings.insert(
+                sandbox_path.clone(),
+                SandboxRuntimeBinding {
+                    host_path,
+                    sandbox_path,
+                    identity_digest: None,
+                },
+            );
+        }
     }
     Ok(())
+}
+
+fn dynamic_linker_bindings(line: &str) -> Vec<(PathBuf, PathBuf)> {
+    let Some((left, right)) = line.split_once("=>") else {
+        return line
+            .split_whitespace()
+            .next()
+            .filter(|candidate| candidate.starts_with('/'))
+            .map(|candidate| {
+                let path = PathBuf::from(candidate);
+                vec![(path.clone(), path)]
+            })
+            .unwrap_or_default();
+    };
+    let Some(resolved) = right
+        .split_whitespace()
+        .next()
+        .filter(|candidate| candidate.starts_with('/'))
+    else {
+        return Vec::new();
+    };
+    let host_path = PathBuf::from(resolved);
+    let mut bindings = vec![(host_path.clone(), host_path.clone())];
+    if let Some(alias) = left
+        .split_whitespace()
+        .next()
+        .filter(|candidate| candidate.starts_with('/') && *candidate != resolved)
+    {
+        bindings.push((host_path, PathBuf::from(alias)));
+    }
+    bindings
 }
 
 fn dynamic_linker_inspector_command(
@@ -922,8 +947,40 @@ fn validate_runtime_commands(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{DYNAMIC_LINKER_INSPECTOR_PATH, dynamic_linker_inspector_command};
-    use std::{ffi::OsStr, path::Path};
+    use super::{
+        DYNAMIC_LINKER_INSPECTOR_PATH, dynamic_linker_bindings, dynamic_linker_inspector_command,
+    };
+    use std::{
+        ffi::OsStr,
+        path::{Path, PathBuf},
+    };
+
+    #[test]
+    fn dynamic_linker_bindings_preserve_an_absolute_interpreter_alias() {
+        assert_eq!(
+            dynamic_linker_bindings(
+                "/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x1234)"
+            ),
+            vec![
+                (
+                    PathBuf::from("/usr/lib64/ld-linux-x86-64.so.2"),
+                    PathBuf::from("/usr/lib64/ld-linux-x86-64.so.2"),
+                ),
+                (
+                    PathBuf::from("/usr/lib64/ld-linux-x86-64.so.2"),
+                    PathBuf::from("/lib64/ld-linux-x86-64.so.2"),
+                ),
+            ]
+        );
+        assert_eq!(
+            dynamic_linker_bindings("libc.so.6 => /usr/lib/libc.so.6 (0x5678)"),
+            vec![(
+                PathBuf::from("/usr/lib/libc.so.6"),
+                PathBuf::from("/usr/lib/libc.so.6"),
+            )]
+        );
+        assert!(dynamic_linker_bindings("libmissing.so => not found").is_empty());
+    }
 
     #[test]
     fn dynamic_linker_inspection_uses_one_absolute_helper_and_bounded_environment() {

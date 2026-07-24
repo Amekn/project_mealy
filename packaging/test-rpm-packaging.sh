@@ -87,6 +87,8 @@ mapfile -t requirements < <(
 expected_requirements=$'bubblewrap\nca-certificates\nglibc >= 2.39\nlibgcc'
 [[ $(printf '%s\n' "${requirements[@]}") == "$expected_requirements" ]]
 rpm -K --nosignature "$rpm_package" >/dev/null
+rpm_file_list=$(rpm -qlp "$rpm_package")
+grep -Fqx /usr/lib/mealy <<<"$rpm_file_list"
 
 mkdir "$temporary/extracted"
 (
